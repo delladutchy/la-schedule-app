@@ -16,10 +16,15 @@ import { SnapshotSchema, type Snapshot } from "./types";
 const CURRENT_KEY = "current";
 
 function isLocalDev(): boolean {
-  // Netlify function runtime can execute without NETLIFY=true present.
-  // In that case Lambda markers (e.g. LAMBDA_TASK_ROOT=/var/task) are
-  // still set, and we must use Netlify Blobs instead of local fs writes.
-  return !process.env.NETLIFY && !process.env.LAMBDA_TASK_ROOT;
+  // Use local file fallback only when we're clearly outside Netlify.
+  // Production/deploy runtimes can expose different env markers depending
+  // on route/runtime shape, so check a small set of Netlify indicators.
+  return !(
+    process.env.NETLIFY
+    || process.env.NETLIFY_BLOBS_CONTEXT
+    || process.env.CONTEXT
+    || process.env.LAMBDA_TASK_ROOT
+  );
 }
 
 function localStoreDir(storeName: string): string {
