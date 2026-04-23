@@ -1,0 +1,43 @@
+{
+  "name": "availability",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Read-only professional availability viewer backed by a cached Google Calendar snapshot.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sync:local": "tsx scripts/sync-local.ts",
+    "google:auth": "tsx scripts/google-auth.ts"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0",
+    "googleapis": "^144.0.0",
+    "luxon": "^3.5.0",
+    "next": "14.2.15",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@netlify/functions": "^2.8.0",
+    "@netlify/plugin-nextjs": "^5.7.4",
+    "@types/luxon": "^3.4.2",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "dotenv": "^16.4.5",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.15",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

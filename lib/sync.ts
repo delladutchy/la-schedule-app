@@ -1,0 +1,116 @@
+/**
+ * Snapshot builder.
+ *
+ * Pipeline:
+ *   1. Pull FreeBusy for all configured blocker calendars.
+ *   2. Convert to internal Interval[].
+ *   3. Apply pre/post buffers.
+ *   4. Merge overlaps & adjacent blocks deterministically.
+ *   5. Clip to the projection window.
+ *   6. Produce a validated Snapshot.
+ *
+ * If ANY calendar errored - even one - we abort and do NOT write a new
+ * snapshot. The old one stays in place. This is fail-closed behavior:
+ * better to be slightly stale than to show free time that might be busy
+ * on a calendar we couldn't read.
+ */
+
+import { applyBuffers } from "./intervals";
+import { fetchFreeBusy } from "./google";
+import { getConfig } from "./config";
+import { writeCurrentSnapshot } from "./store";
+import type { BusyBlock, Snapshot } from "./types";
+import { DateTime } from "luxon";
+
+export interface BuildResult {
+  status: "ok" | "failed";
+  snapshot?: Snapshot;
+  error?: string;
+  erroredCalendarIds?: string[];
+}
+
+export async function buildAndPersistSnapshot(
+  nowMs: number = Date.now(),
+): Promise<BuildResult> {
+  const { file, env } = getConfig();
+
+  // Window: from start of today in display zone, extending horizonDays forward.
+  const startOfToday = DateTime.fromMillis(nowMs, { zone: "utc" })
+    .setZone(file.timezone)
+    .startOf("day");
+  const windowStartMs = startOfToday.toUTC().toMillis();
+  const windowEndMs = startOfToday.plus({ days: file.horizonDays }).toUTC().toMillis();
+
+  let fb;
+  try {
+    fb = await fetchFreeBusy({
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+      refreshToken: env.GOOGLE_REFRESH_TOKEN,
+      calendarIds: env.BLOCKER_CALENDAR_IDS,
+      timeMinMs: windowStartMs,
+      timeMaxMs: windowEndMs,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[sync] freebusy transport error:", msg);
+    return { status: "failed", error: `FreeBusy transport error: ${msg}` };
+  }
+
+  if (fb.erroredCalendarIds.length > 0) {
+    console.error("[sync] freebusy per-calendar errors:", fb.erroredCalendarIds);
+    return {
+      status: "failed",
+      error: "One or more calendars errored in FreeBusy response",
+      erroredCalendarIds: fb.erroredCalendarIds,
+    };
+  }
+
+  // Apply buffers + merge.
+  const preMs = file.preBufferMinutes * 60 * 1000;
+  const postMs = file.postBufferMinutes * 60 * 1000;
+  const merged = applyBuffers(fb.intervals, preMs, postMs);
+
+  // Clip to the projection window (buffers can extend outside it).
+  const clipped = merged
+    .map((i) => ({
+      startMs: Math.max(i.startMs, windowStartMs),
+      endMs: Math.min(i.endMs, windowEndMs),
+      tentative: i.tentative,
+    }))
+    .filter((i) => i.endMs > i.startMs);
+
+  const busy: BusyBlock[] = clipped.map((i) => ({
+    startUtc: new Date(i.startMs).toISOString(),
+    endUtc: new Date(i.endMs).toISOString(),
+    ...(i.tentative ? { tentative: true } : {}),
+  }));
+
+  const snapshot: Snapshot = {
+    version: 1,
+    generatedAtUtc: new Date(nowMs).toISOString(),
+    windowStartUtc: new Date(windowStartMs).toISOString(),
+    windowEndUtc: new Date(windowEndMs).toISOString(),
+    busy,
+    sourceCalendarIds: env.BLOCKER_CALENDAR_IDS,
+    config: {
+      timezone: file.timezone,
+      workdayStartHour: file.workdayStartHour,
+      workdayEndHour: file.workdayEndHour,
+      hideWeekends: file.hideWeekends,
+      showTentative: file.showTentative,
+      pageTitle: file.pageTitle,
+      pageSubtitle: file.pageSubtitle,
+    },
+  };
+
+  try {
+    await writeCurrentSnapshot(env.BLOBS_STORE_NAME, snapshot);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[sync] snapshot write failed:", msg);
+    return { status: "failed", error: `Snapshot write failed: ${msg}` };
+  }
+
+  return { status: "ok", snapshot };
+}

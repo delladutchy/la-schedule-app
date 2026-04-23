@@ -1,0 +1,22 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+# The official Next.js runtime plugin — handles SSR/ISR on Netlify.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Scheduled sync: pulls fresh FreeBusy data from Google every 10 minutes
+# and writes a normalized snapshot into Netlify Blobs.
+[functions."scheduled-sync"]
+  schedule = "*/10 * * * *"
+
+# Security headers on every response.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"

@@ -1,0 +1,112 @@
+/**
+ * Runtime configuration.
+ *
+ * Two sources:
+ *   1. Environment variables (secrets, deploy-controlled values)
+ *   2. /config/availability.config.json (non-secret, git-tracked)
+ *
+ * Everything is validated with Zod on first access. If validation fails,
+ * the process throws immediately — we never want to run with bad config.
+ */
+
+import { z } from "zod";
+import fileConfig from "../config/availability.config.json";
+
+const FileConfigSchema = z.object({
+  /** IANA timezone used to render the page, e.g. "America/Los_Angeles". */
+  timezone: z.string().min(1),
+  /** Workday start hour in display timezone (inclusive), 0–23. */
+  workdayStartHour: z.number().int().min(0).max(23),
+  /** Workday end hour in display timezone (exclusive), 1–24. */
+  workdayEndHour: z.number().int().min(1).max(24),
+  /** If true, weekend columns are hidden in the weekly view. */
+  hideWeekends: z.boolean(),
+  /** Slot granularity in minutes — must divide 60 evenly. */
+  slotMinutes: z.union([z.literal(15), z.literal(30), z.literal(60)]),
+  /** Pre-meeting buffer applied to every busy block, in minutes. */
+  preBufferMinutes: z.number().int().min(0).max(120),
+  /** Post-meeting buffer applied to every busy block, in minutes. */
+  postBufferMinutes: z.number().int().min(0).max(120),
+  /** How many days forward to project availability. */
+  horizonDays: z.number().int().min(1).max(365),
+  /** Whether to render tentative events as a distinct state. */
+  showTentative: z.boolean(),
+  /** Freshness: snapshot older than this shows a "stale" warning. */
+  freshTtlMinutes: z.number().int().min(1).max(1440),
+  /** Hard TTL: older than this fails closed to "unavailable". */
+  hardTtlMinutes: z.number().int().min(1).max(10080),
+  /** Page title and optional subtitle. */
+  pageTitle: z.string().min(1),
+  pageSubtitle: z.string().optional(),
+  /** A short footer note shown under the calendar. */
+  footerNote: z.string().optional(),
+}).refine(
+  (c) => c.workdayEndHour > c.workdayStartHour,
+  { message: "workdayEndHour must be greater than workdayStartHour" }
+).refine(
+  (c) => c.hardTtlMinutes >= c.freshTtlMinutes,
+  { message: "hardTtlMinutes must be >= freshTtlMinutes" }
+);
+
+const EnvSchema = z.object({
+  /**
+   * Comma-separated list of Google Calendar IDs that are authoritative
+   * "blocker" calendars. Only these affect public availability.
+   *
+   * Example: "primary,abcd1234@group.calendar.google.com"
+   */
+  BLOCKER_CALENDAR_IDS: z.string().min(1)
+    .transform((s) => s.split(",").map((x) => x.trim()).filter(Boolean))
+    .refine((arr) => arr.length > 0, "At least one calendar id required"),
+
+  /** OAuth client id. */
+  GOOGLE_CLIENT_ID: z.string().min(1),
+  /** OAuth client secret. */
+  GOOGLE_CLIENT_SECRET: z.string().min(1),
+  /** Long-lived refresh token produced during one-time setup. */
+  GOOGLE_REFRESH_TOKEN: z.string().min(1),
+
+  /** Token that must be presented to view /admin status page. */
+  ADMIN_TOKEN: z.string().min(16, "ADMIN_TOKEN must be at least 16 chars"),
+
+  /** Optional override for Netlify Blobs store name. */
+  BLOBS_STORE_NAME: z.string().default("availability-snapshots"),
+
+  /** Set by Netlify automatically; used to detect deploy environment. */
+  CONTEXT: z.string().optional(),
+});
+
+export type FileConfig = z.infer<typeof FileConfigSchema>;
+export type EnvConfig = z.infer<typeof EnvSchema>;
+
+let cachedFile: FileConfig | null = null;
+let cachedEnv: EnvConfig | null = null;
+
+export function getFileConfig(): FileConfig {
+  if (cachedFile) return cachedFile;
+  const parsed = FileConfigSchema.safeParse(fileConfig);
+  if (!parsed.success) {
+    throw new Error(
+      `Invalid availability.config.json: ${parsed.error.message}`
+    );
+  }
+  cachedFile = parsed.data;
+  return cachedFile;
+}
+
+export function getEnvConfig(): EnvConfig {
+  if (cachedEnv) return cachedEnv;
+  const parsed = EnvSchema.safeParse(process.env);
+  if (!parsed.success) {
+    // Redact values, only show which keys failed.
+    const keys = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
+    throw new Error(`Invalid environment configuration: ${keys}`);
+  }
+  cachedEnv = parsed.data;
+  return cachedEnv;
+}
+
+/** Convenience accessor that combines both for ergonomics. */
+export function getConfig() {
+  return { file: getFileConfig(), env: getEnvConfig() };
+}
