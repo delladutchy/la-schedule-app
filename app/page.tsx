@@ -30,8 +30,8 @@ import { MonthBoard } from "@/components/MonthBoard";
  *   - Fail-closed if snapshot is missing or older than hardTtlMinutes.
  */
 
-// ISR: regenerate this page's cached HTML every 60 seconds.
-export const revalidate = 60;
+// Always render on request so the homepage reads the latest snapshot.
+export const dynamic = "force-dynamic";
 
 interface SearchParams {
   start?: string | string[]; // YYYY-MM-DD
