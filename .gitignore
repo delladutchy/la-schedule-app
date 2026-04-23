@@ -2,6 +2,7 @@ node_modules/
 .next/
 out/
 .netlify/
+.netlify-blobs/
 .env
 .env.local
 .env.*.local
