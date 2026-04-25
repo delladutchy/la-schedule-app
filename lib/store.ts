@@ -14,8 +14,13 @@ import { getStore } from "@netlify/blobs";
 import { SnapshotSchema, type Snapshot } from "./types";
 
 const CURRENT_KEY = "current";
+const lastKnownGoodSnapshots = new Map<string, Snapshot>();
 
 function isLocalDev(): boolean {
+  if (process.env.NODE_ENV === "production") {
+    return false;
+  }
+
   // Use local file fallback only when we're clearly outside Netlify.
   // Production/deploy runtimes can expose different env markers depending
   // on route/runtime shape, so check a small set of Netlify indicators.
@@ -71,13 +76,12 @@ function store(name: string) {
   return getStore({ name, consistency: "strong" });
 }
 
-export async function readCurrentSnapshot(
-  storeName: string,
-): Promise<Snapshot | null> {
-  if (isLocalDev()) {
-    return readLocalCurrentSnapshot(storeName);
-  }
+function rememberLastKnownGoodSnapshot(storeName: string, snapshot: Snapshot): Snapshot {
+  lastKnownGoodSnapshots.set(storeName, snapshot);
+  return snapshot;
+}
 
+async function readRemoteCurrentSnapshot(storeName: string): Promise<Snapshot | null> {
   try {
     const raw = await store(storeName).get(CURRENT_KEY, { type: "json" });
     if (!raw) return null;
@@ -91,6 +95,32 @@ export async function readCurrentSnapshot(
     console.error("[snapshot] read failed:", err);
     return null;
   }
+}
+
+export async function readCurrentSnapshot(
+  storeName: string,
+): Promise<Snapshot | null> {
+  if (isLocalDev()) {
+    const localSnapshot = await readLocalCurrentSnapshot(storeName);
+    if (localSnapshot) {
+      return rememberLastKnownGoodSnapshot(storeName, localSnapshot);
+    }
+    return null;
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const remoteSnapshot = await readRemoteCurrentSnapshot(storeName);
+    if (remoteSnapshot) {
+      return rememberLastKnownGoodSnapshot(storeName, remoteSnapshot);
+    }
+  }
+
+  const cachedSnapshot = lastKnownGoodSnapshots.get(storeName);
+  if (cachedSnapshot) {
+    return cachedSnapshot;
+  }
+
+  return null;
 }
 
 export async function writeCurrentSnapshot(

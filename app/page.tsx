@@ -11,6 +11,7 @@ import { getConfig } from "@/lib/config";
 import { DayBoard } from "@/components/DayBoard";
 import { MonthBoard } from "@/components/MonthBoard";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import Link from "next/link";
 
 /**
  * The public availability page.
@@ -181,46 +182,48 @@ export default async function AvailabilityPage({
       </header>
 
       <nav className="view-toggle" aria-label="View mode">
-        <a
+        <Link
           className={`view-toggle-button${viewMode === "list" ? " active" : ""}`}
           href={`/?view=list&start=${listToggleStart}`}
           aria-label="Week view"
+          prefetch={false}
         >
           Week
-        </a>
-        <a
+        </Link>
+        <Link
           className={`view-toggle-button${viewMode === "month" ? " active" : ""}`}
           href={`/?view=month&month=${monthToggleKey}`}
           aria-label="Month view"
+          prefetch={false}
         >
           Month
-        </a>
+        </Link>
       </nav>
 
       {viewMode === "list" ? (
         <>
           <nav className="nav" aria-label="Week navigation">
-            <a
-              className={`nav-button${weekCanGoPrev ? "" : " is-disabled"}`}
-              href={weekCanGoPrev ? `/?view=list&start=${weekNav.prevStart}` : undefined}
-              aria-label="Previous week"
-              aria-disabled={!weekCanGoPrev}
-              tabIndex={weekCanGoPrev ? undefined : -1}
-            >
-              ← Previous
-            </a>
-            <a className="nav-button" href={`/?view=list&start=${todayKey}`} aria-label="Today">
+            {weekCanGoPrev ? (
+              <Link className="nav-button" href={`/?view=list&start=${weekNav.prevStart}`} aria-label="Previous week" prefetch={false}>
+                ← Previous
+              </Link>
+            ) : (
+              <a className="nav-button is-disabled" aria-label="Previous week" aria-disabled tabIndex={-1}>
+                ← Previous
+              </a>
+            )}
+            <Link className="nav-button" href={`/?view=list&start=${todayKey}`} aria-label="Today" prefetch={false}>
               Today
-            </a>
-            <a
-              className={`nav-button${weekNav.hasNext ? "" : " is-disabled"}`}
-              href={weekNav.hasNext ? `/?view=list&start=${weekNav.nextStart}` : undefined}
-              aria-label="Next week"
-              aria-disabled={!weekNav.hasNext}
-              tabIndex={weekNav.hasNext ? undefined : -1}
-            >
-              Next →
-            </a>
+            </Link>
+            {weekNav.hasNext ? (
+              <Link className="nav-button" href={`/?view=list&start=${weekNav.nextStart}`} aria-label="Next week" prefetch={false}>
+                Next →
+              </Link>
+            ) : (
+              <a className="nav-button is-disabled" aria-label="Next week" aria-disabled tabIndex={-1}>
+                Next →
+              </a>
+            )}
           </nav>
 
           <DayBoard weeks={visibleWeekRowsWithoutWeekendToday} weekendTodayLabel={weekendTodayLabel} />
@@ -228,27 +231,27 @@ export default async function AvailabilityPage({
       ) : (
         <>
           <nav className="nav" aria-label="Month navigation">
-            <a
-              className={`nav-button${monthCanGoPrev ? "" : " is-disabled"}`}
-              href={monthCanGoPrev ? `/?view=month&month=${monthNav.prevMonth}` : undefined}
-              aria-label="Previous month"
-              aria-disabled={!monthCanGoPrev}
-              tabIndex={monthCanGoPrev ? undefined : -1}
-            >
-              ← Previous
-            </a>
-            <a className="nav-button" href={`/?view=month&month=${todayMonthKey}`} aria-label="Today">
+            {monthCanGoPrev ? (
+              <Link className="nav-button" href={`/?view=month&month=${monthNav.prevMonth}`} aria-label="Previous month" prefetch={false}>
+                ← Previous
+              </Link>
+            ) : (
+              <a className="nav-button is-disabled" aria-label="Previous month" aria-disabled tabIndex={-1}>
+                ← Previous
+              </a>
+            )}
+            <Link className="nav-button" href={`/?view=month&month=${todayMonthKey}`} aria-label="Today" prefetch={false}>
               Today
-            </a>
-            <a
-              className={`nav-button${monthNav.hasNext ? "" : " is-disabled"}`}
-              href={monthNav.hasNext ? `/?view=month&month=${monthNav.nextMonth}` : undefined}
-              aria-label="Next month"
-              aria-disabled={!monthNav.hasNext}
-              tabIndex={monthNav.hasNext ? undefined : -1}
-            >
-              Next →
-            </a>
+            </Link>
+            {monthNav.hasNext ? (
+              <Link className="nav-button" href={`/?view=month&month=${monthNav.nextMonth}`} aria-label="Next month" prefetch={false}>
+                Next →
+              </Link>
+            ) : (
+              <a className="nav-button is-disabled" aria-label="Next month" aria-disabled tabIndex={-1}>
+                Next →
+              </a>
+            )}
           </nav>
 
           <MonthBoard month={month} todayKey={todayKey} />
