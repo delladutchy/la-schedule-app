@@ -82,6 +82,9 @@ export default async function AvailabilityPage({
   // Use the LIVE config timezone, not the snapshot-embedded one, so a
   // config change takes effect on the next page render without requiring
   // a new sync. The snapshot's UTC busy ranges are timezone-agnostic.
+  const snapshotData = state.snapshot;
+  const windowStartUtc = snapshotData.windowStartUtc;
+  const windowEndUtc = snapshotData.windowEndUtc;
   const tz = file.timezone;
   const viewMode = resolveViewMode(firstParam(searchParams.view));
 
@@ -97,36 +100,67 @@ export default async function AvailabilityPage({
       : todayKey;
   const clampedRequestedWeek = requestedWeek < todayKey ? todayKey : requestedWeek;
 
+  const todayWeekNav = resolveWeekNavigation({
+    requestedDate: todayKey,
+    fallbackDate: todayKey,
+    windowStartUtc,
+    windowEndUtc,
+    timezone: tz,
+  });
+  const todayWeekRows = buildDayBoard({
+    snapshot: snapshotData,
+    startDate: todayWeekNav.weekStart,
+    weeks: 1,
+    timezone: tz,
+    workdayStartHour: file.workdayStartHour,
+    workdayEndHour: file.workdayEndHour,
+    nowMs: now,
+    todayKey,
+  });
+  const weekendTodayLabel = todayWeekRows
+    .flatMap((wk) => wk.days)
+    .find((d) => d.isWeekend && d.isToday)?.label;
+  const weekendMarkerWeekStart = weekendTodayLabel && todayWeekNav.hasNext
+    ? todayWeekNav.nextStart
+    : undefined;
+
+  const resolveEffectiveWeekStart = (requestedDate: string): string => {
+    const nav = resolveWeekNavigation({
+      requestedDate,
+      fallbackDate: todayKey,
+      windowStartUtc,
+      windowEndUtc,
+      timezone: tz,
+    });
+
+    if (weekendMarkerWeekStart && nav.weekStart === todayWeekNav.weekStart) {
+      return weekendMarkerWeekStart;
+    }
+
+    return nav.weekStart;
+  };
+
+  const effectiveWeekStart = resolveEffectiveWeekStart(clampedRequestedWeek);
   const weekNav = resolveWeekNavigation({
-    requestedDate: clampedRequestedWeek,
+    requestedDate: effectiveWeekStart,
     fallbackDate: todayKey,
-    windowStartUtc: state.snapshot.windowStartUtc,
-    windowEndUtc: state.snapshot.windowEndUtc,
+    windowStartUtc,
+    windowEndUtc,
     timezone: tz,
   });
-  const weekCanGoPrev = weekNav.hasPrev && weekNav.weekStart > todayKey;
-
-  // Determine which month to show. Default: this month. `?month=YYYY-MM` overrides.
-  const requestedMonthParam = firstParam(searchParams.month)?.trim();
-  const requestedMonth =
-    requestedMonthParam && /^\d{4}-\d{2}$/.test(requestedMonthParam)
-      ? requestedMonthParam
-      : todayMonthKey;
-  const clampedRequestedMonth = requestedMonth < todayMonthKey ? todayMonthKey : requestedMonth;
-
-  const monthNav = resolveMonthNavigation({
-    requestedMonth: clampedRequestedMonth,
-    fallbackDate: todayKey,
-    windowStartUtc: state.snapshot.windowStartUtc,
-    windowEndUtc: state.snapshot.windowEndUtc,
-    timezone: tz,
-  });
-  const monthCanGoPrev = monthNav.hasPrev && monthNav.monthKey > todayMonthKey;
+  const prevEffectiveWeekStart = resolveEffectiveWeekStart(weekNav.prevStart);
+  const nextEffectiveWeekStart = resolveEffectiveWeekStart(weekNav.nextStart);
+  const earliestVisibleWeekStart = weekendMarkerWeekStart ?? todayWeekNav.weekStart;
+  const weekCanGoPrev = weekNav.hasPrev
+    && prevEffectiveWeekStart !== effectiveWeekStart
+    && prevEffectiveWeekStart >= earliestVisibleWeekStart;
+  const weekCanGoNext = weekNav.hasNext && nextEffectiveWeekStart !== effectiveWeekStart;
+  const showWeekendMarker = weekendMarkerWeekStart === effectiveWeekStart;
 
   // List view: this week + next week (2 weeks, M–F each = up to 10 day rows).
-  const initialWeeks = buildDayBoard({
-    snapshot: state.snapshot,
-    startDate: weekNav.weekStart,
+  const weekRowsSource = buildDayBoard({
+    snapshot: snapshotData,
+    startDate: effectiveWeekStart,
     weeks: 2,
     timezone: tz,
     workdayStartHour: file.workdayStartHour,
@@ -134,21 +168,6 @@ export default async function AvailabilityPage({
     nowMs: now,
     todayKey,
   });
-  const weekendTodayLabel = initialWeeks
-    .flatMap((wk) => wk.days)
-    .find((d) => d.isWeekend && d.isToday)?.label;
-  const weekRowsSource = weekendTodayLabel && weekNav.hasNext
-    ? buildDayBoard({
-      snapshot: state.snapshot,
-      startDate: weekNav.nextStart,
-      weeks: 2,
-      timezone: tz,
-      workdayStartHour: file.workdayStartHour,
-      workdayEndHour: file.workdayEndHour,
-      nowMs: now,
-      todayKey,
-    })
-    : initialWeeks;
   const visibleWeekRows = weekRowsSource
     .map((wk) => ({
       ...wk,
@@ -162,17 +181,34 @@ export default async function AvailabilityPage({
     }))
     .filter((wk) => wk.days.length > 0);
 
+  // Determine which month to show. Default: this month. `?month=YYYY-MM` overrides.
+  const requestedMonthParam = firstParam(searchParams.month)?.trim();
+  const requestedMonth =
+    requestedMonthParam && /^\d{4}-\d{2}$/.test(requestedMonthParam)
+      ? requestedMonthParam
+      : todayMonthKey;
+  const clampedRequestedMonth = requestedMonth < todayMonthKey ? todayMonthKey : requestedMonth;
+
+  const monthNav = resolveMonthNavigation({
+    requestedMonth: clampedRequestedMonth,
+    fallbackDate: todayKey,
+    windowStartUtc,
+    windowEndUtc,
+    timezone: tz,
+  });
+  const monthCanGoPrev = monthNav.hasPrev && monthNav.monthKey > todayMonthKey;
+
   // Month view: full month grid with one status per day.
   const month = buildMonthBoard({
-    snapshot: state.snapshot,
+    snapshot: snapshotData,
     month: monthNav.monthKey,
     timezone: tz,
     nowMs: now,
     todayKey,
   });
 
-  const listToggleStart = viewMode === "month" ? `${monthNav.monthKey}-01` : weekNav.weekStart;
-  const monthToggleKey = viewMode === "list" ? weekNav.weekStart.slice(0, 7) : monthNav.monthKey;
+  const listToggleStart = viewMode === "month" ? `${monthNav.monthKey}-01` : effectiveWeekStart;
+  const monthToggleKey = viewMode === "list" ? effectiveWeekStart.slice(0, 7) : monthNav.monthKey;
 
   return (
     <div className="page">
@@ -215,7 +251,7 @@ export default async function AvailabilityPage({
             <Link className="nav-button" href={`/?view=list&start=${todayKey}`} aria-label="Today" prefetch={false}>
               Today
             </Link>
-            {weekNav.hasNext ? (
+            {weekCanGoNext ? (
               <Link className="nav-button" href={`/?view=list&start=${weekNav.nextStart}`} aria-label="Next week" prefetch={false}>
                 Next →
               </Link>
@@ -226,7 +262,10 @@ export default async function AvailabilityPage({
             )}
           </nav>
 
-          <DayBoard weeks={visibleWeekRowsWithoutWeekendToday} weekendTodayLabel={weekendTodayLabel} />
+          <DayBoard
+            weeks={visibleWeekRowsWithoutWeekendToday}
+            weekendTodayLabel={showWeekendMarker ? weekendTodayLabel : undefined}
+          />
         </>
       ) : (
         <>
