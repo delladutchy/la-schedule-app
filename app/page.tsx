@@ -123,7 +123,7 @@ export default async function AvailabilityPage({
   const monthCanGoPrev = monthNav.hasPrev && monthNav.monthKey > todayMonthKey;
 
   // List view: this week + next week (2 weeks, M–F each = up to 10 day rows).
-  const weeks = buildDayBoard({
+  const initialWeeks = buildDayBoard({
     snapshot: state.snapshot,
     startDate: weekNav.weekStart,
     weeks: 2,
@@ -133,10 +133,31 @@ export default async function AvailabilityPage({
     nowMs: now,
     todayKey,
   });
-  const visibleWeeks = weeks
+  const weekendTodayLabel = initialWeeks
+    .flatMap((wk) => wk.days)
+    .find((d) => d.isWeekend && d.isToday)?.label;
+  const weekRowsSource = weekendTodayLabel && weekNav.hasNext
+    ? buildDayBoard({
+      snapshot: state.snapshot,
+      startDate: weekNav.nextStart,
+      weeks: 2,
+      timezone: tz,
+      workdayStartHour: file.workdayStartHour,
+      workdayEndHour: file.workdayEndHour,
+      nowMs: now,
+      todayKey,
+    })
+    : initialWeeks;
+  const visibleWeekRows = weekRowsSource
     .map((wk) => ({
       ...wk,
       days: wk.days.filter((d) => d.date >= todayKey),
+    }))
+    .filter((wk) => wk.days.length > 0);
+  const visibleWeekRowsWithoutWeekendToday = visibleWeekRows
+    .map((wk) => ({
+      ...wk,
+      days: wk.days.filter((d) => !(d.isWeekend && d.isToday)),
     }))
     .filter((wk) => wk.days.length > 0);
 
@@ -202,7 +223,7 @@ export default async function AvailabilityPage({
             </a>
           </nav>
 
-          <DayBoard weeks={visibleWeeks} />
+          <DayBoard weeks={visibleWeekRowsWithoutWeekendToday} weekendTodayLabel={weekendTodayLabel} />
         </>
       ) : (
         <>

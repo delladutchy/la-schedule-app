@@ -71,6 +71,8 @@ export interface DayStatus {
   label: string;
   /** True iff this weekday is today in the display zone. */
   isToday: boolean;
+  /** True for weekend marker rows (used only when weekend is "today"). */
+  isWeekend: boolean;
   status: "available" | "booked";
 }
 

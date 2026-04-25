@@ -453,6 +453,7 @@ export function buildDayBoard(opts: BuildDayBoardOptions): WeekGroup[] {
         date: w.dateKey,
         label: formatDayLabel(w.dateKey, tz),
         isToday: w.dateKey === todayKey,
+        isWeekend: w.isWeekend,
         status,
       };
     });

@@ -2,6 +2,7 @@ import type { WeekGroup } from "@/lib/view";
 
 interface Props {
   weeks: WeekGroup[];
+  weekendTodayLabel?: string;
 }
 
 /**
@@ -10,18 +11,41 @@ interface Props {
  * Each weekday renders as a single row: date on the left, status badge
  * on the right. No times, no slots, no grid. Just "Available" / "Booked".
  */
-export function DayBoard({ weeks }: Props) {
+export function DayBoard({ weeks, weekendTodayLabel }: Props) {
+  const weekendMarkerDayNumber = weekendTodayLabel?.match(/(\d{1,2})$/)?.[1] ?? null;
+  const weekendMarkerLabelPrefix =
+    weekendTodayLabel && weekendMarkerDayNumber
+      ? weekendTodayLabel.slice(0, -weekendMarkerDayNumber.length)
+      : weekendTodayLabel;
+  const weekendMarker = weekendTodayLabel ? (
+    <div className="board-weekend-marker" aria-label={`Today: ${weekendTodayLabel}`}>
+      {weekendMarkerDayNumber && weekendMarkerLabelPrefix ? (
+        <span className="board-day-label-today">
+          <span>{weekendMarkerLabelPrefix}</span>
+          <span className="board-day-today" aria-label="Today">
+            {weekendMarkerDayNumber}
+          </span>
+        </span>
+      ) : (
+        weekendTodayLabel
+      )}
+    </div>
+  ) : null;
   const hasRows = weeks.some((wk) => wk.days.length > 0);
   if (!hasRows) {
     return (
-      <div className="board-empty" role="status">
-        No availability rows for this range.
+      <div className="board">
+        {weekendMarker}
+        <div className="board-empty" role="status">
+          No availability rows for this range.
+        </div>
       </div>
     );
   }
 
   return (
     <div className="board">
+      {weekendMarker}
       {weeks.map((wk) => (
         <section key={wk.weekOf} className="board-week" aria-label={wk.label}>
           <h2 className="board-week-label">{wk.label}</h2>

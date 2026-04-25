@@ -230,6 +230,14 @@ body {
   color: var(--text-subtle);
   margin: 0 4px;
 }
+.board-weekend-marker {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin: 0 4px 2px;
+  align-self: flex-start;
+}
+.board-weekend-marker .board-day-label-today { gap: 6px; }
 
 .board-days {
   list-style: none;
