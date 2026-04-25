@@ -94,14 +94,16 @@ export default async function AvailabilityPage({
     requestedWeekParam && /^\d{4}-\d{2}-\d{2}$/.test(requestedWeekParam)
       ? requestedWeekParam
       : todayKey;
+  const clampedRequestedWeek = requestedWeek < todayKey ? todayKey : requestedWeek;
 
   const weekNav = resolveWeekNavigation({
-    requestedDate: requestedWeek,
+    requestedDate: clampedRequestedWeek,
     fallbackDate: todayKey,
     windowStartUtc: state.snapshot.windowStartUtc,
     windowEndUtc: state.snapshot.windowEndUtc,
     timezone: tz,
   });
+  const weekCanGoPrev = weekNav.hasPrev && weekNav.weekStart > todayKey;
 
   // Determine which month to show. Default: this month. `?month=YYYY-MM` overrides.
   const requestedMonthParam = firstParam(searchParams.month)?.trim();
@@ -131,6 +133,12 @@ export default async function AvailabilityPage({
     nowMs: now,
     todayKey,
   });
+  const visibleWeeks = weeks
+    .map((wk) => ({
+      ...wk,
+      days: wk.days.filter((d) => d.date >= todayKey),
+    }))
+    .filter((wk) => wk.days.length > 0);
 
   // Month view: full month grid with one status per day.
   const month = buildMonthBoard({
@@ -172,11 +180,11 @@ export default async function AvailabilityPage({
         <>
           <nav className="nav" aria-label="Week navigation">
             <a
-              className={`nav-button${weekNav.hasPrev ? "" : " is-disabled"}`}
-              href={weekNav.hasPrev ? `/?view=list&start=${weekNav.prevStart}` : undefined}
+              className={`nav-button${weekCanGoPrev ? "" : " is-disabled"}`}
+              href={weekCanGoPrev ? `/?view=list&start=${weekNav.prevStart}` : undefined}
               aria-label="Previous week"
-              aria-disabled={!weekNav.hasPrev}
-              tabIndex={weekNav.hasPrev ? undefined : -1}
+              aria-disabled={!weekCanGoPrev}
+              tabIndex={weekCanGoPrev ? undefined : -1}
             >
               ← Previous
             </a>
@@ -194,7 +202,7 @@ export default async function AvailabilityPage({
             </a>
           </nav>
 
-          <DayBoard weeks={weeks} />
+          <DayBoard weeks={visibleWeeks} />
         </>
       ) : (
         <>
