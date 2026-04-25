@@ -196,6 +196,28 @@ describe("buildDayBoard — employer-facing day board", () => {
     expect(weeks[0]?.days[0]?.isToday).toBe(true);
     expect(weeks[0]?.days[1]?.isToday).toBe(false);
   });
+
+  it("includes weekend row when today falls on a weekend", () => {
+    const snap = makeSnapshot();
+    // Sat Apr 25 2026 12:00 ET
+    const nowMs = Date.parse("2026-04-25T16:00:00.000Z");
+    const weeks = buildDayBoard({ ...defaultOpts, snapshot: snap, nowMs, todayKey: "2026-04-25" });
+    const labels = weeks[0]?.days.map((d) => d.label) ?? [];
+    expect(labels).toContain("Saturday, Apr 25");
+    expect(weeks[0]?.days.find((d) => d.date === "2026-04-25")?.isToday).toBe(true);
+  });
+
+  it("uses an explicit todayKey when provided", () => {
+    const snap = makeSnapshot();
+    const weeks = buildDayBoard({
+      ...defaultOpts,
+      snapshot: snap,
+      nowMs: Date.parse("2026-04-20T12:00:00.000Z"),
+      todayKey: "2026-04-22",
+    });
+    expect(weeks[0]?.days.find((d) => d.date === "2026-04-20")?.isToday).toBe(false);
+    expect(weeks[0]?.days.find((d) => d.date === "2026-04-22")?.isToday).toBe(true);
+  });
 });
 
 describe("resolveWeekNavigation", () => {
@@ -288,6 +310,20 @@ describe("buildMonthBoard", () => {
     expect(days.find((d) => d.date === "2026-04-20")?.isToday).toBe(true);
     expect(days.find((d) => d.date === "2026-04-20")?.isCurrentMonth).toBe(true);
     expect(days.find((d) => d.date === "2026-03-31")?.isCurrentMonth).toBe(false);
+  });
+
+  it("supports an explicit todayKey override", () => {
+    const snap = makeSnapshot();
+    const month = buildMonthBoard({
+      snapshot: snap,
+      month: "2026-04",
+      timezone: TZ,
+      todayKey: "2026-04-26",
+    });
+
+    const days = month.weeks.flatMap((w) => w.days);
+    expect(days.find((d) => d.date === "2026-04-20")?.isToday).toBe(false);
+    expect(days.find((d) => d.date === "2026-04-26")?.isToday).toBe(true);
   });
 });
 

@@ -160,6 +160,8 @@ export interface BuildDayBoardOptions {
   workdayEndHour: number;
   /** Now, for highlighting today. */
   nowMs?: number;
+  /** Explicit "today" key (YYYY-MM-DD), if already computed upstream. */
+  todayKey?: string;
 }
 
 export interface WeekGroup {
@@ -331,6 +333,8 @@ export interface BuildMonthBoardOptions {
   timezone?: string;
   /** Now, for highlighting today. */
   nowMs?: number;
+  /** Explicit "today" key (YYYY-MM-DD), if already computed upstream. */
+  todayKey?: string;
 }
 
 /**
@@ -340,7 +344,7 @@ export interface BuildMonthBoardOptions {
 export function buildMonthBoard(opts: BuildMonthBoardOptions): MonthBoardData {
   const tz = opts.timezone ?? opts.snapshot.config.timezone;
   const nowMs = opts.nowMs ?? Date.now();
-  const todayKey = todayInZone(tz, nowMs);
+  const todayKey = opts.todayKey ?? todayInZone(tz, nowMs);
 
   const monthStart = DateTime.fromFormat(opts.month, "yyyy-LL", { zone: tz }).startOf("month");
   if (!monthStart.isValid) {
@@ -407,7 +411,8 @@ export function buildMonthBoard(opts: BuildMonthBoardOptions): MonthBoardData {
 export function buildDayBoard(opts: BuildDayBoardOptions): WeekGroup[] {
   const tz = opts.timezone ?? opts.snapshot.config.timezone;
   const nowMs = opts.nowMs ?? Date.now();
-  const todayKey = todayInZone(tz, nowMs);
+  const todayKey = opts.todayKey ?? todayInZone(tz, nowMs);
+  const includeWeekendToday = typeof opts.todayKey === "string";
 
   // Anchor to the Monday of startDate in display tz.
   const anchor = DateTime.fromISO(opts.startDate, { zone: tz });
@@ -437,7 +442,9 @@ export function buildDayBoard(opts: BuildDayBoardOptions): WeekGroup[] {
 
   const groups: WeekGroup[] = [];
   for (let wk = 0; wk < opts.weeks; wk++) {
-    const weekWindows = windows.slice(wk * 7, wk * 7 + 7).filter((w) => !w.isWeekend);
+    const weekWindows = windows
+      .slice(wk * 7, wk * 7 + 7)
+      .filter((w) => !w.isWeekend || (includeWeekendToday && w.dateKey === todayKey));
     const days: DayStatus[] = weekWindows.map((w) => {
       const overlapping = overlapsAny(w.frame, busy);
       // Conservative: any overlap (including tentative) → booked.

@@ -1,52 +1,52 @@
 :root {
-  --bg: #fafaf9;
+  --bg: #0a0a0a;
+  --surface: #111111;
+  --border: #262626;
+  --border-strong: #404040;
+  --text: #fafafa;
+  --text-muted: #a3a3a3;
+  --text-subtle: #737373;
+  --available-bg: #052e22;
+  --available-text: #6ee7b7;
+  --available-dot: #10b981;
+  --booked-bg: #1c1917;
+  --booked-text: #a8a29e;
+  --booked-dot: #57534e;
+  --today-accent: #60a5fa;
+  --today-badge-text: #0f172a;
+  --warn-bg: #1c1917;
+  --warn-border: #78350f;
+  --warn-text: #fde68a;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --radius: 10px;
+  --radius-sm: 6px;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #f7f6f4;
   --surface: #ffffff;
-  --border: #e7e5e4;
-  --border-strong: #d6d3d1;
+  --border: #ddd9d6;
+  --border-strong: #c8c2bc;
   --text: #0c0a09;
-  --text-muted: #57534e;
-  --text-subtle: #78716c;
-  --available-bg: #ecfdf5;
+  --text-muted: #4f4a45;
+  --text-subtle: #6f675f;
+  --available-bg: #e6f8ee;
   --available-text: #065f46;
   --available-dot: #10b981;
-  --booked-bg: #f5f5f4;
-  --booked-text: #44403c;
-  --booked-dot: #a8a29e;
+  --booked-bg: #efedea;
+  --booked-text: #3f3a36;
+  --booked-dot: #8e8883;
   --today-accent: #2563eb;
   --today-badge-text: #ffffff;
   --warn-bg: #fffbeb;
   --warn-border: #fcd34d;
   --warn-text: #78350f;
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-md: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
-  --radius: 10px;
-  --radius-sm: 6px;
-  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0a0a0a;
-    --surface: #111111;
-    --border: #262626;
-    --border-strong: #404040;
-    --text: #fafafa;
-    --text-muted: #a3a3a3;
-    --text-subtle: #737373;
-    --available-bg: #052e22;
-    --available-text: #6ee7b7;
-    --available-dot: #10b981;
-    --booked-bg: #1c1917;
-    --booked-text: #a8a29e;
-    --booked-dot: #57534e;
-    --today-accent: #60a5fa;
-    --today-badge-text: #0f172a;
-    --warn-bg: #1c1917;
-    --warn-border: #78350f;
-    --warn-text: #fde68a;
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.4);
-  }
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.03);
+  --shadow-md: 0 4px 10px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.05);
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -72,13 +72,60 @@ body {
   padding: 64px 24px 96px;
 }
 
-.header { margin-bottom: 32px; }
+.header {
+  margin-bottom: 32px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
 .title {
   font-size: 32px;
   font-weight: 600;
   letter-spacing: -0.02em;
   margin: 0 0 6px;
   color: var(--text);
+}
+.theme-toggle-button {
+  appearance: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.theme-toggle-button:hover {
+  background: var(--bg);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.theme-toggle-button:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 2px;
+}
+.theme-toggle-icon {
+  width: 14px;
+  height: 14px;
+  display: none;
+}
+:root[data-theme="dark"] .theme-toggle-icon--dark { display: block; }
+:root[data-theme="light"] .theme-toggle-icon--light { display: block; }
+:root[data-theme="light"] .view-toggle,
+:root[data-theme="light"] .nav-button,
+:root[data-theme="light"] .theme-toggle-button {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+:root[data-theme="light"] .board-day-badge,
+:root[data-theme="light"] .month-day-chip {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 45%, transparent);
 }
 
 /* ---------- View toggle ---------- */
@@ -284,6 +331,15 @@ body {
   color: var(--text-subtle);
   margin: 0 4px;
 }
+.month-weekend-today {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
 .month-weekdays {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -427,6 +483,10 @@ body {
 @media (max-width: 560px) {
   .page { padding: 40px 16px 64px; }
   .title { font-size: 26px; }
+  .theme-toggle-button {
+    width: 32px;
+    height: 32px;
+  }
   .view-toggle { margin-bottom: 14px; }
   .view-toggle-button { padding: 6px 10px; }
   .board-day { padding: 16px; }

@@ -10,6 +10,7 @@ import { todayInZone } from "@/lib/time";
 import { getConfig } from "@/lib/config";
 import { DayBoard } from "@/components/DayBoard";
 import { MonthBoard } from "@/components/MonthBoard";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 /**
  * The public availability page.
@@ -32,6 +33,7 @@ import { MonthBoard } from "@/components/MonthBoard";
 
 // Always render on request so the homepage reads the latest snapshot.
 export const dynamic = "force-dynamic";
+const TODAY_TIMEZONE = "America/New_York";
 
 interface SearchParams {
   start?: string | string[]; // YYYY-MM-DD
@@ -82,8 +84,8 @@ export default async function AvailabilityPage({
   const tz = file.timezone;
   const viewMode = resolveViewMode(firstParam(searchParams.view));
 
-  // Determine defaults from "today" in the display timezone.
-  const todayKey = todayInZone(tz, now);
+  // Single explicit timezone for current-day calculations.
+  const todayKey = todayInZone(TODAY_TIMEZONE, now);
   const todayMonthKey = todayKey.slice(0, 7);
 
   // Determine which week to show. Default: this week. `?start=YYYY-MM-DD` overrides.
@@ -127,6 +129,7 @@ export default async function AvailabilityPage({
     workdayStartHour: file.workdayStartHour,
     workdayEndHour: file.workdayEndHour,
     nowMs: now,
+    todayKey,
   });
 
   // Month view: full month grid with one status per day.
@@ -135,6 +138,7 @@ export default async function AvailabilityPage({
     month: monthNav.monthKey,
     timezone: tz,
     nowMs: now,
+    todayKey,
   });
 
   const listToggleStart = viewMode === "month" ? `${monthNav.monthKey}-01` : weekNav.weekStart;
@@ -144,6 +148,7 @@ export default async function AvailabilityPage({
     <div className="page">
       <header className="header">
         <h1 className="title">{file.pageTitle}</h1>
+        <ThemeToggle />
       </header>
 
       <nav className="view-toggle" aria-label="View mode">
