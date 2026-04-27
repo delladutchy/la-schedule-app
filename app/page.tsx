@@ -13,7 +13,6 @@ import { getConfig } from "@/lib/config";
 import { DayBoard } from "@/components/DayBoard";
 import { MonthBoard } from "@/components/MonthBoard";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { EditorTokenBridge } from "@/components/EditorTokenBridge";
 import Link from "next/link";
 
 /**
@@ -140,6 +139,7 @@ export default async function AvailabilityPage({
   const windowEndUtc = snapshotData.windowEndUtc;
   const tz = file.timezone;
   const viewMode = resolveViewMode(firstParam(searchParams.view));
+  const initialEditorToken = firstParam(searchParams.editor);
 
   // Single explicit timezone for current-day calculations.
   const todayKey = todayInZone(TODAY_TIMEZONE, now);
@@ -227,7 +227,6 @@ export default async function AvailabilityPage({
 
   return (
     <div className="page">
-      <EditorTokenBridge />
       <header className="header">
         <h1 className="title">
           <span>{titleMain}</span>
@@ -309,7 +308,11 @@ export default async function AvailabilityPage({
             )}
           </nav>
 
-          <MonthBoard month={month} todayKey={todayKey} />
+          <MonthBoard
+            month={month}
+            todayKey={todayKey}
+            initialEditorToken={initialEditorToken}
+          />
         </>
       )}
 

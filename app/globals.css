@@ -1108,6 +1108,19 @@ body {
   color: var(--available-text);
 }
 
+.month-day--bookable {
+  cursor: pointer;
+}
+
+.month-day--bookable:hover {
+  background: color-mix(in srgb, var(--surface) 92%, var(--available-bg));
+}
+
+.month-day--bookable:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
+
 .month-day-book-button:focus-visible {
   outline: 2px solid var(--today-accent);
   outline-offset: 2px;

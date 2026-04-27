@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { summarizeBookedDayLabel, type MonthBoardData } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
 
 interface Props {
   month: MonthBoardData;
   todayKey: string;
+  initialEditorToken?: string;
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -48,9 +49,8 @@ function stripJobPrefix(summary: string, jobNumber?: string): string {
 /**
  * Monthly board with compact multi-day event bars.
  */
-export function MonthBoard({ month, todayKey }: Props) {
+export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [activeDetailPanel, setActiveDetailPanel] = useState<ActiveDetailPanel | null>(null);
   const [editorToken, setEditorToken] = useState<string | null>(null);
   const [activeBookingPanel, setActiveBookingPanel] = useState<ActiveBookingPanel | null>(null);
@@ -74,17 +74,28 @@ export function MonthBoard({ month, todayKey }: Props) {
   }, [activeDetailPanel, activeBookingPanel]);
 
   useEffect(() => {
-    const fromUrl = sanitizeEditorToken(searchParams.get("editor"));
-    if (fromUrl) {
-      window.sessionStorage.setItem(EDITOR_TOKEN_SESSION_KEY, fromUrl);
-      setEditorToken(fromUrl);
-      return;
-    }
+    const fromProp = sanitizeEditorToken(initialEditorToken);
+    const fromUrl = sanitizeEditorToken(
+      new URLSearchParams(window.location.search).get("editor"),
+    );
     const fromSession = sanitizeEditorToken(
       window.sessionStorage.getItem(EDITOR_TOKEN_SESSION_KEY),
     );
-    setEditorToken(fromSession);
-  }, [searchParams]);
+    const resolved = fromProp ?? fromUrl ?? fromSession;
+
+    if (resolved) {
+      window.sessionStorage.setItem(EDITOR_TOKEN_SESSION_KEY, resolved);
+      setEditorToken(resolved);
+    } else {
+      setEditorToken(null);
+    }
+
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("editor")) return;
+    url.searchParams.delete("editor");
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState(window.history.state, "", next);
+  }, [initialEditorToken]);
 
   const closeDetailPanel = () => setActiveDetailPanel(null);
   const closeBookingPanel = () => {
@@ -96,6 +107,13 @@ export function MonthBoard({ month, todayKey }: Props) {
   };
 
   const editorModeActive = !!editorToken;
+  const openBookingPanel = (date: string) => {
+    setActiveDetailPanel(null);
+    setActiveBookingPanel({ date });
+    setBookingJobTitle("");
+    setBookingNotes("");
+    setBookingError(null);
+  };
 
   async function saveBooking() {
     if (!activeBookingPanel || isBookingSavePending) return;
@@ -292,12 +310,23 @@ export function MonthBoard({ month, todayKey }: Props) {
                         key={d.date}
                         role="gridcell"
                         aria-label={`${d.date}: ${d.status === "booked" ? (bookedLabel?.label ?? "Busy") : "Available"}`}
+                        tabIndex={canBookDay ? 0 : undefined}
+                        onClick={canBookDay ? () => openBookingPanel(d.date) : undefined}
+                        onKeyDown={canBookDay
+                          ? (event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openBookingPanel(d.date);
+                              }
+                            }
+                          : undefined}
                       className={[
                         "month-day",
                         d.status === "booked" ? "month-day--booked" : "month-day--available",
                         bookedLabel?.isPrivateUnavailable ? "month-day--booked-private" : "",
                         hasCoveringBar ? "month-day--occupied" : "",
                         isPastCurrentMonthDay ? "month-day--past" : "",
+                        canBookDay ? "month-day--bookable" : "",
                         d.isToday ? "today" : "",
                         d.isCurrentMonth ? "current" : "outside",
                       ].filter(Boolean).join(" ")}
@@ -308,19 +337,12 @@ export function MonthBoard({ month, todayKey }: Props) {
                         {d.isCurrentMonth && !isPastCurrentMonthDay ? (
                           d.status === "available" ? (
                             canBookDay ? (
-                              <button
-                                type="button"
+                              <span
                                 className="month-day-book-button"
-                                onClick={() => {
-                                  setActiveDetailPanel(null);
-                                  setActiveBookingPanel({ date: d.date });
-                                  setBookingJobTitle("");
-                                  setBookingNotes("");
-                                  setBookingError(null);
-                                }}
+                                aria-hidden="true"
                               >
                                 Click to book
-                              </button>
+                              </span>
                             ) : (
                               <div className="month-day-availability" aria-hidden="true">Available</div>
                             )
