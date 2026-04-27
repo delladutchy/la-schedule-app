@@ -66,16 +66,44 @@ function formatCompactDate(isoDate: string): string {
   return DateTime.fromISO(isoDate, { zone: "utc" }).toFormat("ccc, LLL d");
 }
 
-function parseUsDateToIso(rawValue: string): string | null {
-  const trimmed = rawValue.trim();
-  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
-    return null;
+function formatShortDate(isoDate: string): string {
+  return DateTime.fromISO(isoDate, { zone: "utc" }).toFormat("LLL d");
+}
+
+interface BookingCalendarDay {
+  isoDate: string;
+  dayNumber: string;
+  isCurrentMonth: boolean;
+  isBeforeStart: boolean;
+}
+
+function buildBookingCalendarDays(startIsoDate: string): {
+  monthLabel: string;
+  days: BookingCalendarDay[];
+} {
+  const start = DateTime.fromISO(startIsoDate, { zone: "utc" });
+  const monthStart = start.startOf("month");
+  const monthEnd = start.endOf("month");
+  const gridStart = monthStart.minus({ days: monthStart.weekday - 1 });
+  const gridEnd = monthEnd.plus({ days: 7 - monthEnd.weekday });
+
+  const days: BookingCalendarDay[] = [];
+  let cursor = gridStart;
+  while (cursor <= gridEnd) {
+    const isoDate = cursor.toFormat("yyyy-LL-dd");
+    days.push({
+      isoDate,
+      dayNumber: cursor.toFormat("d"),
+      isCurrentMonth: cursor.month === start.month,
+      isBeforeStart: isoDate < startIsoDate,
+    });
+    cursor = cursor.plus({ days: 1 });
   }
-  const parsed = DateTime.fromFormat(trimmed, "MM/dd/yyyy", { zone: "utc" });
-  if (!parsed.isValid) {
-    return null;
-  }
-  return parsed.toFormat("yyyy-LL-dd");
+
+  return {
+    monthLabel: start.toFormat("LLLL yyyy"),
+    days,
+  };
 }
 
 function buildLaJobSummary(laNumberRaw: string, jobNameRaw: string): string {
@@ -104,7 +132,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const [bookingJobName, setBookingJobName] = useState("");
   const [bookingSameDay, setBookingSameDay] = useState(true);
   const [bookingEndDate, setBookingEndDate] = useState("");
-  const [bookingCallTimeOption, setBookingCallTimeOption] = useState("");
+  const [bookingCallTimeOption, setBookingCallTimeOption] = useState("TBD");
   const [bookingCallTimeOther, setBookingCallTimeOther] = useState("");
   const [bookingNotes, setBookingNotes] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
@@ -155,7 +183,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setBookingJobName("");
     setBookingSameDay(true);
     setBookingEndDate("");
-    setBookingCallTimeOption("");
+    setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
     setBookingError(null);
@@ -170,7 +198,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setBookingJobName("");
     setBookingSameDay(true);
     setBookingEndDate("");
-    setBookingCallTimeOption("");
+    setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
     setBookingError(null);
@@ -192,9 +220,13 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     const startDate = activeBookingPanel.date;
     let endDate = startDate;
     if (!bookingSameDay) {
-      const parsedEndDate = parseUsDateToIso(bookingEndDate);
+      const parsedEndDate = bookingEndDate.trim();
       if (!parsedEndDate) {
-        setBookingError("Enter a valid End Date as MM/DD/YYYY.");
+        setBookingError("Select an End Date.");
+        return;
+      }
+      if (!DateTime.fromISO(parsedEndDate, { zone: "utc" }).isValid) {
+        setBookingError("Select a valid End Date.");
         return;
       }
       if (parsedEndDate < startDate) {
@@ -270,20 +302,25 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const allDays = month.weeks.flatMap((w) => w.days);
   const weekendToday = allDays.find((d) => d.date === todayKey && d.isWeekend);
   const bookingDateLabel = activeBookingPanel
-    ? formatCompactDate(activeBookingPanel.date)
+    ? formatShortDate(activeBookingPanel.date)
     : null;
   const bookingStartDate = activeBookingPanel?.date ?? "";
-  const parsedBookingEndDate = !bookingSameDay ? parseUsDateToIso(bookingEndDate) : null;
+  const bookingCalendar = bookingStartDate
+    ? buildBookingCalendarDays(bookingStartDate)
+    : null;
+  const parsedBookingEndDate = !bookingSameDay && bookingEndDate.trim()
+    ? bookingEndDate.trim()
+    : null;
   const bookingSummary = bookingStartDate
     ? (() => {
-        const startLabel = formatCompactDate(bookingStartDate);
+        const startLabel = formatShortDate(bookingStartDate);
         if (bookingSameDay) {
           return `Booking: ${startLabel} only`;
         }
         if (parsedBookingEndDate && parsedBookingEndDate >= bookingStartDate) {
-          return `Booking: ${startLabel} – ${formatCompactDate(parsedBookingEndDate)}`;
+          return `Booking: ${startLabel} – ${formatShortDate(parsedBookingEndDate)}`;
         }
-        return `Booking: ${startLabel} – ...`;
+        return `Booking: ${startLabel} – Select end date`;
       })()
     : null;
 
@@ -564,7 +601,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
             </button>
 
             <h3 id="month-booking-title" className="board-day-modal-title">
-              Book LA Job
+              Book Job
             </h3>
             <p className="board-day-modal-event-date">{bookingDateLabel}</p>
 
@@ -618,30 +655,53 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                       setBookingSameDay(checked);
                       if (checked) {
                         setBookingEndDate("");
+                      } else if (bookingStartDate) {
+                        setBookingEndDate(bookingStartDate);
                       }
                       if (bookingError) setBookingError(null);
                     }}
                   />
                   <span>Same day</span>
                 </label>
-                {!bookingSameDay ? (
-                  <input
-                    id="booking-end-date"
-                    type="text"
-                    className="month-booking-input"
-                    value={bookingEndDate}
-                    onChange={(event) => {
-                      setBookingEndDate(event.target.value);
-                      if (bookingError) setBookingError(null);
-                    }}
-                    placeholder="MM/DD/YYYY"
-                    inputMode="numeric"
-                    maxLength={10}
-                    autoComplete="off"
-                  />
-                ) : null}
                 {bookingSummary ? (
                   <p className="month-booking-summary">{bookingSummary}</p>
+                ) : null}
+                {!bookingSameDay && bookingCalendar ? (
+                  <div className="month-booking-calendar" role="group" aria-label="End date calendar">
+                    <div className="month-booking-calendar-header">{bookingCalendar.monthLabel}</div>
+                    <div className="month-booking-calendar-weekdays" aria-hidden="true">
+                      {WEEKDAY_LABELS.map((label) => (
+                        <span key={label}>{label}</span>
+                      ))}
+                    </div>
+                    <div className="month-booking-calendar-grid">
+                      {bookingCalendar.days.map((day) => {
+                        const isSelected = !bookingSameDay && bookingEndDate === day.isoDate;
+                        const isDisabled = day.isBeforeStart;
+                        return (
+                          <button
+                            key={day.isoDate}
+                            type="button"
+                            id={day.isoDate === bookingStartDate ? "booking-end-date" : undefined}
+                            className={[
+                              "month-booking-calendar-day",
+                              day.isCurrentMonth ? "is-current-month" : "is-outside-month",
+                              isSelected ? "is-selected" : "",
+                              day.isoDate === bookingStartDate ? "is-start" : "",
+                            ].filter(Boolean).join(" ")}
+                            disabled={isDisabled}
+                            onClick={() => {
+                              setBookingEndDate(day.isoDate);
+                              if (bookingError) setBookingError(null);
+                            }}
+                            aria-label={`End date ${formatCompactDate(day.isoDate)}`}
+                          >
+                            {day.dayNumber}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ) : null}
               </div>
 
@@ -657,7 +717,6 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                   if (bookingError) setBookingError(null);
                 }}
               >
-                <option value="">Optional</option>
                 {CALL_TIME_OPTIONS.map((value) => (
                   <option key={value} value={value}>
                     {value}

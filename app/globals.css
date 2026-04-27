@@ -1325,3 +1325,75 @@ body {
   font-size: 12px;
   font-weight: 500;
 }
+
+.month-booking-calendar {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--bg));
+  padding: 10px;
+}
+
+.month-booking-calendar-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.month-booking-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.month-booking-calendar-weekdays span {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.month-booking-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.month-booking-calendar-day {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 8px 0;
+  cursor: pointer;
+}
+
+.month-booking-calendar-day.is-outside-month {
+  color: color-mix(in srgb, var(--text-muted) 80%, transparent);
+}
+
+.month-booking-calendar-day:disabled {
+  color: color-mix(in srgb, var(--text-muted) 62%, transparent);
+  cursor: not-allowed;
+}
+
+.month-booking-calendar-day.is-start:not(.is-selected) {
+  border-color: color-mix(in srgb, var(--today-accent) 45%, var(--border));
+}
+
+.month-booking-calendar-day.is-selected {
+  border-color: color-mix(in srgb, var(--available-dot) 50%, var(--border));
+  background: color-mix(in srgb, var(--available-bg) 68%, var(--surface));
+  color: color-mix(in srgb, var(--available-text) 90%, var(--text));
+}
+
+.month-booking-calendar-day:not(:disabled):focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
