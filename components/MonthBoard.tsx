@@ -77,15 +77,16 @@ interface BookingCalendarDay {
   isBeforeStart: boolean;
 }
 
-function buildBookingCalendarDays(startIsoDate: string): {
+function buildBookingCalendarDays(startIsoDate: string, monthKey: string): {
   monthLabel: string;
   days: BookingCalendarDay[];
 } {
   const start = DateTime.fromISO(startIsoDate, { zone: "utc" });
-  const monthStart = start.startOf("month");
-  const monthEnd = start.endOf("month");
+  const viewedMonth = DateTime.fromFormat(monthKey, "yyyy-LL", { zone: "utc" });
+  const monthStart = (viewedMonth.isValid ? viewedMonth : start).startOf("month");
   const gridStart = monthStart.minus({ days: monthStart.weekday - 1 });
-  const gridEnd = monthEnd.plus({ days: 7 - monthEnd.weekday });
+  const viewedMonthEnd = monthStart.endOf("month");
+  const gridEnd = viewedMonthEnd.plus({ days: 7 - viewedMonthEnd.weekday });
 
   const days: BookingCalendarDay[] = [];
   let cursor = gridStart;
@@ -94,14 +95,14 @@ function buildBookingCalendarDays(startIsoDate: string): {
     days.push({
       isoDate,
       dayNumber: cursor.toFormat("d"),
-      isCurrentMonth: cursor.month === start.month,
+      isCurrentMonth: cursor.month === monthStart.month && cursor.year === monthStart.year,
       isBeforeStart: isoDate < startIsoDate,
     });
     cursor = cursor.plus({ days: 1 });
   }
 
   return {
-    monthLabel: start.toFormat("LLLL yyyy"),
+    monthLabel: monthStart.toFormat("LLLL yyyy"),
     days,
   };
 }
@@ -130,8 +131,8 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const [activeBookingPanel, setActiveBookingPanel] = useState<ActiveBookingPanel | null>(null);
   const [bookingLaNumber, setBookingLaNumber] = useState("");
   const [bookingJobName, setBookingJobName] = useState("");
-  const [bookingSameDay, setBookingSameDay] = useState(true);
   const [bookingEndDate, setBookingEndDate] = useState("");
+  const [bookingPickerMonthKey, setBookingPickerMonthKey] = useState("");
   const [bookingCallTimeOption, setBookingCallTimeOption] = useState("TBD");
   const [bookingCallTimeOther, setBookingCallTimeOther] = useState("");
   const [bookingNotes, setBookingNotes] = useState("");
@@ -181,8 +182,8 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setActiveBookingPanel(null);
     setBookingLaNumber("");
     setBookingJobName("");
-    setBookingSameDay(true);
     setBookingEndDate("");
+    setBookingPickerMonthKey("");
     setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
@@ -192,12 +193,13 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
 
   const editorModeActive = !!editorToken;
   const openBookingPanel = (date: string) => {
+    const startMonthKey = DateTime.fromISO(date, { zone: "utc" }).toFormat("yyyy-LL");
     setActiveDetailPanel(null);
     setActiveBookingPanel({ date });
     setBookingLaNumber("");
     setBookingJobName("");
-    setBookingSameDay(true);
     setBookingEndDate("");
+    setBookingPickerMonthKey(startMonthKey);
     setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
@@ -218,22 +220,18 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
       return;
     }
     const startDate = activeBookingPanel.date;
-    let endDate = startDate;
-    if (!bookingSameDay) {
-      const parsedEndDate = bookingEndDate.trim();
-      if (!parsedEndDate) {
-        setBookingError("Select an End Date.");
-        return;
-      }
-      if (!DateTime.fromISO(parsedEndDate, { zone: "utc" }).isValid) {
-        setBookingError("Select a valid End Date.");
-        return;
-      }
-      if (parsedEndDate < startDate) {
-        setBookingError("End Date cannot be before Start Date.");
-        return;
-      }
-      endDate = parsedEndDate;
+    const endDate = bookingEndDate.trim();
+    if (!endDate) {
+      setBookingError("Select an End Date.");
+      return;
+    }
+    if (!DateTime.fromISO(endDate, { zone: "utc" }).isValid) {
+      setBookingError("Select a valid End Date.");
+      return;
+    }
+    if (endDate < startDate) {
+      setBookingError("End Date cannot be before Start Date.");
+      return;
     }
 
     setBookingError(null);
@@ -305,24 +303,43 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     ? formatShortDate(activeBookingPanel.date)
     : null;
   const bookingStartDate = activeBookingPanel?.date ?? "";
-  const bookingCalendar = bookingStartDate
-    ? buildBookingCalendarDays(bookingStartDate)
+  const bookingStartMonth = bookingStartDate
+    ? DateTime.fromISO(bookingStartDate, { zone: "utc" }).startOf("month")
     : null;
-  const parsedBookingEndDate = !bookingSameDay && bookingEndDate.trim()
+  const bookingViewMonth = bookingPickerMonthKey
+    ? DateTime.fromFormat(bookingPickerMonthKey, "yyyy-LL", { zone: "utc" }).startOf("month")
+    : bookingStartMonth;
+  const bookingCalendar = bookingStartDate
+    && bookingViewMonth?.isValid
+    ? buildBookingCalendarDays(bookingStartDate, bookingViewMonth.toFormat("yyyy-LL"))
+    : null;
+  const parsedBookingEndDate = bookingEndDate.trim()
     ? bookingEndDate.trim()
     : null;
+  const bookingStartLabel = bookingStartDate ? formatShortDate(bookingStartDate) : null;
+  const bookingEndLabel = parsedBookingEndDate
+    ? formatShortDate(parsedBookingEndDate)
+    : "Select end date";
   const bookingSummary = bookingStartDate
     ? (() => {
-        const startLabel = formatShortDate(bookingStartDate);
-        if (bookingSameDay) {
-          return `Booking: ${startLabel} only`;
+        if (!bookingStartLabel) {
+          return null;
         }
-        if (parsedBookingEndDate && parsedBookingEndDate >= bookingStartDate) {
-          return `Booking: ${startLabel} – ${formatShortDate(parsedBookingEndDate)}`;
+        if (!parsedBookingEndDate) {
+          return "Booking: Select an end date";
         }
-        return `Booking: ${startLabel} – Select end date`;
+        if (parsedBookingEndDate === bookingStartDate) {
+          return `Booking: ${bookingStartLabel} only`;
+        }
+        if (parsedBookingEndDate > bookingStartDate) {
+          return `Booking: ${bookingStartLabel} – ${formatShortDate(parsedBookingEndDate)}`;
+        }
+        return "Booking: End Date cannot be before Start Date";
       })()
     : null;
+  const canGoToPreviousBookingMonth = bookingStartMonth && bookingViewMonth
+    ? bookingViewMonth > bookingStartMonth
+    : false;
 
   return (
     <section className="month-board" aria-label={month.label}>
@@ -642,33 +659,62 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                 maxLength={200}
               />
 
-              <label className="month-booking-label" htmlFor="booking-end-date">
+              <p className="month-booking-label">
                 End Date
-              </label>
+              </p>
               <div className="month-booking-end-date-control">
-                <label className="month-booking-same-day-toggle">
-                  <input
-                    type="checkbox"
-                    checked={bookingSameDay}
-                    onChange={(event) => {
-                      const checked = event.target.checked;
-                      setBookingSameDay(checked);
-                      if (checked) {
-                        setBookingEndDate("");
-                      } else if (bookingStartDate) {
-                        setBookingEndDate(bookingStartDate);
-                      }
-                      if (bookingError) setBookingError(null);
-                    }}
-                  />
-                  <span>Same day</span>
-                </label>
+                <div className="month-booking-range-meta" aria-live="polite">
+                  <p>
+                    <span>Start:</span> {bookingStartLabel}
+                  </p>
+                  <p>
+                    <span>End:</span> {bookingEndLabel}
+                  </p>
+                </div>
                 {bookingSummary ? (
                   <p className="month-booking-summary">{bookingSummary}</p>
                 ) : null}
-                {!bookingSameDay && bookingCalendar ? (
+                <button
+                  type="button"
+                  className="month-booking-same-day-button"
+                  onClick={() => {
+                    if (!bookingStartDate) return;
+                    setBookingEndDate(bookingStartDate);
+                    if (bookingError) setBookingError(null);
+                  }}
+                >
+                  Same day
+                </button>
+                {bookingCalendar && bookingViewMonth ? (
                   <div className="month-booking-calendar" role="group" aria-label="End date calendar">
-                    <div className="month-booking-calendar-header">{bookingCalendar.monthLabel}</div>
+                    <div className="month-booking-calendar-head">
+                      <button
+                        type="button"
+                        className="month-booking-calendar-nav"
+                        onClick={() => {
+                          if (!bookingViewMonth) return;
+                          setBookingPickerMonthKey(bookingViewMonth.minus({ months: 1 }).toFormat("yyyy-LL"));
+                          if (bookingError) setBookingError(null);
+                        }}
+                        disabled={!canGoToPreviousBookingMonth}
+                        aria-label="Previous month"
+                      >
+                        ‹
+                      </button>
+                      <div className="month-booking-calendar-header">{bookingCalendar.monthLabel}</div>
+                      <button
+                        type="button"
+                        className="month-booking-calendar-nav"
+                        onClick={() => {
+                          if (!bookingViewMonth) return;
+                          setBookingPickerMonthKey(bookingViewMonth.plus({ months: 1 }).toFormat("yyyy-LL"));
+                          if (bookingError) setBookingError(null);
+                        }}
+                        aria-label="Next month"
+                      >
+                        ›
+                      </button>
+                    </div>
                     <div className="month-booking-calendar-weekdays" aria-hidden="true">
                       {WEEKDAY_LABELS.map((label) => (
                         <span key={label}>{label}</span>
@@ -676,18 +722,24 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                     </div>
                     <div className="month-booking-calendar-grid">
                       {bookingCalendar.days.map((day) => {
-                        const isSelected = !bookingSameDay && bookingEndDate === day.isoDate;
+                        const isSelected = bookingEndDate === day.isoDate;
+                        const isStart = day.isoDate === bookingStartDate;
+                        const isEnd = day.isoDate === bookingEndDate;
+                        const isInRange = !!bookingEndDate
+                          && day.isoDate > bookingStartDate
+                          && day.isoDate < bookingEndDate;
                         const isDisabled = day.isBeforeStart;
                         return (
                           <button
                             key={day.isoDate}
                             type="button"
-                            id={day.isoDate === bookingStartDate ? "booking-end-date" : undefined}
                             className={[
                               "month-booking-calendar-day",
                               day.isCurrentMonth ? "is-current-month" : "is-outside-month",
                               isSelected ? "is-selected" : "",
-                              day.isoDate === bookingStartDate ? "is-start" : "",
+                              isStart ? "is-start" : "",
+                              isEnd ? "is-end" : "",
+                              isInRange ? "is-in-range" : "",
                             ].filter(Boolean).join(" ")}
                             disabled={isDisabled}
                             onClick={() => {

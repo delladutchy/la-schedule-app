@@ -1397,3 +1397,95 @@ body {
   outline: 2px solid var(--today-accent);
   outline-offset: 1px;
 }
+
+.month-booking-range-meta {
+  display: grid;
+  gap: 4px;
+}
+
+.month-booking-range-meta p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.month-booking-range-meta p span {
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.month-booking-same-day-button {
+  appearance: none;
+  width: fit-content;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.month-booking-same-day-button:hover {
+  color: var(--text);
+}
+
+.month-booking-same-day-button:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
+
+.month-booking-calendar-head {
+  display: grid;
+  grid-template-columns: 28px 1fr 28px;
+  align-items: center;
+  gap: 4px;
+}
+
+.month-booking-calendar-nav {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  height: 28px;
+  cursor: pointer;
+}
+
+.month-booking-calendar-nav:disabled {
+  color: var(--text-muted);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.month-booking-calendar-nav:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--text-muted) 45%, var(--border));
+}
+
+.month-booking-calendar-nav:not(:disabled):focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
+
+.month-booking-calendar-header {
+  text-align: center;
+}
+
+.month-booking-calendar-day.is-in-range {
+  background: color-mix(in srgb, var(--available-bg) 44%, var(--surface));
+  border-color: color-mix(in srgb, var(--available-dot) 20%, var(--border));
+}
+
+.month-booking-calendar-day.is-start,
+.month-booking-calendar-day.is-end {
+  border-color: color-mix(in srgb, var(--available-dot) 56%, var(--border));
+  background: color-mix(in srgb, var(--available-bg) 72%, var(--surface));
+  color: color-mix(in srgb, var(--available-text) 92%, var(--text));
+}
