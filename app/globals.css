@@ -85,6 +85,19 @@ body {
   letter-spacing: -0.02em;
   margin: 0 0 6px;
   color: var(--text);
+  white-space: nowrap;
+}
+
+.title-muted {
+  color: color-mix(in srgb, var(--text-muted) 90%, transparent);
+  font-weight: 420;
+  font-size: 0.7em;
+  letter-spacing: 0;
+}
+
+:root[data-theme="light"] .title-muted {
+  color: color-mix(in srgb, var(--text-muted) 58%, #ffffff);
+  font-weight: 400;
 }
 .theme-toggle-button {
   appearance: none;
@@ -126,6 +139,173 @@ body {
 :root[data-theme="light"] .board-day-badge,
 :root[data-theme="light"] .month-day-chip {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 45%, transparent);
+}
+
+/* ---------- Light Mode Week/Modal Polish ---------- */
+
+:root[data-theme="light"] .board-day-badge.booked {
+  background: #ebe5de;
+  color: #2c2620;
+  box-shadow:
+    inset 0 0 0 1px #d6cdc3,
+    0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+:root[data-theme="light"] .board-day-badge.booked::before {
+  background: #706458;
+}
+
+:root[data-theme="light"] .board-day-badge.booked.board-day-badge--private {
+  background: #ece9e4;
+  color: #7a7269;
+  box-shadow:
+    inset 0 0 0 1px #d9d1c9,
+    0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+:root[data-theme="light"] .board-day-badge.booked.board-day-badge--private::before {
+  background: #a49a90;
+}
+
+:root[data-theme="light"] .board-day.booked-private .board-day-label {
+  color: #766f68;
+}
+
+:root[data-theme="light"] .board-day.booked-private {
+  background: #f6f4f1;
+  border-bottom-color: #e3ddd6;
+}
+
+:root[data-theme="light"] .board-day-unavailable-text {
+  color: #7f766d;
+}
+
+:root[data-theme="light"] .month-day-unavailable-text {
+  color: #81786f;
+}
+
+:root[data-theme="light"] .month-day--booked-private .month-day-num {
+  color: #706861;
+}
+
+:root[data-theme="light"] .month-row-bar--details {
+  background: #dfd2c4;
+  color: #221a14;
+  border-color: #c8b8a7;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    0 1px 1px rgba(57, 46, 35, 0.13);
+}
+
+:root[data-theme="light"] .month-row-bar--private {
+  background: #e8e3dc;
+  color: #666057;
+  border-color: #cdc4ba;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    0 1px 1px rgba(57, 46, 35, 0.08);
+}
+
+:root[data-theme="light"] .month-day-availability {
+  color: #587865;
+  font-weight: 540;
+}
+
+:root[data-theme="light"] .month-weekday {
+  color: #6f675e;
+}
+
+:root[data-theme="light"] .month-week-days > .month-day {
+  border-color: #d5cbc1;
+  background: #fcfaf7;
+}
+
+:root[data-theme="light"] .month-day.outside {
+  background: #f1ede8;
+  border-color: #e4dbd1;
+}
+
+:root[data-theme="light"] .month-week-days {
+  box-shadow:
+    0 1px 2px rgba(33, 24, 16, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+:root[data-theme="light"] .board-day-pill-button:hover {
+  background: #e4ddd5;
+}
+
+:root[data-theme="light"] .board-day-modal-backdrop {
+  background: rgba(15, 23, 42, 0.26);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+:root[data-theme="dark"] .board-day-modal-backdrop {
+  background: rgba(0, 0, 0, 0.54);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+:root[data-theme="light"] .board-day-modal {
+  background: #ffffff;
+  border-color: #cfc5bc;
+  box-shadow:
+    0 18px 50px rgba(15, 23, 42, 0.18),
+    0 4px 14px rgba(15, 23, 42, 0.09);
+}
+
+:root[data-theme="light"] .board-day-modal-title {
+  color: #171310;
+  font-weight: 650;
+}
+
+:root[data-theme="light"] .board-day-modal-event-title {
+  color: #1f1a16;
+  font-weight: 600;
+}
+
+:root[data-theme="light"] .board-day-modal-event-date {
+  color: #2d241d;
+}
+
+:root[data-theme="light"] .board-day-modal-events li {
+  border-top-color: #e4dbd2;
+}
+
+:root[data-theme="light"] .board-day-modal-event-meta {
+  color: #5a5148;
+}
+
+:root[data-theme="light"] .board-day-modal-event-label {
+  color: #6b6259;
+}
+
+:root[data-theme="light"] .board-day-modal-close-icon {
+  background: #ffffff;
+  border-color: #d3c9c0;
+  color: #5a5047;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+:root[data-theme="light"] .board-day-modal-close-icon:hover {
+  color: #2d271f;
+  border-color: #bfb3a8;
+}
+
+:root[data-theme="light"] .board-day-connector::before,
+:root[data-theme="light"] .board-day-connector::after {
+  background: currentColor;
+}
+
+:root[data-theme="light"] .board-day-connector--start,
+:root[data-theme="light"] .board-day-connector--middle,
+:root[data-theme="light"] .board-day-connector--end {
+  opacity: 0.64;
+}
+
+:root[data-theme="light"] .board-day-connector {
+  color: color-mix(in srgb, #5f564e 82%, transparent);
 }
 
 /* ---------- View toggle ---------- */
@@ -205,6 +385,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 28px;
+  --connector-rail-right: -7px;
 }
 .board-empty {
   border: 1px solid var(--border);
@@ -246,7 +427,8 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  position: relative;
+  overflow: visible;
   box-shadow: var(--shadow-sm);
 }
 
@@ -254,7 +436,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 20px;
+  position: relative;
+  padding: 18px 40px 18px 20px;
   border-bottom: 1px solid var(--border);
   gap: 16px;
 }
@@ -324,6 +507,205 @@ body {
 }
 .board-day-badge.booked::before { background: var(--booked-dot); }
 
+.board-day.booked-private {
+  background: color-mix(in srgb, var(--surface) 90%, #9ca3af);
+  border-bottom-color: color-mix(in srgb, var(--border) 72%, #9ca3af);
+}
+.board-day.booked-private .board-day-label {
+  color: color-mix(in srgb, var(--text) 72%, var(--text-subtle));
+}
+
+.board-day-unavailable-text {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: color-mix(in srgb, var(--text-muted) 82%, var(--text-subtle));
+}
+
+.board-day-right {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.board-day-pill-button {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.board-day-pill-button:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 2px;
+}
+
+.board-day-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(0, 0, 0, 0.58);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.board-day-modal {
+  width: min(520px, calc(100vw - 24px));
+  max-height: min(78vh, 640px);
+  overflow: auto;
+  background: color-mix(in srgb, var(--surface) 96%, #000000);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 14px 14px 12px;
+  position: relative;
+}
+
+.board-day-modal-title {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.board-day-modal-events {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.board-day-modal-events li {
+  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  padding-top: 10px;
+}
+
+.board-day-modal-events li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.board-day-modal-event-title {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.board-day-modal-event-date {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  font-weight: 560;
+  letter-spacing: 0.01em;
+}
+
+.board-day-modal-event-meta {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.board-day-modal-event-label {
+  color: var(--text-subtle);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.board-day-modal-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.board-day-modal-close-icon {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: 999px;
+  width: 28px;
+  height: 28px;
+  line-height: 1;
+  font-size: 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.board-day-modal-close-icon:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.board-day-modal-close-icon:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 2px;
+}
+
+.board-day-connector {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--connector-rail-right);
+  width: 13px;
+  color: color-mix(in srgb, #ffffff 68%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.board-day-connector::before,
+.board-day-connector::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  background: currentColor;
+}
+
+.board-day-connector--start,
+.board-day-connector--middle,
+.board-day-connector--end {
+  opacity: 0.62;
+}
+
+.board-day-connector--start::before {
+  top: calc(50% - 0.5px);
+  bottom: -1px;
+  width: 1px;
+}
+.board-day-connector--start::after {
+  top: calc(50% - 0.5px);
+  width: 13px;
+  height: 1px;
+}
+
+.board-day-connector--middle::before {
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+}
+
+.board-day-connector--end::before {
+  top: -1px;
+  bottom: calc(50% - 0.5px);
+  width: 1px;
+}
+.board-day-connector--end::after {
+  bottom: calc(50% - 0.5px);
+  width: 13px;
+  height: 1px;
+}
+
 /* ---------- Month board ---------- */
 
 .month-board {
@@ -350,7 +732,7 @@ body {
 }
 .month-weekdays {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 6px;
   margin: 0 2px;
 }
@@ -363,25 +745,107 @@ body {
   text-transform: uppercase;
 }
 .month-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 6px;
-}
-.month-day {
-  min-height: 84px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 8px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 10px;
-  box-shadow: var(--shadow-sm);
+  gap: 6px;
+}
+.month-week {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.month-week-body {
+  position: relative;
+}
+.month-week-row-bars {
+  position: absolute;
+  top: 34px;
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-rows: repeat(var(--month-week-bar-rows, 0), minmax(18px, auto));
+  gap: 4px 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.month-row-bar {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 18px;
+  padding: 1px 8px;
+  font-size: 11px;
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+  pointer-events: auto;
+}
+.month-row-bar-label {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.month-row-bar--details {
+  background: color-mix(in srgb, var(--booked-bg) 88%, var(--surface));
+  color: var(--booked-text);
+  border-color: color-mix(in srgb, var(--booked-dot) 30%, transparent);
+}
+.month-row-bar--private {
+  background: color-mix(in srgb, var(--surface) 90%, #9ca3af);
+  color: color-mix(in srgb, var(--text-muted) 88%, var(--text-subtle));
+  border-color: color-mix(in srgb, var(--border) 80%, #9ca3af);
+}
+.month-row-bar:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
+.month-week-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0;
+}
+.month-day {
+  min-height: 74px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  padding: calc(8px + (var(--month-week-bar-rows, 0) * 22px)) 8px 8px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 6px;
+  box-shadow: none;
+  overflow: hidden;
+}
+.month-week-days > .month-day {
+  border-left-width: 0;
+}
+.month-week-days > .month-day:nth-child(7n + 1) {
+  border-left-width: 1px;
+  border-top-left-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+}
+.month-week-days > .month-day:nth-child(7n) {
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
 }
 .month-day.outside {
   color: var(--text-subtle);
-  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+  background: color-mix(in srgb, var(--surface) 86%, var(--bg));
+  border-color: color-mix(in srgb, var(--border) 78%, transparent);
+  opacity: 0.72;
 }
 .month-day-num {
   display: inline-flex;
@@ -395,6 +859,19 @@ body {
   color: var(--text);
   border-radius: 999px;
 }
+.month-day--occupied .month-day-num {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+}
+.month-day--occupied .month-day-num:not(.month-day-num--today) {
+  color: color-mix(in srgb, var(--text-subtle) 86%, transparent);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
 .month-day-num--today {
   color: var(--today-badge-text);
   background: var(--today-accent);
@@ -406,7 +883,15 @@ body {
   color: var(--text-subtle);
 }
 .month-day.outside:not(.today) .month-day-num {
-  color: var(--text-subtle);
+  color: color-mix(in srgb, var(--text-subtle) 76%, transparent);
+  font-weight: 500;
+}
+.month-day-availability {
+  margin-top: auto;
+  font-size: 10px;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--available-text) 66%, var(--text-subtle));
+  letter-spacing: 0.01em;
 }
 .month-day-chip {
   display: inline-flex;
@@ -425,12 +910,24 @@ body {
   background: var(--booked-bg);
   color: var(--booked-text);
 }
+.month-day--booked-private .month-day-num {
+  color: color-mix(in srgb, var(--text) 64%, var(--text-subtle));
+}
+.month-day-unavailable-text {
+  margin-top: auto;
+  font-size: 10px;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-muted) 76%, var(--text-subtle));
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+}
 .month-day-chip--available {
   background: var(--available-bg);
   color: var(--available-text);
 }
 .month-day-placeholder {
-  height: 17px;
+  margin-top: auto;
+  height: 14px;
 }
 
 /* ---------- Fail-closed ---------- */
@@ -497,15 +994,61 @@ body {
   }
   .view-toggle { margin-bottom: 14px; }
   .view-toggle-button { padding: 6px 10px; }
-  .board-day { padding: 16px; }
+  .board-day { padding: 16px 34px 16px 16px; }
   .board-day-label { font-size: 15px; }
   .board-day-badge { font-size: 12px; padding: 5px 10px; }
+  .board-day-modal-backdrop { padding: 12px; }
+  .board-day-modal {
+    width: min(440px, calc(100vw - 16px));
+    max-height: min(82vh, 560px);
+    padding: 12px 12px 10px;
+  }
+  .board-day-modal-title { font-size: 14px; }
+  .board-day-modal-event-title { font-size: 11px; }
+  .board-day-modal-event-date { font-size: 12px; }
+  .board-day-modal-event-meta { font-size: 10px; }
+  .board-day-modal-close-icon {
+    width: 26px;
+    height: 26px;
+    font-size: 16px;
+  }
+  .board { --connector-rail-right: -6px; }
+  .board-day-connector { width: 11px; }
+  .board-day-connector--start::after,
+  .board-day-connector--end::after { width: 11px; }
   .month-weekdays { gap: 4px; }
   .month-grid { gap: 4px; }
+  .month-week { gap: 0; }
+  .month-week-row-bars {
+    top: 30px;
+    grid-template-rows: repeat(var(--month-week-bar-rows, 0), minmax(16px, auto));
+    gap: 3px 0;
+  }
+  .month-row-bar {
+    min-height: 16px;
+    font-size: 10px;
+    padding: 1px 6px;
+  }
+  .month-week-days { gap: 0; }
   .month-day {
-    min-height: 72px;
-    padding: 6px;
-    gap: 8px;
+    min-height: 62px;
+    padding: calc(6px + (var(--month-week-bar-rows, 0) * 19px)) 6px 6px;
+    gap: 6px;
+  }
+  .month-day-num {
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+  .month-day--occupied .month-day-num {
+    top: 6px;
+  }
+  .month-day--occupied .month-day-num:not(.month-day-num--today) {
+    font-size: 10px;
+  }
+  .month-day-availability {
+    font-size: 9px;
   }
   .month-day-chip {
     gap: 5px;

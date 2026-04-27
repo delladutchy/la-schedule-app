@@ -7,7 +7,7 @@ config({ path: '.env.local' });
  * One-time Google OAuth helper.
  *
  * Walks you through producing a long-lived refresh token for the
- * Calendar FreeBusy read-only scope. You run this ONCE on your own
+ * Calendar read-only scopes (FreeBusy + event titles). You run this ONCE on your own
  * machine; the resulting refresh token goes into Netlify env vars.
  *
  * Prerequisites:
@@ -39,9 +39,12 @@ const REDIRECT_HOST = "127.0.0.1";
 const REDIRECT_PORT = 53682;
 const REDIRECT_URI = `http://${REDIRECT_HOST}:${REDIRECT_PORT}/oauth/callback`;
 
-// Read-only FreeBusy is all we need. We deliberately do NOT request
-// read access to event details.
-const SCOPES = ["https://www.googleapis.com/auth/calendar.freebusy"];
+// Read-only scopes: keep FreeBusy behavior and allow internal schedule
+// event-title reads from configured calendars.
+const SCOPES = [
+  "https://www.googleapis.com/auth/calendar.freebusy",
+  "https://www.googleapis.com/auth/calendar.readonly",
+];
 
 function fail(msg: string): never {
   console.error(`\n✗ ${msg}\n`);

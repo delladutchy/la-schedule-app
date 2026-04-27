@@ -57,4 +57,18 @@ describe("SnapshotSchema", () => {
     const r = SnapshotSchema.safeParse({ ...base, extra: "junk" });
     expect(r.success).toBe(true);
   });
+
+  it("accepts namedEvents with optional calendar display metadata", () => {
+    const r = SnapshotSchema.safeParse({
+      ...base,
+      namedEvents: [{
+        startUtc: "2025-10-14T08:00:00.000Z",
+        endUtc: "2025-10-14T09:00:00.000Z",
+        summary: "Unavailable",
+        calendarId: "personal@group.calendar.google.com",
+        displayMode: "private",
+      }],
+    });
+    expect(r.success).toBe(true);
+  });
 });

@@ -7,19 +7,20 @@
  *   3. Apply pre/post buffers.
  *   4. Merge overlaps & adjacent blocks deterministically.
  *   5. Clip to the projection window.
- *   6. Produce a validated Snapshot.
+ *   6. Optionally fetch event summaries for internal schedule labels.
+ *   7. Produce a validated Snapshot.
  *
- * If ANY calendar errored - even one - we abort and do NOT write a new
+ * If ANY calendar errored in FreeBusy, we abort and do NOT write a new
  * snapshot. The old one stays in place. This is fail-closed behavior:
  * better to be slightly stale than to show free time that might be busy
  * on a calendar we couldn't read.
  */
 
 import { applyBuffers } from "./intervals";
-import { fetchFreeBusy } from "./google";
+import { fetchFreeBusy, fetchCalendarEvents } from "./google";
 import { getConfig } from "./config";
 import { writeCurrentSnapshot } from "./store";
-import type { BusyBlock, Snapshot } from "./types";
+import type { BusyBlock, Snapshot, NamedEvent } from "./types";
 import { DateTime } from "luxon";
 
 export interface BuildResult {
@@ -86,12 +87,53 @@ export async function buildAndPersistSnapshot(
     ...(i.tentative ? { tentative: true } : {}),
   }));
 
+  // Best-effort event-name fetch for internal schedule rendering.
+  // We intentionally do not fail snapshot writes on title fetch errors,
+  // so existing booked/available behavior remains reliable.
+  let namedEvents: NamedEvent[] | undefined;
+  try {
+    const names = await fetchCalendarEvents({
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+      refreshToken: env.GOOGLE_REFRESH_TOKEN,
+      calendarIds: env.BLOCKER_CALENDAR_IDS,
+      timeMinMs: windowStartMs,
+      timeMaxMs: windowEndMs,
+      displayTimezone: file.timezone,
+    });
+
+    if (names.erroredCalendarIds.length > 0) {
+      console.error("[sync] events per-calendar errors (continuing without names):", names.erroredCalendarIds);
+    } else {
+      namedEvents = names.events
+        .map((event) => ({
+          startMs: Math.max(event.startMs, windowStartMs),
+          endMs: Math.min(event.endMs, windowEndMs),
+          summary: event.summary.trim(),
+          calendarId: event.calendarId,
+          displayMode: env.CALENDAR_DISPLAY_MODES[event.calendarId] ?? "details",
+        }))
+        .filter((event) => event.summary.length > 0 && event.endMs > event.startMs)
+        .map((event) => ({
+          startUtc: new Date(event.startMs).toISOString(),
+          endUtc: new Date(event.endMs).toISOString(),
+          summary: event.displayMode === "private" ? "Unavailable" : event.summary,
+          calendarId: event.calendarId,
+          displayMode: event.displayMode,
+        }));
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[sync] events transport error (continuing without names):", msg);
+  }
+
   const snapshot: Snapshot = {
     version: 1,
     generatedAtUtc: new Date(nowMs).toISOString(),
     windowStartUtc: new Date(windowStartMs).toISOString(),
     windowEndUtc: new Date(windowEndMs).toISOString(),
     busy,
+    ...(namedEvents && namedEvents.length > 0 ? { namedEvents } : {}),
     sourceCalendarIds: env.BLOCKER_CALENDAR_IDS,
     config: {
       timezone: file.timezone,

@@ -10,7 +10,7 @@
   "showTentative": false,
   "freshTtlMinutes": 30,
   "hardTtlMinutes": 180,
-  "pageTitle": "Availability",
+  "pageTitle": "Availability — Jeff",
   "pageSubtitle": "Reflects selected work calendars only",
   "footerNote": "All times shown in the timezone noted above. For the most accurate scheduling, please confirm directly."
 }

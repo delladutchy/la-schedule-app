@@ -11,6 +11,7 @@
 
 import { z } from "zod";
 import fileConfig from "../config/availability.config.json";
+import type { CalendarDisplayMode } from "./types";
 
 const FileConfigSchema = z.object({
   /** IANA timezone used to render the page, e.g. "America/Los_Angeles". */
@@ -58,6 +59,47 @@ const EnvSchema = z.object({
   BLOCKER_CALENDAR_IDS: z.string().min(1)
     .transform((s) => s.split(",").map((x) => x.trim()).filter(Boolean))
     .refine((arr) => arr.length > 0, "At least one calendar id required"),
+
+  /**
+   * Optional per-calendar display overrides.
+   *
+   * Format:
+   *   "calendarId:details,calendarId2:private"
+   *   "calendarId=details,calendarId2=private"
+   *
+   * Any calendar not listed here defaults to "details".
+   */
+  CALENDAR_DISPLAY_MODES: z.string().optional()
+    .transform((raw): Record<string, CalendarDisplayMode> => {
+      if (!raw || raw.trim().length === 0) return {};
+      const map: Record<string, CalendarDisplayMode> = {};
+
+      for (const entry of raw.split(",")) {
+        const part = entry.trim();
+        if (!part) continue;
+        const eqIndex = part.indexOf("=");
+        const colonIndex = part.indexOf(":");
+        const splitIndex = eqIndex >= 0 ? eqIndex : colonIndex;
+        if (splitIndex <= 0 || splitIndex === part.length - 1) {
+          throw new Error(
+            `Invalid CALENDAR_DISPLAY_MODES entry "${part}". Use "calendarId:details" or "calendarId:private".`
+          );
+        }
+        const calendarId = part.slice(0, splitIndex).trim();
+        const modeRaw = part.slice(splitIndex + 1).trim().toLowerCase();
+        if (!calendarId) {
+          throw new Error(`Invalid CALENDAR_DISPLAY_MODES entry "${part}" (missing calendar id).`);
+        }
+        if (modeRaw !== "details" && modeRaw !== "private") {
+          throw new Error(
+            `Invalid CALENDAR_DISPLAY_MODES mode "${modeRaw}" for calendar "${calendarId}". Use "details" or "private".`
+          );
+        }
+        map[calendarId] = modeRaw;
+      }
+
+      return map;
+    }),
 
   /** OAuth client id. */
   GOOGLE_CLIENT_ID: z.string().min(1),
