@@ -6,6 +6,7 @@ out/
 .env
 .env.local
 .env.*.local
+.google-refresh-token.local
 *.log
 .DS_Store
 .vscode/

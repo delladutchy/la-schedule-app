@@ -27,17 +27,20 @@ config({ path: '.env.local' });
  *   - opens a Google consent URL in your browser
  *   - receives the auth code callback
  *   - exchanges it for a refresh token
- *   - prints the refresh token to stdout
- *   - does NOT persist anything to disk
+ *   - writes the refresh token to a local ignored file
+ *   - does NOT print the refresh token to stdout
  */
 
 import http from "node:http";
 import { URL } from "node:url";
+import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { google } from "googleapis";
 
 const REDIRECT_HOST = "127.0.0.1";
 const REDIRECT_PORT = 53682;
 const REDIRECT_URI = `http://${REDIRECT_HOST}:${REDIRECT_PORT}/oauth/callback`;
+const REFRESH_TOKEN_OUTPUT_FILE = ".google-refresh-token.local";
 
 // Read scopes keep FreeBusy + title fetch behavior, and calendar.events
 // enables token-gated write-through all-day gig creation.
@@ -125,10 +128,17 @@ async function main() {
     );
   }
 
+  const tokenFilePath = resolve(process.cwd(), REFRESH_TOKEN_OUTPUT_FILE);
+  await writeFile(tokenFilePath, `${tokens.refresh_token}\n`, { mode: 0o600 });
+
   console.log("\n✓ Success. Paste these into your Netlify site environment:\n");
   console.log("  GOOGLE_CLIENT_ID      = <the client id you already have>");
   console.log("  GOOGLE_CLIENT_SECRET  = <the client secret you already have>");
-  console.log(`  GOOGLE_REFRESH_TOKEN  = ${tokens.refresh_token}\n`);
+  console.log(`  GOOGLE_REFRESH_TOKEN  = <saved to ${tokenFilePath}>\n`);
+  console.log(
+    "Refresh token generated. Raw token output is disabled for safety.\n" +
+    `Read it locally from ${tokenFilePath} and remove the file when done.\n`
+  );
   console.log(
     "Keep the refresh token secret. If it leaks, revoke it at " +
     "https://myaccount.google.com/permissions and rerun this script.\n"
