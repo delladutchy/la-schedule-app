@@ -3,9 +3,8 @@
 A read-only, enterprise-clean availability page backed by a cached snapshot of
 your Google Calendar.
 
-**Not** a booking tool. Nobody picks a slot, nobody books anything, no meeting
-is ever created. It only shows when you are busy vs. available to work so a
-third party can glance at your schedule before reaching out.
+Primarily a read-only schedule/availability view, with an optional protected
+all-day gig write-through endpoint for internal editor workflows.
 
 ---
 
@@ -193,6 +192,8 @@ In the Netlify site → **Site configuration** → **Environment variables**, ad
 | `GOOGLE_REFRESH_TOKEN` | output of `npm run google:auth` |
 | `BLOCKER_CALENDAR_IDS` | comma-separated, e.g. `primary,abcd1234...@group.calendar.google.com` |
 | `ADMIN_TOKEN` | `openssl rand -hex 32` |
+| `EDITOR_TOKEN` | `openssl rand -hex 32` (used only for `/api/gigs/create`) |
+| `GOOGLE_CALENDAR_ID` | target calendar id for editor write-through creates |
 
 All scopes (`Production`, `Deploy previews`, `Branch deploys`) are fine.
 
@@ -239,6 +240,35 @@ curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" https://your-site.netlify.a
 Use this after changing blocker calendar IDs, or if you moved a bunch of
 meetings and want the page to reflect it immediately instead of waiting up
 to 10 minutes.
+
+### Creating an all-day gig (token-gated editor endpoint)
+
+```bash
+curl -X POST https://your-site.netlify.app/api/gigs/create \
+  -H "Authorization: Bearer $EDITOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "summary": "LA#71411 Wilmington Flower Market",
+    "startDate": "2026-05-06",
+    "endDate": "2026-05-07"
+  }'
+```
+
+Single-day payload is also supported:
+
+```json
+{
+  "summary": "LA#71760 Camden Yards",
+  "date": "2026-05-08"
+}
+```
+
+Behavior:
+- pre-checks the selected day/range against current snapshot availability
+- returns `409` with `"Day already booked."` when blocked
+- uses deterministic event id (calendar + date range) to prevent duplicate
+  creates from fast double-submits
+- writes to `GOOGLE_CALENDAR_ID` only
 
 ### Checking sync health
 

@@ -15,10 +15,13 @@ import { google } from "googleapis";
 import { DateTime } from "luxon";
 import type { Interval } from "./intervals";
 
-interface CalendarQueryOptions {
+interface CalendarAuthOptions {
   clientId: string;
   clientSecret: string;
   refreshToken: string;
+}
+
+interface CalendarQueryOptions extends CalendarAuthOptions {
   calendarIds: string[];
   /** Inclusive start of the query window (UTC ms). */
   timeMinMs: number;
@@ -52,7 +55,31 @@ export interface CalendarEventsResult {
   erroredCalendarIds: string[];
 }
 
-function buildCalendarClient(opts: CalendarQueryOptions) {
+export interface CreateAllDayEventOptions extends CalendarAuthOptions {
+  calendarId: string;
+  summary: string;
+  description?: string;
+  eventId?: string;
+  /** Inclusive local day in YYYY-MM-DD format. */
+  startDate: string;
+  /** Exclusive local day in YYYY-MM-DD format. */
+  endDateExclusive: string;
+}
+
+export interface CreatedCalendarEvent {
+  id: string;
+  status: string;
+  htmlLink?: string;
+}
+
+export class CalendarEventAlreadyExistsError extends Error {
+  constructor(message: string = "Calendar event already exists for this date range.") {
+    super(message);
+    this.name = "CalendarEventAlreadyExistsError";
+  }
+}
+
+function buildCalendarClient(opts: CalendarAuthOptions) {
   const auth = new google.auth.OAuth2(opts.clientId, opts.clientSecret);
   auth.setCredentials({ refresh_token: opts.refreshToken });
   return google.calendar({ version: "v3", auth });
@@ -222,4 +249,48 @@ export async function fetchCalendarEvents(
   });
 
   return { events: sorted, erroredCalendarIds: [...errored] };
+}
+
+
+export async function createAllDayEvent(
+  opts: CreateAllDayEventOptions,
+): Promise<CreatedCalendarEvent> {
+  const calendar = buildCalendarClient(opts);
+  let response;
+  try {
+    response = await calendar.events.insert({
+      calendarId: opts.calendarId,
+      requestBody: {
+        ...(opts.eventId ? { id: opts.eventId } : {}),
+        summary: opts.summary.trim(),
+        ...(opts.description?.trim()
+          ? { description: opts.description.trim() }
+          : {}),
+        start: { date: opts.startDate },
+        end: { date: opts.endDateExclusive },
+        transparency: "opaque",
+      },
+      fields: "id,status,htmlLink",
+    });
+  } catch (error: unknown) {
+    const status = typeof error === "object" && error !== null && "status" in error
+      ? (error as { status?: number }).status
+      : undefined;
+    if (status === 409) {
+      throw new CalendarEventAlreadyExistsError();
+    }
+    throw error;
+  }
+
+  const id = response.data.id?.trim();
+  const status = response.data.status?.trim();
+  if (!id || !status) {
+    throw new Error("Google Calendar did not return a valid event id/status.");
+  }
+
+  return {
+    id,
+    status,
+    ...(response.data.htmlLink ? { htmlLink: response.data.htmlLink } : {}),
+  };
 }

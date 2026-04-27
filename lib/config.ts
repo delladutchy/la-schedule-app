@@ -111,6 +111,12 @@ const EnvSchema = z.object({
   /** Token that must be presented to view /admin status page. */
   ADMIN_TOKEN: z.string().min(16, "ADMIN_TOKEN must be at least 16 chars"),
 
+  /** Token that must be presented to create/edit gigs. */
+  EDITOR_TOKEN: z.string().min(16, "EDITOR_TOKEN must be at least 16 chars"),
+
+  /** Calendar ID used for editor write-through gig creation. */
+  GOOGLE_CALENDAR_ID: z.string().min(1, "GOOGLE_CALENDAR_ID is required"),
+
   /** Optional override for Netlify Blobs store name. */
   BLOBS_STORE_NAME: z.string().default("availability-snapshots"),
 

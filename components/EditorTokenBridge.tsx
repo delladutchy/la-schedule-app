@@ -1,0 +1,28 @@
+"use client";
+
+import { useEffect } from "react";
+import { useSearchParams } from "next/navigation";
+import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
+
+/**
+ * Captures `?editor=<token>` once, stores it in sessionStorage, then strips it
+ * from the URL so normal navigation stays clean/read-only by default.
+ */
+export function EditorTokenBridge() {
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    const token = sanitizeEditorToken(searchParams.get("editor"));
+    if (!token) return;
+
+    window.sessionStorage.setItem(EDITOR_TOKEN_SESSION_KEY, token);
+
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("editor")) return;
+    url.searchParams.delete("editor");
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState(window.history.state, "", next);
+  }, [searchParams]);
+
+  return null;
+}

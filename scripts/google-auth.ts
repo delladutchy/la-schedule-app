@@ -39,11 +39,12 @@ const REDIRECT_HOST = "127.0.0.1";
 const REDIRECT_PORT = 53682;
 const REDIRECT_URI = `http://${REDIRECT_HOST}:${REDIRECT_PORT}/oauth/callback`;
 
-// Read-only scopes: keep FreeBusy behavior and allow internal schedule
-// event-title reads from configured calendars.
+// Read scopes keep FreeBusy + title fetch behavior, and calendar.events
+// enables token-gated write-through all-day gig creation.
 const SCOPES = [
   "https://www.googleapis.com/auth/calendar.freebusy",
   "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
 ];
 
 function fail(msg: string): never {

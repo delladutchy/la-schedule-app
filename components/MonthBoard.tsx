@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { summarizeBookedDayLabel, type MonthBoardData } from "@/lib/view";
+import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
 
 interface Props {
   month: MonthBoardData;
@@ -17,6 +19,10 @@ interface ActiveDetailPanel {
   header: string;
   headerJobNumber?: string;
   details: BookedLabel["details"];
+}
+
+interface ActiveBookingPanel {
+  date: string;
 }
 
 export function monthBarGridStyle(startDayIndex: number, endDayIndex: number, laneIndex: number): {
@@ -43,22 +49,113 @@ function stripJobPrefix(summary: string, jobNumber?: string): string {
  * Monthly board with compact multi-day event bars.
  */
 export function MonthBoard({ month, todayKey }: Props) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [activeDetailPanel, setActiveDetailPanel] = useState<ActiveDetailPanel | null>(null);
+  const [editorToken, setEditorToken] = useState<string | null>(null);
+  const [activeBookingPanel, setActiveBookingPanel] = useState<ActiveBookingPanel | null>(null);
+  const [bookingJobTitle, setBookingJobTitle] = useState("");
+  const [bookingNotes, setBookingNotes] = useState("");
+  const [bookingError, setBookingError] = useState<string | null>(null);
+  const [isBookingSavePending, setIsBookingSavePending] = useState(false);
 
   useEffect(() => {
-    if (!activeDetailPanel) return undefined;
+    if (!activeDetailPanel && !activeBookingPanel) return undefined;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setActiveDetailPanel(null);
+        closeBookingPanel();
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeDetailPanel]);
+  }, [activeDetailPanel, activeBookingPanel]);
+
+  useEffect(() => {
+    const fromUrl = sanitizeEditorToken(searchParams.get("editor"));
+    if (fromUrl) {
+      window.sessionStorage.setItem(EDITOR_TOKEN_SESSION_KEY, fromUrl);
+      setEditorToken(fromUrl);
+      return;
+    }
+    const fromSession = sanitizeEditorToken(
+      window.sessionStorage.getItem(EDITOR_TOKEN_SESSION_KEY),
+    );
+    setEditorToken(fromSession);
+  }, [searchParams]);
 
   const closeDetailPanel = () => setActiveDetailPanel(null);
+  const closeBookingPanel = () => {
+    setActiveBookingPanel(null);
+    setBookingJobTitle("");
+    setBookingNotes("");
+    setBookingError(null);
+    setIsBookingSavePending(false);
+  };
+
+  const editorModeActive = !!editorToken;
+
+  async function saveBooking() {
+    if (!activeBookingPanel || isBookingSavePending) return;
+    if (!editorToken) {
+      setBookingError("Editor token missing. Re-open the editor link.");
+      return;
+    }
+    const summary = bookingJobTitle.trim();
+    if (!summary) {
+      setBookingError("Job Title is required.");
+      return;
+    }
+
+    setBookingError(null);
+    setIsBookingSavePending(true);
+
+    try {
+      const response = await fetch("/api/gigs/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${editorToken}`,
+        },
+        body: JSON.stringify({
+          summary,
+          ...(bookingNotes.trim() ? { description: bookingNotes.trim() } : {}),
+          date: activeBookingPanel.date,
+        }),
+      });
+
+      if (response.ok) {
+        closeBookingPanel();
+        router.refresh();
+        window.location.reload();
+        return;
+      }
+
+      if (response.status === 401) {
+        window.sessionStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+        setEditorToken(null);
+        setBookingError("Editor session expired. Re-open the editor link.");
+        return;
+      }
+
+      let message = "Could not save booking.";
+      try {
+        const payload = await response.json() as { message?: string };
+        if (payload.message?.trim()) {
+          message = payload.message.trim();
+        }
+      } catch {
+        // ignore parse issues and keep generic message
+      }
+      setBookingError(message);
+    } catch {
+      setBookingError("Network error while saving booking.");
+    } finally {
+      setIsBookingSavePending(false);
+    }
+  }
   const todayMonthKey = todayKey.slice(0, 7);
   const monthIsPast = month.monthKey < todayMonthKey;
   const allDays = month.weeks.flatMap((w) => w.days);
@@ -66,7 +163,12 @@ export function MonthBoard({ month, todayKey }: Props) {
 
   return (
     <section className="month-board" aria-label={month.label}>
-      <h2 className="month-label">{month.label}</h2>
+      <div className="month-label-row">
+        <h2 className="month-label">{month.label}</h2>
+        {editorModeActive ? (
+          <span className="editor-mode-active">Editor mode active</span>
+        ) : null}
+      </div>
       {weekendToday ? (
         <div className="month-weekend-today" aria-label={`Today: ${weekendToday.date}`}>
           <span className="month-day-num month-day-num--today">{weekendToday.dayOfMonth}</span>
@@ -141,6 +243,7 @@ export function MonthBoard({ month, todayKey }: Props) {
                           style={monthBarGridStyle(bar.startDayIndex, bar.endDayIndex, compactLaneIndex)}
                           aria-label={safeAria}
                           onClick={() => {
+                            closeBookingPanel();
                             if (activeDetailPanel?.barKey === bar.key) {
                               setActiveDetailPanel(null);
                               return;
@@ -176,6 +279,10 @@ export function MonthBoard({ month, todayKey }: Props) {
                     const bookedLabel = d.status === "booked"
                       ? summarizeBookedDayLabel(d.eventNames, d.eventDetails, d.bookedDisplay)
                       : null;
+                    const canBookDay = editorModeActive
+                      && d.isCurrentMonth
+                      && !isPastCurrentMonthDay
+                      && d.status === "available";
                     const hasCoveringBar = visibleBars.some(
                       (bar) => dayIndex >= bar.startDayIndex && dayIndex <= bar.endDayIndex,
                     );
@@ -200,7 +307,23 @@ export function MonthBoard({ month, todayKey }: Props) {
                         </div>
                         {d.isCurrentMonth && !isPastCurrentMonthDay ? (
                           d.status === "available" ? (
-                            <div className="month-day-availability" aria-hidden="true">Available</div>
+                            canBookDay ? (
+                              <button
+                                type="button"
+                                className="month-day-book-button"
+                                onClick={() => {
+                                  setActiveDetailPanel(null);
+                                  setActiveBookingPanel({ date: d.date });
+                                  setBookingJobTitle("");
+                                  setBookingNotes("");
+                                  setBookingError(null);
+                                }}
+                              >
+                                Click to book
+                              </button>
+                            ) : (
+                              <div className="month-day-availability" aria-hidden="true">Available</div>
+                            )
                           ) : bookedLabel?.isPrivateUnavailable ? (
                             <div className="month-day-unavailable-text" aria-hidden="true">Unavailable</div>
                           ) : hasCoveringBar ? (
@@ -284,6 +407,87 @@ export function MonthBoard({ month, todayKey }: Props) {
             ) : (
               <p className="board-day-modal-empty">No event details available.</p>
             )}
+          </section>
+        </div>
+      ) : null}
+
+      {activeBookingPanel ? (
+        <div
+          className="board-day-modal-backdrop"
+          role="presentation"
+          onClick={closeBookingPanel}
+        >
+          <section
+            className="board-day-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="month-booking-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="board-day-modal-close-icon"
+              aria-label="Close booking editor"
+              onClick={closeBookingPanel}
+            >
+              ×
+            </button>
+
+            <h3 id="month-booking-title" className="board-day-modal-title">
+              Book Day
+            </h3>
+            <p className="board-day-modal-event-date">{activeBookingPanel.date}</p>
+
+            <div className="month-booking-form">
+              <label className="month-booking-label" htmlFor="booking-job-title">
+                Job Title
+              </label>
+              <input
+                id="booking-job-title"
+                className="month-booking-input"
+                value={bookingJobTitle}
+                onChange={(event) => setBookingJobTitle(event.target.value)}
+                placeholder="LA#71411 Wilmington Flower Market"
+                maxLength={240}
+                autoFocus
+              />
+
+              <label className="month-booking-label" htmlFor="booking-notes">
+                Notes
+              </label>
+              <textarea
+                id="booking-notes"
+                className="month-booking-textarea"
+                value={bookingNotes}
+                onChange={(event) => setBookingNotes(event.target.value)}
+                placeholder="Optional notes"
+                maxLength={4000}
+                rows={4}
+              />
+
+              {bookingError ? (
+                <p className="month-booking-error" role="alert">{bookingError}</p>
+              ) : null}
+
+              <div className="month-booking-actions">
+                <button
+                  type="button"
+                  className="month-booking-button month-booking-button--secondary"
+                  onClick={closeBookingPanel}
+                  disabled={isBookingSavePending}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="month-booking-button month-booking-button--primary"
+                  onClick={() => { void saveBooking(); }}
+                  disabled={isBookingSavePending}
+                >
+                  {isBookingSavePending ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </div>
           </section>
         </div>
       ) : null}

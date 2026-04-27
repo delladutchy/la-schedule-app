@@ -13,6 +13,7 @@ import { getConfig } from "@/lib/config";
 import { DayBoard } from "@/components/DayBoard";
 import { MonthBoard } from "@/components/MonthBoard";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { EditorTokenBridge } from "@/components/EditorTokenBridge";
 import Link from "next/link";
 
 /**
@@ -46,6 +47,7 @@ interface SearchParams {
   start?: string | string[]; // YYYY-MM-DD
   month?: string | string[]; // YYYY-MM
   view?: string | string[]; // list | month
+  editor?: string | string[]; // editor token
 }
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -225,6 +227,7 @@ export default async function AvailabilityPage({
 
   return (
     <div className="page">
+      <EditorTokenBridge />
       <header className="header">
         <h1 className="title">
           <span>{titleMain}</span>

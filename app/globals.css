@@ -1059,3 +1059,128 @@ body {
     height: 14px;
   }
 }
+
+/* ---------- Editor Mode (Month Booking) ---------- */
+
+.month-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 4px;
+}
+
+.editor-mode-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.editor-mode-active::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--available-dot) 78%, var(--text-subtle));
+}
+
+.month-day-book-button {
+  margin-top: auto;
+  appearance: none;
+  border: 0;
+  background: none;
+  color: color-mix(in srgb, var(--available-text) 72%, var(--text-subtle));
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.month-day-book-button:hover {
+  color: var(--available-text);
+}
+
+.month-day-book-button:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.month-booking-form {
+  display: grid;
+  gap: 10px;
+}
+
+.month-booking-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.month-booking-input,
+.month-booking-textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 11px;
+}
+
+.month-booking-input:focus-visible,
+.month-booking-textarea:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
+
+.month-booking-textarea {
+  resize: vertical;
+  min-height: 88px;
+}
+
+.month-booking-error {
+  margin: 0;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.month-booking-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.month-booking-button {
+  appearance: none;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.month-booking-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.month-booking-button--primary {
+  border-color: color-mix(in srgb, var(--available-dot) 55%, var(--border));
+  background: color-mix(in srgb, var(--available-bg) 72%, var(--surface));
+  color: color-mix(in srgb, var(--available-text) 92%, var(--text));
+}
