@@ -1304,3 +1304,24 @@ body {
   background: color-mix(in srgb, var(--available-bg) 72%, var(--surface));
   color: color-mix(in srgb, var(--available-text) 92%, var(--text));
 }
+
+.month-booking-same-day-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.month-booking-same-day-toggle input[type="checkbox"] {
+  accent-color: var(--today-accent);
+}
+
+.month-booking-summary {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
