@@ -71,6 +71,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const [activeBookingPanel, setActiveBookingPanel] = useState<ActiveBookingPanel | null>(null);
   const [bookingLaNumber, setBookingLaNumber] = useState("");
   const [bookingJobName, setBookingJobName] = useState("");
+  const [bookingEndDate, setBookingEndDate] = useState("");
   const [bookingCallTime, setBookingCallTime] = useState("");
   const [bookingNotes, setBookingNotes] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
@@ -119,6 +120,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setActiveBookingPanel(null);
     setBookingLaNumber("");
     setBookingJobName("");
+    setBookingEndDate("");
     setBookingCallTime("");
     setBookingNotes("");
     setBookingError(null);
@@ -131,6 +133,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setActiveBookingPanel({ date });
     setBookingLaNumber("");
     setBookingJobName("");
+    setBookingEndDate("");
     setBookingCallTime("");
     setBookingNotes("");
     setBookingError(null);
@@ -147,6 +150,12 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
       summary = buildLaJobSummary(bookingLaNumber, bookingJobName);
     } catch (error) {
       setBookingError(error instanceof Error ? error.message : "Invalid LA job details.");
+      return;
+    }
+    const startDate = activeBookingPanel.date;
+    const endDate = bookingEndDate.trim() || startDate;
+    if (endDate < startDate) {
+      setBookingError("End Date cannot be before Start Date.");
       return;
     }
 
@@ -169,7 +178,8 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
         body: JSON.stringify({
           summary,
           ...(description ? { description } : {}),
-          date: activeBookingPanel.date,
+          startDate,
+          endDate,
         }),
       });
 
@@ -527,6 +537,21 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                 }}
                 placeholder="Wilmington Flower Market"
                 maxLength={200}
+              />
+
+              <label className="month-booking-label" htmlFor="booking-end-date">
+                End Date
+              </label>
+              <input
+                id="booking-end-date"
+                type="date"
+                className="month-booking-input"
+                value={bookingEndDate}
+                onChange={(event) => {
+                  setBookingEndDate(event.target.value);
+                  if (bookingError) setBookingError(null);
+                }}
+                min={activeBookingPanel.date}
               />
 
               <label className="month-booking-label" htmlFor="booking-call-time">
