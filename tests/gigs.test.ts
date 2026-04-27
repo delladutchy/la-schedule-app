@@ -92,6 +92,21 @@ describe("buildAllDayGigEventId", () => {
     expect(a).toBe(b);
     expect(a).not.toBe(c);
   });
+
+  it("contains only lowercase alphanumeric characters", () => {
+    const id = buildAllDayGigEventId(
+      "9d0ac891af6a083ca5e96789e3db194645ddaf78f42bbf589e0bc13a51238ec2@group.calendar.google.com",
+      "2026-05-06",
+      "2026-05-07",
+    );
+    expect(id).toMatch(/^[a-z0-9]+$/);
+  });
+
+  it("stays at a safe fixed length", () => {
+    const id = buildAllDayGigEventId("primary", "2026-05-06", "2026-05-07");
+    expect(id.length).toBe(41);
+    expect(id.length).toBeLessThanOrEqual(128);
+  });
 });
 
 describe("buildLaJobSummary", () => {

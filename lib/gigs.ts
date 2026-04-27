@@ -91,7 +91,7 @@ export function buildAllDayGigEventId(
     .update(`${calendarId}|${startDate}|${endDateInclusive}`)
     .digest("hex")
     .slice(0, 40);
-  return `gig-${digest}`;
+  return `g${digest}`;
 }
 
 export function buildLaJobSummary(laNumberRaw: string, jobNameRaw: string): string {
