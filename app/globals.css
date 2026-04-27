@@ -1434,6 +1434,12 @@ body {
   color: var(--text);
 }
 
+.month-booking-same-day-button.is-active {
+  border-color: color-mix(in srgb, var(--available-dot) 56%, var(--border));
+  background: color-mix(in srgb, var(--available-bg) 68%, var(--surface));
+  color: color-mix(in srgb, var(--available-text) 92%, var(--text));
+}
+
 .month-booking-same-day-button:focus-visible {
   outline: 2px solid var(--today-accent);
   outline-offset: 1px;
@@ -1610,14 +1616,15 @@ body {
 
   .month-booking-actions {
     position: sticky;
-    bottom: -12px;
+    bottom: 0;
     background: linear-gradient(
       to top,
       color-mix(in srgb, var(--surface) 96%, transparent),
       color-mix(in srgb, var(--surface) 86%, transparent)
     );
     padding-top: 8px;
-    margin-top: 2px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    margin-top: 0;
   }
 
   .month-booking-button {

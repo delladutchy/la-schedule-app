@@ -671,13 +671,12 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                   <span>{bookingRangeLabel}</span>
                   <span className="month-booking-range-toggle-caret" aria-hidden="true">▾</span>
                 </button>
-                {bookingCalendar && bookingViewMonth ? (
+                {bookingPickerExpanded && bookingCalendar && bookingViewMonth ? (
                   <div
                     id="month-booking-calendar-panel"
                     className="month-booking-calendar"
                     role="group"
                     aria-label="End date calendar"
-                    hidden={!bookingPickerExpanded}
                   >
                     <div className="month-booking-calendar-head">
                       <button
@@ -749,7 +748,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                     <div className="month-booking-calendar-actions">
                       <button
                         type="button"
-                        className="month-booking-same-day-button"
+                        className={`month-booking-same-day-button${bookingEndDate === bookingStartDate ? " is-active" : ""}`}
                         onClick={applySameDaySelection}
                       >
                         Same day
