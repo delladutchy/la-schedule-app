@@ -1184,6 +1184,11 @@ body {
   text-align: left;
 }
 
+.month-booking-input--small {
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
 .month-booking-input:focus-visible,
 .month-booking-textarea:focus-visible {
   outline: 2px solid var(--today-accent);
@@ -1193,6 +1198,74 @@ body {
 .month-booking-textarea {
   resize: vertical;
   min-height: 88px;
+}
+
+.month-booking-end-date-control {
+  display: grid;
+  gap: 8px;
+}
+
+.month-booking-end-date-display {
+  appearance: none;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 9px 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.month-booking-end-date-display:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
+
+.month-booking-end-date-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.month-booking-end-date-chip {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.month-booking-end-date-chip:hover {
+  color: var(--text);
+}
+
+.month-booking-end-date-chip.is-active {
+  border-color: color-mix(in srgb, var(--available-dot) 48%, var(--border));
+  background: color-mix(in srgb, var(--available-bg) 64%, var(--surface));
+  color: color-mix(in srgb, var(--available-text) 90%, var(--text));
+}
+
+.month-booking-end-date-chip:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
+
+.month-booking-end-date-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .month-booking-error {
