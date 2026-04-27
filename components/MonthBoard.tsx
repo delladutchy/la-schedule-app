@@ -71,6 +71,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const [activeBookingPanel, setActiveBookingPanel] = useState<ActiveBookingPanel | null>(null);
   const [bookingLaNumber, setBookingLaNumber] = useState("");
   const [bookingJobName, setBookingJobName] = useState("");
+  const [bookingCallTime, setBookingCallTime] = useState("");
   const [bookingNotes, setBookingNotes] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isBookingSavePending, setIsBookingSavePending] = useState(false);
@@ -118,6 +119,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setActiveBookingPanel(null);
     setBookingLaNumber("");
     setBookingJobName("");
+    setBookingCallTime("");
     setBookingNotes("");
     setBookingError(null);
     setIsBookingSavePending(false);
@@ -129,6 +131,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setActiveBookingPanel({ date });
     setBookingLaNumber("");
     setBookingJobName("");
+    setBookingCallTime("");
     setBookingNotes("");
     setBookingError(null);
   };
@@ -149,6 +152,12 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
 
     setBookingError(null);
     setIsBookingSavePending(true);
+    const callTime = bookingCallTime.trim();
+    const notes = bookingNotes.trim();
+    const description = [
+      callTime ? `Call Time: ${callTime}` : "",
+      notes ? `Job Notes: ${notes}` : "",
+    ].filter(Boolean).join("\n");
 
     try {
       const response = await fetch("/api/gigs/create", {
@@ -159,7 +168,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
         },
         body: JSON.stringify({
           summary,
-          ...(bookingNotes.trim() ? { description: bookingNotes.trim() } : {}),
+          ...(description ? { description } : {}),
           date: activeBookingPanel.date,
         }),
       });
@@ -520,8 +529,23 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                 maxLength={200}
               />
 
+              <label className="month-booking-label" htmlFor="booking-call-time">
+                Call Time
+              </label>
+              <input
+                id="booking-call-time"
+                className="month-booking-input"
+                value={bookingCallTime}
+                onChange={(event) => {
+                  setBookingCallTime(event.target.value);
+                  if (bookingError) setBookingError(null);
+                }}
+                placeholder="TBD, 8 AM, 10:30 AM, etc."
+                maxLength={120}
+              />
+
               <label className="month-booking-label" htmlFor="booking-notes">
-                Notes / Times
+                Job Notes
               </label>
               <textarea
                 id="booking-notes"
@@ -531,7 +555,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                   setBookingNotes(event.target.value);
                   if (bookingError) setBookingError(null);
                 }}
-                placeholder="Call time, venue notes, contact, etc."
+                placeholder="Venue notes, contact, etc."
                 maxLength={4000}
                 rows={4}
               />
