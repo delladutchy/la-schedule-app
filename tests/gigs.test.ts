@@ -4,6 +4,7 @@ import {
   GigCreateBodySchema,
   resolveAllDayRange,
   buildAllDayGigEventId,
+  buildLaJobSummary,
   isDateRangeAvailableInSnapshot,
 } from "@/lib/gigs";
 
@@ -90,6 +91,23 @@ describe("buildAllDayGigEventId", () => {
     const c = buildAllDayGigEventId("primary", "2026-05-07", "2026-05-07");
     expect(a).toBe(b);
     expect(a).not.toBe(c);
+  });
+});
+
+describe("buildLaJobSummary", () => {
+  it("builds a normalized LA job summary", () => {
+    expect(buildLaJobSummary("71411", "Wilmington Flower Market"))
+      .toBe("LA#71411 — Wilmington Flower Market");
+  });
+
+  it("rejects non-numeric LA #", () => {
+    expect(() => buildLaJobSummary("71A11", "Wilmington Flower Market"))
+      .toThrow("LA # is required and must be numbers only.");
+  });
+
+  it("rejects empty job name", () => {
+    expect(() => buildLaJobSummary("71411", "   "))
+      .toThrow("Job Name is required.");
   });
 });
 

@@ -1138,6 +1138,34 @@ body {
   color: var(--text-muted);
 }
 
+.month-booking-la-field {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.month-booking-la-field:focus-within {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
+
+.month-booking-la-prefix {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 90%, var(--bg));
+}
+
 .month-booking-input,
 .month-booking-textarea {
   width: 100%;
@@ -1148,6 +1176,12 @@ body {
   font: inherit;
   font-size: 14px;
   padding: 10px 11px;
+}
+
+.month-booking-input--la {
+  border: 0;
+  border-radius: 0;
+  text-align: left;
 }
 
 .month-booking-input:focus-visible,

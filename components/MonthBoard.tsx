@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { DateTime } from "luxon";
 import { summarizeBookedDayLabel, type MonthBoardData } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
 
@@ -46,6 +47,20 @@ function stripJobPrefix(summary: string, jobNumber?: string): string {
   return stripped.length > 0 ? stripped : summary;
 }
 
+function buildLaJobSummary(laNumberRaw: string, jobNameRaw: string): string {
+  const laNumber = laNumberRaw.trim();
+  const jobName = jobNameRaw.trim();
+
+  if (!/^\d+$/.test(laNumber)) {
+    throw new Error("LA # is required and must be numbers only.");
+  }
+  if (!jobName) {
+    throw new Error("Job Name is required.");
+  }
+
+  return `LA#${laNumber} — ${jobName}`;
+}
+
 /**
  * Monthly board with compact multi-day event bars.
  */
@@ -54,7 +69,8 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const [activeDetailPanel, setActiveDetailPanel] = useState<ActiveDetailPanel | null>(null);
   const [editorToken, setEditorToken] = useState<string | null>(null);
   const [activeBookingPanel, setActiveBookingPanel] = useState<ActiveBookingPanel | null>(null);
-  const [bookingJobTitle, setBookingJobTitle] = useState("");
+  const [bookingLaNumber, setBookingLaNumber] = useState("");
+  const [bookingJobName, setBookingJobName] = useState("");
   const [bookingNotes, setBookingNotes] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isBookingSavePending, setIsBookingSavePending] = useState(false);
@@ -100,7 +116,8 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const closeDetailPanel = () => setActiveDetailPanel(null);
   const closeBookingPanel = () => {
     setActiveBookingPanel(null);
-    setBookingJobTitle("");
+    setBookingLaNumber("");
+    setBookingJobName("");
     setBookingNotes("");
     setBookingError(null);
     setIsBookingSavePending(false);
@@ -110,7 +127,8 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const openBookingPanel = (date: string) => {
     setActiveDetailPanel(null);
     setActiveBookingPanel({ date });
-    setBookingJobTitle("");
+    setBookingLaNumber("");
+    setBookingJobName("");
     setBookingNotes("");
     setBookingError(null);
   };
@@ -121,9 +139,11 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
       setBookingError("Editor token missing. Re-open the editor link.");
       return;
     }
-    const summary = bookingJobTitle.trim();
-    if (!summary) {
-      setBookingError("Job Title is required.");
+    let summary: string;
+    try {
+      summary = buildLaJobSummary(bookingLaNumber, bookingJobName);
+    } catch (error) {
+      setBookingError(error instanceof Error ? error.message : "Invalid LA job details.");
       return;
     }
 
@@ -178,6 +198,9 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const monthIsPast = month.monthKey < todayMonthKey;
   const allDays = month.weeks.flatMap((w) => w.days);
   const weekendToday = allDays.find((d) => d.date === todayKey && d.isWeekend);
+  const bookingDateLabel = activeBookingPanel
+    ? DateTime.fromISO(activeBookingPanel.date, { zone: "utc" }).toFormat("ccc, LLL d")
+    : null;
 
   return (
     <section className="month-board" aria-label={month.label}>
@@ -456,33 +479,59 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
             </button>
 
             <h3 id="month-booking-title" className="board-day-modal-title">
-              Book Day
+              Book LA Job
             </h3>
-            <p className="board-day-modal-event-date">{activeBookingPanel.date}</p>
+            <p className="board-day-modal-event-date">{bookingDateLabel}</p>
 
             <div className="month-booking-form">
-              <label className="month-booking-label" htmlFor="booking-job-title">
-                Job Title
+              <label className="month-booking-label" htmlFor="booking-la-number">
+                LA #
+              </label>
+              <div className="month-booking-la-field">
+                <span className="month-booking-la-prefix" aria-hidden="true">LA#</span>
+                <input
+                  id="booking-la-number"
+                  className="month-booking-input month-booking-input--la"
+                  value={bookingLaNumber}
+                  onChange={(event) => {
+                    setBookingLaNumber(event.target.value.replace(/\D/g, ""));
+                    if (bookingError) setBookingError(null);
+                  }}
+                  placeholder="71411"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={12}
+                  autoFocus
+                />
+              </div>
+
+              <label className="month-booking-label" htmlFor="booking-job-name">
+                Job Name
               </label>
               <input
-                id="booking-job-title"
+                id="booking-job-name"
                 className="month-booking-input"
-                value={bookingJobTitle}
-                onChange={(event) => setBookingJobTitle(event.target.value)}
-                placeholder="LA#71411 Wilmington Flower Market"
-                maxLength={240}
-                autoFocus
+                value={bookingJobName}
+                onChange={(event) => {
+                  setBookingJobName(event.target.value);
+                  if (bookingError) setBookingError(null);
+                }}
+                placeholder="Wilmington Flower Market"
+                maxLength={200}
               />
 
               <label className="month-booking-label" htmlFor="booking-notes">
-                Notes
+                Notes / Times
               </label>
               <textarea
                 id="booking-notes"
                 className="month-booking-textarea"
                 value={bookingNotes}
-                onChange={(event) => setBookingNotes(event.target.value)}
-                placeholder="Optional notes"
+                onChange={(event) => {
+                  setBookingNotes(event.target.value);
+                  if (bookingError) setBookingError(null);
+                }}
+                placeholder="Call time, venue notes, contact, etc."
                 maxLength={4000}
                 rows={4}
               />

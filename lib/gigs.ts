@@ -94,6 +94,20 @@ export function buildAllDayGigEventId(
   return `gig-${digest}`;
 }
 
+export function buildLaJobSummary(laNumberRaw: string, jobNameRaw: string): string {
+  const laNumber = laNumberRaw.trim();
+  const jobName = jobNameRaw.trim();
+
+  if (!/^\d+$/.test(laNumber)) {
+    throw new Error("LA # is required and must be numbers only.");
+  }
+  if (!jobName) {
+    throw new Error("Job Name is required.");
+  }
+
+  return `LA#${laNumber} — ${jobName}`;
+}
+
 function busyIntervalsFromSnapshot(snapshot: Snapshot): Interval[] {
   return snapshot.busy
     .map((block) => ({
