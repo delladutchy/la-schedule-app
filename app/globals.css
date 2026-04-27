@@ -1541,3 +1541,87 @@ body {
   display: flex;
   justify-content: flex-end;
 }
+
+@media (max-width: 560px) {
+  .board-day-modal-backdrop {
+    padding: 8px;
+  }
+
+  .board-day-modal {
+    width: min(560px, calc(100vw - 10px));
+    max-height: min(90dvh, 740px);
+    padding: 14px 12px 12px;
+    overflow: auto;
+  }
+
+  .month-booking-form {
+    gap: 12px;
+  }
+
+  .month-booking-end-date-control {
+    gap: 10px;
+  }
+
+  .month-booking-range-toggle {
+    min-height: 42px;
+    font-size: 15px;
+    padding: 11px 12px;
+  }
+
+  .month-booking-calendar {
+    width: 100%;
+    padding: 12px;
+  }
+
+  .month-booking-calendar-head {
+    grid-template-columns: 38px 1fr 38px;
+    gap: 6px;
+  }
+
+  .month-booking-calendar-nav {
+    height: 38px;
+    font-size: 20px;
+    touch-action: manipulation;
+  }
+
+  .month-booking-calendar-weekdays span {
+    font-size: 11px;
+  }
+
+  .month-booking-calendar-grid {
+    gap: 7px;
+  }
+
+  .month-booking-calendar-day {
+    min-height: 40px;
+    font-size: 14px;
+    padding: 10px 0;
+    touch-action: manipulation;
+  }
+
+  .month-booking-calendar-actions {
+    justify-content: flex-start;
+  }
+
+  .month-booking-same-day-button {
+    min-height: 36px;
+    padding: 8px 12px;
+  }
+
+  .month-booking-actions {
+    position: sticky;
+    bottom: -12px;
+    background: linear-gradient(
+      to top,
+      color-mix(in srgb, var(--surface) 96%, transparent),
+      color-mix(in srgb, var(--surface) 86%, transparent)
+    );
+    padding-top: 8px;
+    margin-top: 2px;
+  }
+
+  .month-booking-button {
+    min-height: 40px;
+    padding: 9px 14px;
+  }
+}

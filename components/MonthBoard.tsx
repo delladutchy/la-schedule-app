@@ -209,6 +209,15 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setBookingError(null);
   };
 
+  const applySameDaySelection = () => {
+    if (!activeBookingPanel) return;
+    const sameDay = activeBookingPanel.date;
+    setBookingEndDate(sameDay);
+    setBookingPickerMonthKey(DateTime.fromISO(sameDay, { zone: "utc" }).toFormat("yyyy-LL"));
+    setBookingPickerExpanded(false);
+    if (bookingError) setBookingError(null);
+  };
+
   async function saveBooking() {
     if (!activeBookingPanel || isBookingSavePending) return;
     if (!editorToken) {
@@ -741,12 +750,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                       <button
                         type="button"
                         className="month-booking-same-day-button"
-                        onClick={() => {
-                          if (!bookingStartDate) return;
-                          setBookingEndDate(bookingStartDate);
-                          setBookingPickerExpanded(false);
-                          if (bookingError) setBookingError(null);
-                        }}
+                        onClick={applySameDaySelection}
                       >
                         Same day
                       </button>
