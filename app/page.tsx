@@ -1,4 +1,5 @@
 import { readCurrentSnapshot } from "@/lib/store";
+import { buildAndPersistSnapshot } from "@/lib/sync";
 import {
   classifySnapshot,
   buildDayBoard,
@@ -36,6 +37,10 @@ import Link from "next/link";
 // Always render on request so the homepage reads the latest snapshot.
 export const dynamic = "force-dynamic";
 const TODAY_TIMEZONE = "America/New_York";
+const AUTO_BOOTSTRAP_BACKOFF_MS = 2 * 60 * 1000;
+
+let autoBootstrapInFlight: Promise<void> | null = null;
+let autoBootstrapBlockedUntilMs = 0;
 
 interface SearchParams {
   start?: string | string[]; // YYYY-MM-DD
@@ -51,6 +56,43 @@ function resolveViewMode(value: string | undefined): "list" | "month" {
   return value?.toLowerCase() === "month" ? "month" : "list";
 }
 
+async function autoBootstrapSnapshotIfNeeded(enabled: boolean): Promise<void> {
+  if (!enabled) return;
+  const now = Date.now();
+  if (now < autoBootstrapBlockedUntilMs) return;
+
+  if (!autoBootstrapInFlight) {
+    autoBootstrapInFlight = (async () => {
+      const started = Date.now();
+      try {
+        const result = await buildAndPersistSnapshot();
+        const durationMs = Date.now() - started;
+        if (result.status === "ok") {
+          autoBootstrapBlockedUntilMs = 0;
+          console.log(`[bootstrap] snapshot generated in ${durationMs}ms`);
+          return;
+        }
+
+        autoBootstrapBlockedUntilMs = Date.now() + AUTO_BOOTSTRAP_BACKOFF_MS;
+        console.error(
+          `[bootstrap] snapshot failed in ${durationMs}ms: ${result.error ?? "unknown error"}`,
+          result.erroredCalendarIds?.length
+            ? { erroredCalendarIds: result.erroredCalendarIds }
+            : undefined,
+        );
+      } catch (err) {
+        autoBootstrapBlockedUntilMs = Date.now() + AUTO_BOOTSTRAP_BACKOFF_MS;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[bootstrap] exception: ${msg}`);
+      }
+    })().finally(() => {
+      autoBootstrapInFlight = null;
+    });
+  }
+
+  await autoBootstrapInFlight;
+}
+
 export default async function AvailabilityPage({
   searchParams = {},
 }: {
@@ -58,12 +100,20 @@ export default async function AvailabilityPage({
 }) {
   const { file, env } = getConfig();
   const now = Date.now();
-  const snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
-
-  const state = classifySnapshot(snapshot, now, {
+  let snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  let state = classifySnapshot(snapshot, now, {
     freshTtlMinutes: file.freshTtlMinutes,
     hardTtlMinutes: file.hardTtlMinutes,
   });
+
+  if (state.status === "unavailable" || !state.snapshot) {
+    await autoBootstrapSnapshotIfNeeded(env.AUTO_BOOTSTRAP_ON_UNAVAILABLE);
+    snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+    state = classifySnapshot(snapshot, now, {
+      freshTtlMinutes: file.freshTtlMinutes,
+      hardTtlMinutes: file.hardTtlMinutes,
+    });
+  }
 
   // Fail-closed render
   if (state.status === "unavailable" || !state.snapshot) {

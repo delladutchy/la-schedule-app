@@ -114,6 +114,24 @@ const EnvSchema = z.object({
   /** Optional override for Netlify Blobs store name. */
   BLOBS_STORE_NAME: z.string().default("availability-snapshots"),
 
+  /**
+   * If true (default), the public homepage will attempt a one-time server-side
+   * snapshot bootstrap when it detects an unavailable state (for example, a
+   * brand-new deploy before the first scheduled sync has run).
+   *
+   * This does NOT weaken /api/sync auth; manual sync remains token-gated.
+   */
+  AUTO_BOOTSTRAP_ON_UNAVAILABLE: z.string().optional()
+    .transform((raw) => {
+      if (raw === undefined) return true;
+      const normalized = raw.trim().toLowerCase();
+      if (["1", "true", "yes", "on"].includes(normalized)) return true;
+      if (["0", "false", "no", "off"].includes(normalized)) return false;
+      throw new Error(
+        `Invalid AUTO_BOOTSTRAP_ON_UNAVAILABLE value "${raw}". Use true/false.`,
+      );
+    }),
+
   /** Set by Netlify automatically; used to detect deploy environment. */
   CONTEXT: z.string().optional(),
 });
