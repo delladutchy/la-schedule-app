@@ -503,7 +503,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                                 className="month-day-book-button"
                                 aria-hidden="true"
                               >
-                                Click to book
+                                Book
                               </span>
                             ) : (
                               <div className="month-day-availability" aria-hidden="true">Available</div>

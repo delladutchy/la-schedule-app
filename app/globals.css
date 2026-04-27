@@ -824,7 +824,8 @@ body {
   position: relative;
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 6px;
   box-shadow: none;
   overflow: hidden;
@@ -848,11 +849,11 @@ body {
   opacity: 0.72;
 }
 .month-day-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-block;
   min-width: 22px;
   height: 22px;
+  line-height: 22px;
+  text-align: center;
   padding: 0 7px;
   font-size: 13px;
   font-weight: 600;
@@ -862,8 +863,8 @@ body {
 .month-day--occupied .month-day-num {
   position: absolute;
   top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 8px;
+  transform: none;
   z-index: 3;
 }
 .month-day--occupied .month-day-num:not(.month-day-num--today) {
@@ -1043,6 +1044,7 @@ body {
   }
   .month-day--occupied .month-day-num {
     top: 6px;
+    left: 6px;
   }
   .month-day--occupied .month-day-num:not(.month-day-num--today) {
     font-size: 10px;
