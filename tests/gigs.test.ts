@@ -95,7 +95,7 @@ describe("buildAllDayGigEventId", () => {
 
   it("contains only lowercase alphanumeric characters", () => {
     const id = buildAllDayGigEventId(
-      "9d0ac891af6a083ca5e96789e3db194645ddaf78f42bbf589e0bc13a51238ec2@group.calendar.google.com",
+      "fakecalendarid1234567890abcdef@group.calendar.google.com",
       "2026-05-06",
       "2026-05-07",
     );
