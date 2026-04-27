@@ -133,6 +133,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const [bookingJobName, setBookingJobName] = useState("");
   const [bookingEndDate, setBookingEndDate] = useState("");
   const [bookingPickerMonthKey, setBookingPickerMonthKey] = useState("");
+  const [bookingPickerExpanded, setBookingPickerExpanded] = useState(false);
   const [bookingCallTimeOption, setBookingCallTimeOption] = useState("TBD");
   const [bookingCallTimeOther, setBookingCallTimeOther] = useState("");
   const [bookingNotes, setBookingNotes] = useState("");
@@ -184,6 +185,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setBookingJobName("");
     setBookingEndDate("");
     setBookingPickerMonthKey("");
+    setBookingPickerExpanded(false);
     setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
@@ -198,8 +200,9 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setActiveBookingPanel({ date });
     setBookingLaNumber("");
     setBookingJobName("");
-    setBookingEndDate("");
+    setBookingEndDate(date);
     setBookingPickerMonthKey(startMonthKey);
+    setBookingPickerExpanded(false);
     setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
@@ -220,11 +223,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
       return;
     }
     const startDate = activeBookingPanel.date;
-    const endDate = bookingEndDate.trim();
-    if (!endDate) {
-      setBookingError("Select an End Date.");
-      return;
-    }
+    const endDate = bookingEndDate.trim() || startDate;
     if (!DateTime.fromISO(endDate, { zone: "utc" }).isValid) {
       setBookingError("Select a valid End Date.");
       return;
@@ -313,30 +312,22 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     && bookingViewMonth?.isValid
     ? buildBookingCalendarDays(bookingStartDate, bookingViewMonth.toFormat("yyyy-LL"))
     : null;
-  const parsedBookingEndDate = bookingEndDate.trim()
-    ? bookingEndDate.trim()
-    : null;
-  const bookingStartLabel = bookingStartDate ? formatShortDate(bookingStartDate) : null;
-  const bookingEndLabel = parsedBookingEndDate
-    ? formatShortDate(parsedBookingEndDate)
-    : "Select end date";
-  const bookingSummary = bookingStartDate
+  const parsedBookingEndDate = bookingEndDate.trim() || "";
+  const bookingStartLabel = bookingStartDate ? formatShortDate(bookingStartDate) : "";
+  const bookingRangeLabel = bookingStartDate
     ? (() => {
-        if (!bookingStartLabel) {
-          return null;
-        }
         if (!parsedBookingEndDate) {
-          return "Booking: Select an end date";
+          return "Select end date";
         }
         if (parsedBookingEndDate === bookingStartDate) {
-          return `Booking: ${bookingStartLabel} only`;
+          return `${bookingStartLabel} only`;
         }
         if (parsedBookingEndDate > bookingStartDate) {
-          return `Booking: ${bookingStartLabel} – ${formatShortDate(parsedBookingEndDate)}`;
+          return `${bookingStartLabel} – ${formatShortDate(parsedBookingEndDate)}`;
         }
-        return "Booking: End Date cannot be before Start Date";
+        return "Select end date";
       })()
-    : null;
+    : "Select end date";
   const canGoToPreviousBookingMonth = bookingStartMonth && bookingViewMonth
     ? bookingViewMonth > bookingStartMonth
     : false;
@@ -659,34 +650,26 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                 maxLength={200}
               />
 
-              <p className="month-booking-label">
-                End Date
-              </p>
+              <p className="month-booking-label">Date Range</p>
               <div className="month-booking-end-date-control">
-                <div className="month-booking-range-meta" aria-live="polite">
-                  <p>
-                    <span>Start:</span> {bookingStartLabel}
-                  </p>
-                  <p>
-                    <span>End:</span> {bookingEndLabel}
-                  </p>
-                </div>
-                {bookingSummary ? (
-                  <p className="month-booking-summary">{bookingSummary}</p>
-                ) : null}
                 <button
                   type="button"
-                  className="month-booking-same-day-button"
-                  onClick={() => {
-                    if (!bookingStartDate) return;
-                    setBookingEndDate(bookingStartDate);
-                    if (bookingError) setBookingError(null);
-                  }}
+                  className={`month-booking-range-toggle${bookingPickerExpanded ? " is-open" : ""}`}
+                  onClick={() => setBookingPickerExpanded((prev) => !prev)}
+                  aria-expanded={bookingPickerExpanded}
+                  aria-controls="month-booking-calendar-panel"
                 >
-                  Same day
+                  <span>{bookingRangeLabel}</span>
+                  <span className="month-booking-range-toggle-caret" aria-hidden="true">▾</span>
                 </button>
                 {bookingCalendar && bookingViewMonth ? (
-                  <div className="month-booking-calendar" role="group" aria-label="End date calendar">
+                  <div
+                    id="month-booking-calendar-panel"
+                    className="month-booking-calendar"
+                    role="group"
+                    aria-label="End date calendar"
+                    hidden={!bookingPickerExpanded}
+                  >
                     <div className="month-booking-calendar-head">
                       <button
                         type="button"
@@ -744,6 +727,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                             disabled={isDisabled}
                             onClick={() => {
                               setBookingEndDate(day.isoDate);
+                              setBookingPickerExpanded(false);
                               if (bookingError) setBookingError(null);
                             }}
                             aria-label={`End date ${formatCompactDate(day.isoDate)}`}
@@ -752,6 +736,20 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                           </button>
                         );
                       })}
+                    </div>
+                    <div className="month-booking-calendar-actions">
+                      <button
+                        type="button"
+                        className="month-booking-same-day-button"
+                        onClick={() => {
+                          if (!bookingStartDate) return;
+                          setBookingEndDate(bookingStartDate);
+                          setBookingPickerExpanded(false);
+                          if (bookingError) setBookingError(null);
+                        }}
+                      >
+                        Same day
+                      </button>
                     </div>
                   </div>
                 ) : null}
