@@ -303,6 +303,11 @@ export default async function AvailabilityPage({
         </div>
       </header>
 
+      <div className="mobile-editor-tools" aria-label="Editor tools">
+        <EditorSyncButton initialEditorToken={initialEditorToken} />
+        <EditorHistoryButton initialEditorToken={initialEditorToken} buttonLabel="History" />
+      </div>
+
       <nav className="view-toggle" aria-label="View mode">
         <Link
           className={`view-toggle-button${viewMode === "list" ? " active" : ""}`}
@@ -321,11 +326,6 @@ export default async function AvailabilityPage({
           Month
         </Link>
       </nav>
-
-      <div className="mobile-editor-tools" aria-label="Editor tools">
-        <EditorSyncButton initialEditorToken={initialEditorToken} />
-        <EditorHistoryButton initialEditorToken={initialEditorToken} />
-      </div>
 
       {viewMode === "list" ? (
         <>

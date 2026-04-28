@@ -6,6 +6,7 @@ import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-sess
 
 interface Props {
   initialEditorToken?: string;
+  buttonLabel?: string;
 }
 
 interface AuditEventItem {
@@ -52,7 +53,7 @@ function formatAuditRange(event: AuditEventItem): string | null {
   return `${startLabel} – ${end.toFormat("LLL d")}`;
 }
 
-export function EditorHistoryButton({ initialEditorToken }: Props) {
+export function EditorHistoryButton({ initialEditorToken, buttonLabel = "Edit History" }: Props) {
   const [editorToken, setEditorToken] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -147,7 +148,7 @@ export function EditorHistoryButton({ initialEditorToken }: Props) {
           void loadHistory();
         }}
       >
-        Edit History
+        {buttonLabel}
       </button>
       {isOpen ? (
         <div
