@@ -14,6 +14,7 @@ import { DayBoard } from "@/components/DayBoard";
 import { MonthBoard } from "@/components/MonthBoard";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { EditorSyncButton } from "@/components/EditorSyncButton";
+import { EditorHistoryButton } from "@/components/EditorHistoryButton";
 import Link from "next/link";
 
 /**
@@ -295,6 +296,7 @@ export default async function AvailabilityPage({
         </h1>
         <div className="header-actions">
           <EditorSyncButton initialEditorToken={initialEditorToken} />
+          <EditorHistoryButton initialEditorToken={initialEditorToken} />
           <ThemeToggle />
         </div>
       </header>

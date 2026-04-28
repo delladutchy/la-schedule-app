@@ -232,6 +232,44 @@ body {
 .editor-sync-status--error {
   color: #fca5a5;
 }
+
+.editor-history-modal {
+  max-width: min(540px, calc(100vw - 16px));
+}
+
+.editor-history-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.editor-history-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.editor-history-item {
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+
+.editor-history-action {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text);
+}
+
+.editor-history-meta {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
 :root[data-theme="dark"] .theme-toggle-icon--dark { display: block; }
 :root[data-theme="light"] .theme-toggle-icon--light { display: block; }
 :root[data-theme="light"] .view-toggle,

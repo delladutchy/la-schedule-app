@@ -1,0 +1,149 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const updateAllDayEvent = vi.fn();
+const deleteCalendarEvent = vi.fn();
+const buildAndPersistSnapshot = vi.fn();
+const readCurrentSnapshot = vi.fn();
+const appendAuditEvent = vi.fn();
+const authorizeEditorRequest = vi.fn();
+
+const snapshot = {
+  version: 1 as const,
+  generatedAtUtc: "2026-04-28T00:00:00.000Z",
+  windowStartUtc: "2026-04-01T00:00:00.000Z",
+  windowEndUtc: "2026-06-01T00:00:00.000Z",
+  busy: [],
+  namedEvents: [{
+    startUtc: "2026-05-09T00:00:00.000Z",
+    endUtc: "2026-05-10T00:00:00.000Z",
+    summary: "LA#12347 — Delete Me",
+    eventId: "evt-delete",
+    description: "Call Time: 10:00 AM",
+    calendarId: "la-jobs@group.calendar.google.com",
+    displayMode: "details" as const,
+  }],
+  sourceCalendarIds: ["la-jobs@group.calendar.google.com"],
+  config: {
+    timezone: "America/New_York",
+    workdayStartHour: 9,
+    workdayEndHour: 18,
+    hideWeekends: false,
+    showTentative: false,
+    pageTitle: "LA Schedule",
+  },
+};
+
+vi.mock("@/lib/config", () => ({
+  getConfig: () => ({
+    file: {
+      timezone: "America/New_York",
+    },
+    env: {
+      BLOBS_STORE_NAME: "availability-snapshots",
+      GOOGLE_CLIENT_ID: "client-id",
+      GOOGLE_CLIENT_SECRET: "client-secret",
+      GOOGLE_REFRESH_TOKEN: "refresh-token",
+      GOOGLE_CALENDAR_ID: "la-jobs@group.calendar.google.com",
+      EDITOR_TOKEN: "legacy-editor-token-0123456789",
+      EDITOR_TOKENS_JSON: JSON.stringify({
+        jeff: "jeff-editor-token-0123456789",
+        dave: "dave-editor-token-0123456789",
+        milos: "milos-editor-token-0123456789",
+      }),
+    },
+  }),
+}));
+
+vi.mock("@/lib/google", () => ({
+  updateAllDayEvent: (...args: unknown[]) => updateAllDayEvent(...args),
+  deleteCalendarEvent: (...args: unknown[]) => deleteCalendarEvent(...args),
+}));
+
+vi.mock("@/lib/sync", () => ({
+  buildAndPersistSnapshot: (...args: unknown[]) => buildAndPersistSnapshot(...args),
+}));
+
+vi.mock("@/lib/store", () => ({
+  readCurrentSnapshot: (...args: unknown[]) => readCurrentSnapshot(...args),
+}));
+
+vi.mock("@/lib/audit-log", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/audit-log")>("@/lib/audit-log");
+  return {
+    ...actual,
+    appendAuditEvent: (...args: unknown[]) => appendAuditEvent(...args),
+  };
+});
+
+vi.mock("@/lib/editor-auth", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/editor-auth")>("@/lib/editor-auth");
+  return {
+    ...actual,
+    authorizeEditorRequest: (...args: unknown[]) => authorizeEditorRequest(...args),
+  };
+});
+
+async function loadRoutes() {
+  const mod = await import("@/app/api/gigs/[eventId]/route");
+  return { PATCH: mod.PATCH, DELETE: mod.DELETE };
+}
+
+describe("/api/gigs/[eventId] audit logging", () => {
+  beforeEach(() => {
+    updateAllDayEvent.mockReset();
+    deleteCalendarEvent.mockReset();
+    buildAndPersistSnapshot.mockReset();
+    readCurrentSnapshot.mockReset();
+    appendAuditEvent.mockReset();
+    authorizeEditorRequest.mockReset();
+  });
+
+  it("appends audit event after successful edit", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    updateAllDayEvent.mockResolvedValue({ id: "evt-edit", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-edit", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12346 — Updated Job",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-edit" } });
+    expect(res.status).toBe(200);
+    expect(appendAuditEvent).toHaveBeenCalledTimes(1);
+    const payload = appendAuditEvent.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(payload.editorId).toBe("dave");
+    expect(payload.action).toBe("edit");
+  });
+
+  it("appends audit event after successful delete", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    deleteCalendarEvent.mockResolvedValue({ id: "evt-delete" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+    const { DELETE } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-delete" } });
+    expect(res.status).toBe(200);
+    expect(appendAuditEvent).toHaveBeenCalledTimes(1);
+    const payload = appendAuditEvent.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(payload.editorId).toBe("milos");
+    expect(payload.action).toBe("delete");
+  });
+
+  it("does not append audit on unauthorized delete", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: false });
+    const { DELETE } = await loadRoutes();
+    const req = new Request("http://localhost/api/gigs/evt-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-delete" } });
+    expect(res.status).toBe(401);
+    expect(appendAuditEvent).not.toHaveBeenCalled();
+  });
+});

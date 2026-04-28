@@ -148,3 +148,33 @@ export interface RenderState {
   // When status === "unavailable", the page renders the fail-closed message.
   reason?: string;
 }
+
+// ---------- Editor audit log ----------
+
+export const AuditActionSchema = z.enum(["create", "edit", "delete", "sync"]);
+export type AuditAction = z.infer<typeof AuditActionSchema>;
+
+export const AuditEventStatusSchema = z.enum(["success"]);
+export type AuditEventStatus = z.infer<typeof AuditEventStatusSchema>;
+
+export const AuditEventSchema = z.object({
+  id: z.string().min(1),
+  timestampUtc: z.string().datetime({ offset: true }),
+  editorId: z.string().min(1),
+  action: AuditActionSchema,
+  status: AuditEventStatusSchema,
+  eventId: z.string().min(1).optional(),
+  summary: z.string().min(1).optional(),
+  jobNumber: z.string().min(1).optional(),
+  jobTitle: z.string().min(1).optional(),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  callTime: z.string().min(1).optional(),
+});
+export type AuditEvent = z.infer<typeof AuditEventSchema>;
+
+export const AuditLogSchema = z.object({
+  version: z.literal(1),
+  events: z.array(AuditEventSchema),
+});
+export type AuditLog = z.infer<typeof AuditLogSchema>;

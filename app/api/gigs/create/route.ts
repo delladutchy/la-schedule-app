@@ -10,6 +10,7 @@ import {
 import { buildAllDayGigEventId } from "@/lib/gig-ids";
 import { readCurrentSnapshot } from "@/lib/store";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
+import { appendAuditEvent, buildGigAuditFields } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -164,6 +165,26 @@ export async function POST(req: Request) {
     const postSync = await buildAndPersistSnapshot();
     timings.postSyncMs = Date.now() - postSyncStartedAt;
 
+    if (postSync.status === "ok") {
+      try {
+        await appendAuditEvent(env.BLOBS_STORE_NAME, {
+          editorId,
+          action: "create",
+          status: "success",
+          eventId: created.id,
+          ...buildGigAuditFields({
+            summary: payload.summary,
+            startDate: payload.startDate,
+            endDate: payload.endDateInclusive,
+            description: payload.description,
+          }),
+        });
+      } catch (auditError) {
+        const msg = auditError instanceof Error ? auditError.message : String(auditError);
+        console.error("[audit] append failed after create:", msg);
+      }
+    }
+
     logCreateRouteTiming("ok", editorId, routeStartedAt, timings);
 
     return NextResponse.json(
@@ -229,6 +250,26 @@ export async function POST(req: Request) {
         const retryPostSyncStartedAt = Date.now();
         const postSync = await buildAndPersistSnapshot();
         timings.retryPostSyncMs = Date.now() - retryPostSyncStartedAt;
+
+        if (postSync.status === "ok") {
+          try {
+            await appendAuditEvent(env.BLOBS_STORE_NAME, {
+              editorId,
+              action: "create",
+              status: "success",
+              eventId: created.id,
+              ...buildGigAuditFields({
+                summary: payload.summary,
+                startDate: payload.startDate,
+                endDate: payload.endDateInclusive,
+                description: payload.description,
+              }),
+            });
+          } catch (auditError) {
+            const msg = auditError instanceof Error ? auditError.message : String(auditError);
+            console.error("[audit] append failed after create retry:", msg);
+          }
+        }
         logCreateRouteTiming("ok_retry_without_event_id", editorId, routeStartedAt, timings);
 
         return NextResponse.json(

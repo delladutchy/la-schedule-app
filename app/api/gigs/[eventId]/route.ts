@@ -9,6 +9,7 @@ import {
 } from "@/lib/gigs";
 import { readCurrentSnapshot } from "@/lib/store";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
+import { appendAuditEvent, buildGigAuditFields } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -181,6 +182,26 @@ export async function PATCH(
     const postSyncStartedAt = Date.now();
     const postSync = await buildAndPersistSnapshot();
     timings.postSyncMs = Date.now() - postSyncStartedAt;
+
+    if (postSync.status === "ok") {
+      try {
+        await appendAuditEvent(env.BLOBS_STORE_NAME, {
+          editorId,
+          action: "edit",
+          status: "success",
+          eventId: updated.id,
+          ...buildGigAuditFields({
+            summary: payload.summary,
+            startDate: payload.startDate,
+            endDate: payload.endDateInclusive,
+            description: payload.description,
+          }),
+        });
+      } catch (auditError) {
+        const msg = auditError instanceof Error ? auditError.message : String(auditError);
+        console.error("[audit] append failed after edit:", msg);
+      }
+    }
     logGigRouteTiming("patch", "ok", editorId, routeStartedAt, timings);
 
     return NextResponse.json(
@@ -247,6 +268,9 @@ export async function DELETE(
     logGigRouteTiming("delete", "invalid_event_id", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "invalid_event_id" }, { status: 400 });
   }
+  const deleteAuditSource = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  const deleteAuditEvent = deleteAuditSource?.namedEvents?.find((event) =>
+    event.eventId === eventId && event.calendarId === env.GOOGLE_CALENDAR_ID);
   try {
     const googleWriteStartedAt = Date.now();
     await deleteCalendarEvent({
@@ -261,6 +285,28 @@ export async function DELETE(
     const postSyncStartedAt = Date.now();
     const postSync = await buildAndPersistSnapshot();
     timings.postSyncMs = Date.now() - postSyncStartedAt;
+
+    if (postSync.status === "ok") {
+      try {
+        await appendAuditEvent(env.BLOBS_STORE_NAME, {
+          editorId,
+          action: "delete",
+          status: "success",
+          eventId,
+          ...buildGigAuditFields({
+            summary: deleteAuditEvent?.summary,
+            startDate: deleteAuditEvent?.startUtc?.slice(0, 10),
+            endDate: deleteAuditEvent?.endUtc
+              ? new Date(Date.parse(deleteAuditEvent.endUtc) - 1).toISOString().slice(0, 10)
+              : undefined,
+            description: deleteAuditEvent?.description,
+          }),
+        });
+      } catch (auditError) {
+        const msg = auditError instanceof Error ? auditError.message : String(auditError);
+        console.error("[audit] append failed after delete:", msg);
+      }
+    }
     logGigRouteTiming("delete", "ok", editorId, routeStartedAt, timings);
 
     return NextResponse.json(
