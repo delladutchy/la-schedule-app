@@ -195,6 +195,7 @@ In the Netlify site → **Site configuration** → **Environment variables**, ad
 | `EDITOR_TOKENS_JSON` | named editor tokens, e.g. `{"jeff":"...","dave":"...","milos":"..."}` |
 | `EDITOR_TOKEN` | optional legacy fallback token (maps to editor id `legacy`) |
 | `GOOGLE_CALENDAR_ID` | target calendar id for editor write-through creates |
+| `GOOGLE_WEBHOOK_TOKEN` | optional shared secret for Google Calendar webhook receiver |
 
 All scopes (`Production`, `Deploy previews`, `Branch deploys`) are fine.
 
@@ -251,6 +252,28 @@ curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" https://your-site.netlify.a
 Use this after changing blocker calendar IDs, or if you moved a bunch of
 meetings and want the page to reflect it immediately instead of waiting up
 to 10 minutes.
+
+### Google Calendar webhook receiver (Phase 1)
+
+`POST /api/google/calendar/webhook` can trigger the same snapshot sync
+pipeline after Google push notifications.
+
+Phase 1 in this repo only adds the secure receiver endpoint. It does **not**
+register Google watch channels and does **not** implement channel renewal yet.
+
+Example call:
+
+```bash
+curl -X POST \
+  "https://la-schedule-app.netlify.app/api/google/calendar/webhook?token=$GOOGLE_WEBHOOK_TOKEN"
+```
+
+Token auth:
+- accepts `?token=$GOOGLE_WEBHOOK_TOKEN`
+- or accepts header `x-goog-channel-token: $GOOGLE_WEBHOOK_TOKEN`
+
+On valid token, it runs `buildAndPersistSnapshot()` and returns
+`{ "status": "ok", "durationMs": ... }`.
 
 ### Creating an all-day gig (token-gated editor endpoint)
 

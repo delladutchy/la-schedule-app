@@ -131,6 +131,9 @@ const EnvSchema = z.object({
   NOTIFY_EMAIL_TO: z.string().optional(),
   NOTIFY_EMAIL_FROM: z.string().optional(),
 
+  /** Optional shared secret for Google Calendar webhook receiver endpoint. */
+  GOOGLE_WEBHOOK_TOKEN: z.string().optional(),
+
   /**
    * If true (default), the public homepage will attempt a one-time server-side
    * snapshot bootstrap when it detects an unavailable state (for example, a
