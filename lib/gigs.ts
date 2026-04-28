@@ -85,11 +85,15 @@ export function buildLaJobSummary(laNumberRaw: string, jobNameRaw: string): stri
   const laNumber = laNumberRaw.trim();
   const jobName = jobNameRaw.trim();
 
-  if (!/^\d+$/.test(laNumber)) {
-    throw new Error("LA # is required and must be numbers only.");
-  }
   if (!jobName) {
     throw new Error("Job Name is required.");
+  }
+
+  if (!laNumber) {
+    return jobName;
+  }
+  if (!/^\d+$/.test(laNumber)) {
+    throw new Error("LA # must be numbers only.");
   }
 
   return `LA#${laNumber} — ${jobName}`;
@@ -211,6 +215,72 @@ export function isDateRangeAvailableInSnapshot(
     if (overlapsAny(frame, busy)) {
       return false;
     }
+    day = day.plus({ days: 1 });
+  }
+
+  return true;
+}
+
+export function isDateRangeAvailableForEditInSnapshot(
+  snapshot: Snapshot,
+  timezone: string,
+  startDate: string,
+  endDateInclusive: string,
+  opts: {
+    eventId: string;
+    editorCalendarId: string;
+  },
+): boolean {
+  const start = DateTime.fromISO(startDate, { zone: timezone }).startOf("day");
+  const end = DateTime.fromISO(endDateInclusive, { zone: timezone }).startOf("day");
+  if (!start.isValid || !end.isValid || end < start) {
+    return false;
+  }
+
+  const busy = busyIntervalsFromSnapshot(snapshot);
+  const namedEvents = (snapshot.namedEvents ?? [])
+    .map((event) => ({
+      ...event,
+      startMs: Date.parse(event.startUtc),
+      endMs: Date.parse(event.endUtc),
+    }))
+    .filter((event) =>
+      Number.isFinite(event.startMs)
+      && Number.isFinite(event.endMs)
+      && event.endMs > event.startMs);
+
+  let day = start;
+  while (day <= end) {
+    const frame = {
+      startMs: day.toUTC().toMillis(),
+      endMs: day.plus({ days: 1 }).toUTC().toMillis(),
+    };
+    const dayHasBusy = overlapsAny(frame, busy);
+    if (!dayHasBusy) {
+      day = day.plus({ days: 1 });
+      continue;
+    }
+
+    const dayOverlappingEvents = namedEvents.filter((event) =>
+      event.startMs < frame.endMs && event.endMs > frame.startMs);
+
+    const overlapsOtherEvent = dayOverlappingEvents.some((event) => {
+      const sameEditableEvent = event.calendarId === opts.editorCalendarId
+        && event.eventId === opts.eventId;
+      return !sameEditableEvent;
+    });
+    if (overlapsOtherEvent) {
+      return false;
+    }
+
+    const overlapsSelfEvent = dayOverlappingEvents.some((event) =>
+      event.calendarId === opts.editorCalendarId
+      && event.eventId === opts.eventId);
+    if (!overlapsSelfEvent) {
+      // Busy day with no attributable matching event id: fail closed.
+      return false;
+    }
+
     day = day.plus({ days: 1 });
   }
 

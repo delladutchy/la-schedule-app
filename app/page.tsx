@@ -13,6 +13,7 @@ import { getConfig } from "@/lib/config";
 import { DayBoard } from "@/components/DayBoard";
 import { MonthBoard } from "@/components/MonthBoard";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { EditorSyncButton } from "@/components/EditorSyncButton";
 import Link from "next/link";
 
 /**
@@ -41,7 +42,7 @@ export const dynamic = "force-dynamic";
 const TODAY_TIMEZONE = "America/New_York";
 const AUTO_BOOTSTRAP_BACKOFF_MS = 2 * 60 * 1000;
 const AUTO_REFRESH_BACKOFF_MS = 60 * 1000;
-const AUTO_REFRESH_MIN_AGE_MINUTES = 3;
+const AUTO_REFRESH_MIN_AGE_MINUTES = 1;
 
 let autoBootstrapInFlight: Promise<void> | null = null;
 let autoBootstrapBlockedUntilMs = 0;
@@ -163,17 +164,14 @@ export default async function AvailabilityPage({
 
   const shouldAutoRefresh = !!state.snapshot && (
     state.status === "stale"
-    || (
-      viewMode === "month"
-      && (state.ageMinutes ?? 0) >= AUTO_REFRESH_MIN_AGE_MINUTES
-    )
+    || (state.ageMinutes ?? 0) >= AUTO_REFRESH_MIN_AGE_MINUTES
   );
   if (shouldAutoRefresh) {
     await autoRefreshSnapshotIfNeeded(
       true,
       state.status === "stale"
         ? "snapshot-stale"
-        : `month-view-age-${Math.floor(state.ageMinutes ?? 0)}m`,
+        : `${viewMode}-view-age-${Math.floor(state.ageMinutes ?? 0)}m`,
     );
     snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
     state = classifySnapshot(snapshot, Date.now(), {
@@ -290,13 +288,16 @@ export default async function AvailabilityPage({
   const monthToggleKey = viewMode === "list" ? effectiveWeekStart.slice(0, 7) : monthNav.monthKey;
 
   return (
-    <div className="page">
+    <div className={`page${viewMode === "month" ? " page--month" : ""}`}>
       <header className="header">
         <h1 className="title">
           <span>{titleMain}</span>
           <span className="title-muted"> · Jeff Ulsh</span>
         </h1>
-        <ThemeToggle />
+        <div className="header-actions">
+          <EditorSyncButton initialEditorToken={initialEditorToken} />
+          <ThemeToggle />
+        </div>
       </header>
 
       <nav className="view-toggle" aria-label="View mode">
@@ -344,7 +345,11 @@ export default async function AvailabilityPage({
             )}
           </nav>
 
-          <DayBoard weeks={weekRows} />
+          <DayBoard
+            weeks={weekRows}
+            initialEditorToken={initialEditorToken}
+            editorCalendarId={env.GOOGLE_CALENDAR_ID}
+          />
         </>
       ) : (
         <>

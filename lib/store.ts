@@ -127,13 +127,16 @@ export async function writeCurrentSnapshot(
   storeName: string,
   snapshot: Snapshot,
 ): Promise<void> {
+  const parsed = SnapshotSchema.parse(snapshot);
   if (isLocalDev()) {
-    return writeLocalCurrentSnapshot(storeName, snapshot);
+    await writeLocalCurrentSnapshot(storeName, parsed);
+    rememberLastKnownGoodSnapshot(storeName, parsed);
+    return;
   }
 
-  const parsed = SnapshotSchema.parse(snapshot);
   const s = store(storeName);
   const historyKey = `history/${snapshot.generatedAtUtc}`;
   await s.setJSON(historyKey, parsed);
   await s.setJSON(CURRENT_KEY, parsed);
+  rememberLastKnownGoodSnapshot(storeName, parsed);
 }

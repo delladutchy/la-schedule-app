@@ -8,6 +8,7 @@ import {
   parseGigDescription,
   buildGigDescription,
   isDateRangeAvailableInSnapshot,
+  isDateRangeAvailableForEditInSnapshot,
 } from "@/lib/gigs";
 import { buildAllDayGigEventId } from "@/lib/gig-ids";
 
@@ -118,9 +119,14 @@ describe("buildLaJobSummary", () => {
       .toBe("LA#71411 — Wilmington Flower Market");
   });
 
+  it("allows blank LA # and returns job name only", () => {
+    expect(buildLaJobSummary("   ", "Wilmington Flower Market"))
+      .toBe("Wilmington Flower Market");
+  });
+
   it("rejects non-numeric LA #", () => {
     expect(() => buildLaJobSummary("71A11", "Wilmington Flower Market"))
-      .toThrow("LA # is required and must be numbers only.");
+      .toThrow("LA # must be numbers only.");
   });
 
   it("rejects empty job name", () => {
@@ -200,5 +206,119 @@ describe("isDateRangeAvailableInSnapshot", () => {
       "2026-05-08",
     );
     expect(out).toBe(true);
+  });
+});
+
+describe("isDateRangeAvailableForEditInSnapshot", () => {
+  const editorCalendarId = "la-jobs@group.calendar.google.com";
+  const editableEventId = "event-edit-1";
+
+  it("allows overlap with the same editable event id", () => {
+    const snapshot = makeSnapshot({
+      busy: [
+        {
+          startUtc: "2026-05-07T04:00:00.000Z",
+          endUtc: "2026-05-08T04:00:00.000Z",
+        },
+      ],
+      namedEvents: [
+        {
+          startUtc: "2026-05-07T04:00:00.000Z",
+          endUtc: "2026-05-08T04:00:00.000Z",
+          summary: "LA#71411 — Wilmington Flower Market",
+          eventId: editableEventId,
+          calendarId: editorCalendarId,
+          displayMode: "details",
+        },
+      ],
+    });
+
+    const out = isDateRangeAvailableForEditInSnapshot(
+      snapshot,
+      "America/New_York",
+      "2026-05-07",
+      "2026-05-07",
+      { eventId: editableEventId, editorCalendarId },
+    );
+    expect(out).toBe(true);
+  });
+
+  it("blocks overlap with a different event id", () => {
+    const snapshot = makeSnapshot({
+      busy: [
+        {
+          startUtc: "2026-05-07T04:00:00.000Z",
+          endUtc: "2026-05-08T04:00:00.000Z",
+        },
+      ],
+      namedEvents: [
+        {
+          startUtc: "2026-05-07T04:00:00.000Z",
+          endUtc: "2026-05-08T04:00:00.000Z",
+          summary: "LA#77777 — Another Job",
+          eventId: "event-other-2",
+          calendarId: editorCalendarId,
+          displayMode: "details",
+        },
+      ],
+    });
+
+    const out = isDateRangeAvailableForEditInSnapshot(
+      snapshot,
+      "America/New_York",
+      "2026-05-07",
+      "2026-05-07",
+      { eventId: editableEventId, editorCalendarId },
+    );
+    expect(out).toBe(false);
+  });
+
+  it("blocks overlap from private calendar events", () => {
+    const snapshot = makeSnapshot({
+      busy: [
+        {
+          startUtc: "2026-05-07T04:00:00.000Z",
+          endUtc: "2026-05-08T04:00:00.000Z",
+        },
+      ],
+      namedEvents: [
+        {
+          startUtc: "2026-05-07T04:00:00.000Z",
+          endUtc: "2026-05-08T04:00:00.000Z",
+          summary: "Unavailable",
+          calendarId: "private-calendar@group.calendar.google.com",
+          displayMode: "private",
+        },
+      ],
+    });
+
+    const out = isDateRangeAvailableForEditInSnapshot(
+      snapshot,
+      "America/New_York",
+      "2026-05-07",
+      "2026-05-07",
+      { eventId: editableEventId, editorCalendarId },
+    );
+    expect(out).toBe(false);
+  });
+
+  it("fails closed on unknown busy overlap with no named event mapping", () => {
+    const snapshot = makeSnapshot({
+      busy: [
+        {
+          startUtc: "2026-05-07T04:00:00.000Z",
+          endUtc: "2026-05-08T04:00:00.000Z",
+        },
+      ],
+    });
+
+    const out = isDateRangeAvailableForEditInSnapshot(
+      snapshot,
+      "America/New_York",
+      "2026-05-07",
+      "2026-05-07",
+      { eventId: editableEventId, editorCalendarId },
+    );
+    expect(out).toBe(false);
   });
 });

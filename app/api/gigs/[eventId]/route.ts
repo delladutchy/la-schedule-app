@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { buildAndPersistSnapshot } from "@/lib/sync";
 import { deleteCalendarEvent, updateAllDayEvent } from "@/lib/google";
-import { GigCreateBodySchema, resolveAllDayRange } from "@/lib/gigs";
+import {
+  GigCreateBodySchema,
+  resolveAllDayRange,
+  isDateRangeAvailableForEditInSnapshot,
+} from "@/lib/gigs";
+import { readCurrentSnapshot } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -102,7 +107,40 @@ export async function PATCH(
     );
   }
 
-  const { env } = getConfig();
+  const { file, env } = getConfig();
+
+  let validationSnapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  if (!validationSnapshot) {
+    const preflight = await buildAndPersistSnapshot();
+    if (preflight.status !== "ok" || !preflight.snapshot) {
+      return NextResponse.json(
+        {
+          error: "snapshot_unavailable",
+          message: preflight.error ?? "Could not refresh snapshot before update.",
+        },
+        { status: 503 },
+      );
+    }
+    validationSnapshot = preflight.snapshot;
+  }
+
+  const isAvailable = isDateRangeAvailableForEditInSnapshot(
+    validationSnapshot,
+    file.timezone,
+    payload.startDate,
+    payload.endDateInclusive,
+    {
+      eventId,
+      editorCalendarId: env.GOOGLE_CALENDAR_ID,
+    },
+  );
+  if (!isAvailable) {
+    return NextResponse.json(
+      { error: "day_already_booked", message: "Day already booked." },
+      { status: 409 },
+    );
+  }
+
   try {
     const updated = await updateAllDayEvent({
       clientId: env.GOOGLE_CLIENT_ID,
@@ -221,4 +259,3 @@ export async function DELETE(
     );
   }
 }
-

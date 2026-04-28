@@ -8,6 +8,7 @@ import {
   isDateRangeAvailableInSnapshot,
 } from "@/lib/gigs";
 import { buildAllDayGigEventId } from "@/lib/gig-ids";
+import { readCurrentSnapshot } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -82,19 +83,23 @@ export async function POST(req: Request) {
   const { file, env } = getConfig();
 
   // Pre-write check against the same snapshot model used by the app.
-  const preflight = await buildAndPersistSnapshot();
-  if (preflight.status !== "ok" || !preflight.snapshot) {
-    return NextResponse.json(
-      {
-        error: "snapshot_unavailable",
-        message: preflight.error ?? "Could not refresh snapshot before write.",
-      },
-      { status: 503 },
-    );
+  let validationSnapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  if (!validationSnapshot) {
+    const preflight = await buildAndPersistSnapshot();
+    if (preflight.status !== "ok" || !preflight.snapshot) {
+      return NextResponse.json(
+        {
+          error: "snapshot_unavailable",
+          message: preflight.error ?? "Could not refresh snapshot before write.",
+        },
+        { status: 503 },
+      );
+    }
+    validationSnapshot = preflight.snapshot;
   }
 
   const isAvailable = isDateRangeAvailableInSnapshot(
-    preflight.snapshot,
+    validationSnapshot,
     file.timezone,
     payload.startDate,
     payload.endDateInclusive,
@@ -112,18 +117,20 @@ export async function POST(req: Request) {
     payload.endDateInclusive,
   );
 
+  const createEvent = (eventIdOverride?: string) => createAllDayEvent({
+    clientId: env.GOOGLE_CLIENT_ID,
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+    refreshToken: env.GOOGLE_REFRESH_TOKEN,
+    calendarId: env.GOOGLE_CALENDAR_ID,
+    ...(eventIdOverride ? { eventId: eventIdOverride } : {}),
+    summary: payload.summary,
+    ...(payload.description ? { description: payload.description } : {}),
+    startDate: payload.startDate,
+    endDateExclusive: payload.endDateExclusive,
+  });
+
   try {
-    const created = await createAllDayEvent({
-      clientId: env.GOOGLE_CLIENT_ID,
-      clientSecret: env.GOOGLE_CLIENT_SECRET,
-      refreshToken: env.GOOGLE_REFRESH_TOKEN,
-      calendarId: env.GOOGLE_CALENDAR_ID,
-      eventId,
-      summary: payload.summary,
-      ...(payload.description ? { description: payload.description } : {}),
-      startDate: payload.startDate,
-      endDateExclusive: payload.endDateExclusive,
-    });
+    const created = await createEvent(eventId);
 
     const postSync = await buildAndPersistSnapshot();
 
@@ -153,11 +160,79 @@ export async function POST(req: Request) {
     );
   } catch (error) {
     if (error instanceof CalendarEventAlreadyExistsError) {
-      return NextResponse.json(
-        { error: "day_already_booked", message: "Day already booked." },
-        { status: 409 },
+      // A deterministic id collision can happen even when the slot is now free.
+      // Re-sync + re-check availability first, then retry once without custom id.
+      const refreshed = await buildAndPersistSnapshot();
+      if (refreshed.status !== "ok" || !refreshed.snapshot) {
+        return NextResponse.json(
+          {
+            error: "snapshot_unavailable",
+            message: refreshed.error ?? "Could not refresh snapshot after conflict.",
+          },
+          { status: 503 },
+        );
+      }
+
+      const stillUnavailable = !isDateRangeAvailableInSnapshot(
+        refreshed.snapshot,
+        file.timezone,
+        payload.startDate,
+        payload.endDateInclusive,
       );
+      if (stillUnavailable) {
+        return NextResponse.json(
+          { error: "day_already_booked", message: "Day already booked." },
+          { status: 409 },
+        );
+      }
+
+      try {
+        const created = await createEvent();
+        const postSync = await buildAndPersistSnapshot();
+
+        return NextResponse.json(
+          {
+            status: "ok",
+            event: created,
+            gig: {
+              summary: payload.summary,
+              startDate: payload.startDate,
+              endDate: payload.endDateInclusive,
+            },
+            snapshot: {
+              status: postSync.status,
+              ...(postSync.status === "ok"
+                ? {
+                    generatedAtUtc: postSync.snapshot?.generatedAtUtc,
+                    busyBlocks: postSync.snapshot?.busy.length ?? 0,
+                  }
+                : {
+                    error: postSync.error,
+                    erroredCalendarIds: postSync.erroredCalendarIds ?? [],
+                  }),
+            },
+          },
+          { status: 201 },
+        );
+      } catch (retryError) {
+        if (retryError instanceof CalendarEventAlreadyExistsError) {
+          return NextResponse.json(
+            { error: "day_already_booked", message: "Day already booked." },
+            { status: 409 },
+          );
+        }
+        return NextResponse.json(
+          {
+            error: "google_create_failed",
+            message: retryError instanceof Error
+              ? retryError.message
+              : "Google event create failed.",
+          },
+          { status: 502 },
+        );
+      }
     }
+
     return NextResponse.json(
       {
         error: "google_create_failed",

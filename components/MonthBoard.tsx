@@ -334,7 +334,6 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
       if (response.ok) {
         closeBookingPanel();
         router.refresh();
-        window.location.reload();
         return;
       }
 
@@ -379,7 +378,6 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
         setConfirmDeleteEventId(null);
         setActiveDetailPanel(null);
         router.refresh();
-        window.location.reload();
         return;
       }
 
@@ -460,9 +458,6 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
     <section className="month-board" aria-label={month.label}>
       <div className="month-label-row">
         <h2 className="month-label">{month.label}</h2>
-        {editorModeActive ? (
-          <span className="editor-mode-active">Editor mode active</span>
-        ) : null}
       </div>
       {weekendToday ? (
         <div className="month-weekend-today" aria-label={`Today: ${weekendToday.date}`}>
@@ -749,7 +744,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                         }}
                         disabled={isDeletePending}
                       >
-                        {isDeletePending ? "Deleting..." : "Delete"}
+                        {isDeletePending ? "Deleting..." : "Confirm Delete"}
                       </button>
                     </div>
                   </div>
