@@ -299,14 +299,13 @@ export default async function AvailabilityPage({
             <EditorSyncButton initialEditorToken={initialEditorToken} />
             <EditorHistoryButton initialEditorToken={initialEditorToken} />
           </div>
+          <div className="mobile-header-editor-tools" aria-label="Editor tools">
+            <EditorSyncButton initialEditorToken={initialEditorToken} />
+            <EditorHistoryButton initialEditorToken={initialEditorToken} buttonLabel="History" />
+          </div>
           <ThemeToggle />
         </div>
       </header>
-
-      <div className="mobile-editor-tools" aria-label="Editor tools">
-        <EditorSyncButton initialEditorToken={initialEditorToken} />
-        <EditorHistoryButton initialEditorToken={initialEditorToken} buttonLabel="History" />
-      </div>
 
       <nav className="view-toggle" aria-label="View mode">
         <Link

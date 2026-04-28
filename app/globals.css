@@ -138,11 +138,11 @@ body {
   gap: 8px;
 }
 
-.mobile-editor-tools {
+.mobile-header-editor-tools {
   display: none;
 }
 
-.mobile-editor-tools:empty {
+.mobile-header-editor-tools:empty {
   display: none;
 }
 .title {
@@ -1314,25 +1314,24 @@ body {
     display: none;
   }
 
-  .mobile-editor-tools {
+  .mobile-header-editor-tools {
     display: inline-flex;
     align-items: center;
     gap: 0;
-    margin: -4px 0 10px;
     min-height: 32px;
   }
 
-  .mobile-editor-tools .editor-sync-control {
+  .mobile-header-editor-tools .editor-sync-control {
     display: inline-flex;
     align-items: center;
     gap: 0;
   }
 
-  .mobile-editor-tools .editor-sync-status {
+  .mobile-header-editor-tools .editor-sync-status {
     display: none;
   }
 
-  .mobile-editor-tools .editor-sync-button {
+  .mobile-header-editor-tools .editor-sync-button {
     min-height: 36px;
     padding: 8px 2px;
     border: 0;
@@ -1345,19 +1344,19 @@ body {
     line-height: 1;
   }
 
-  .mobile-editor-tools .editor-sync-button:hover {
+  .mobile-header-editor-tools .editor-sync-button:hover {
     background: transparent;
     border-color: transparent;
     color: var(--text-muted);
   }
 
-  .mobile-editor-tools > .editor-sync-button {
+  .mobile-header-editor-tools > .editor-sync-button {
     margin-left: 8px;
     padding-left: 10px;
     position: relative;
   }
 
-  .mobile-editor-tools > .editor-sync-button::before {
+  .mobile-header-editor-tools > .editor-sync-button::before {
     content: "|";
     position: absolute;
     left: -1px;
@@ -2207,8 +2206,7 @@ body {
 
   .page.page--month .header,
   .page.page--month .view-toggle,
-  .page.page--month > .nav,
-  .page.page--month > .mobile-editor-tools {
+  .page.page--month > .nav {
     display: none;
   }
 
