@@ -131,6 +131,20 @@ body {
   align-items: center;
   gap: 8px;
 }
+
+.header-editor-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mobile-editor-tools {
+  display: none;
+}
+
+.mobile-editor-tools:empty {
+  display: none;
+}
 .title {
   font-size: 32px;
   font-weight: 600;
@@ -1295,6 +1309,26 @@ body {
   }
 }
 
+@media (max-width: 760px) {
+  .header-editor-tools {
+    display: none;
+  }
+
+  .mobile-editor-tools {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 12px;
+  }
+
+  .mobile-editor-tools .editor-sync-button {
+    min-height: 40px;
+    font-size: 14px;
+    padding: 9px 12px;
+  }
+}
+
 /* ---------- Editor Mode (Month Booking) ---------- */
 
 .month-label-row {
@@ -2134,7 +2168,8 @@ body {
 
   .page.page--month .header,
   .page.page--month .view-toggle,
-  .page.page--month > .nav {
+  .page.page--month > .nav,
+  .page.page--month > .mobile-editor-tools {
     display: none;
   }
 

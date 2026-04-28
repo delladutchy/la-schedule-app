@@ -295,8 +295,10 @@ export default async function AvailabilityPage({
           <span className="title-muted"> · Jeff Ulsh</span>
         </h1>
         <div className="header-actions">
-          <EditorSyncButton initialEditorToken={initialEditorToken} />
-          <EditorHistoryButton initialEditorToken={initialEditorToken} />
+          <div className="header-editor-tools">
+            <EditorSyncButton initialEditorToken={initialEditorToken} />
+            <EditorHistoryButton initialEditorToken={initialEditorToken} />
+          </div>
           <ThemeToggle />
         </div>
       </header>
@@ -319,6 +321,11 @@ export default async function AvailabilityPage({
           Month
         </Link>
       </nav>
+
+      <div className="mobile-editor-tools" aria-label="Editor tools">
+        <EditorSyncButton initialEditorToken={initialEditorToken} />
+        <EditorHistoryButton initialEditorToken={initialEditorToken} />
+      </div>
 
       {viewMode === "list" ? (
         <>
