@@ -56,6 +56,8 @@ export function EditorHistoryButton({ initialEditorToken }: Props) {
   const [editorToken, setEditorToken] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<AuditEventItem[]>([]);
 
@@ -101,6 +103,38 @@ export function EditorHistoryButton({ initialEditorToken }: Props) {
     }
   }
 
+  async function clearHistory() {
+    if (!editorToken || isClearing) return;
+    setIsClearing(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/editor/history", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${editorToken}` },
+      });
+      if (response.status === 401) {
+        window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+        setEditorToken(null);
+        setError("Editor session expired. Re-open the editor link.");
+        return;
+      }
+      if (response.status === 403) {
+        setError("Only Jeff can clear edit history.");
+        return;
+      }
+      if (!response.ok) {
+        setError("Could not clear edit history.");
+        return;
+      }
+      setEvents([]);
+      setShowClearConfirm(false);
+    } catch {
+      setError("Network error while clearing history.");
+    } finally {
+      setIsClearing(false);
+    }
+  }
+
   if (!editorToken) return null;
 
   return (
@@ -120,8 +154,9 @@ export function EditorHistoryButton({ initialEditorToken }: Props) {
           className="board-day-modal-backdrop"
           role="presentation"
           onClick={() => {
-            if (isLoading) return;
+            if (isLoading || isClearing) return;
             setIsOpen(false);
+            setShowClearConfirm(false);
           }}
         >
           <section
@@ -136,14 +171,55 @@ export function EditorHistoryButton({ initialEditorToken }: Props) {
               type="button"
               className="board-day-modal-close-icon"
               aria-label="Close edit history"
-              onClick={() => setIsOpen(false)}
-              disabled={isLoading}
+              onClick={() => {
+                setIsOpen(false);
+                setShowClearConfirm(false);
+              }}
+              disabled={isLoading || isClearing}
             >
               ×
             </button>
             <h3 id="editor-history-title" className="board-day-modal-title">
               Edit History
             </h3>
+            <div className="editor-history-actions">
+              {!showClearConfirm ? (
+                <button
+                  type="button"
+                  className="month-booking-button month-booking-button--secondary"
+                  onClick={() => setShowClearConfirm(true)}
+                  disabled={isLoading || isClearing}
+                >
+                  Clear History
+                </button>
+              ) : (
+                <div className="editor-history-clear-confirm">
+                  <p className="editor-history-note">
+                    Clear edit history? This only removes history entries and does not delete calendar jobs.
+                  </p>
+                  <div className="editor-history-clear-buttons">
+                    <button
+                      type="button"
+                      className="month-booking-button month-booking-button--secondary"
+                      onClick={() => setShowClearConfirm(false)}
+                      disabled={isClearing}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="month-booking-button month-booking-button--primary"
+                      onClick={() => {
+                        void clearHistory();
+                      }}
+                      disabled={isClearing}
+                    >
+                      {isClearing ? "Clearing..." : "Confirm Clear"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {isLoading ? (
               <p className="editor-history-note">Loading…</p>

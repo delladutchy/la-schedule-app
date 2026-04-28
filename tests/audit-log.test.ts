@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { AUDIT_EVENT_LIMIT, appendAuditEvent, readAuditEvents } from "@/lib/audit-log";
+import {
+  AUDIT_EVENT_LIMIT,
+  appendAuditEvent,
+  clearAuditEvents,
+  readAuditEvents,
+} from "@/lib/audit-log";
 
 describe("audit log store", () => {
   it("caps stored audit events to latest configured limit", async () => {
@@ -33,5 +38,17 @@ describe("audit log store", () => {
     expect(latest.editorId).toBe("dave");
     expect(latest).not.toHaveProperty("token");
     expect(latest).not.toHaveProperty("authorization");
+  });
+
+  it("clearAuditEvents preserves log shape with empty events", async () => {
+    const storeName = `audit-log-clear-${Date.now()}`;
+    await appendAuditEvent(storeName, {
+      editorId: "milos",
+      action: "sync",
+      status: "success",
+    });
+    await clearAuditEvents(storeName);
+    const events = await readAuditEvents(storeName, 500);
+    expect(events).toEqual([]);
   });
 });

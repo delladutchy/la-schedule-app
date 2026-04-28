@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const authorizeEditorRequest = vi.fn();
 const readAuditEvents = vi.fn();
+const clearAuditEvents = vi.fn();
+const buildAndPersistSnapshot = vi.fn();
+const createAllDayEvent = vi.fn();
 
 vi.mock("@/lib/config", () => ({
   getConfig: () => ({
@@ -30,23 +33,35 @@ vi.mock("@/lib/audit-log", async () => {
   return {
     ...actual,
     readAuditEvents: (...args: unknown[]) => readAuditEvents(...args),
+    clearAuditEvents: (...args: unknown[]) => clearAuditEvents(...args),
   };
 });
 
-async function loadGet() {
+vi.mock("@/lib/sync", () => ({
+  buildAndPersistSnapshot: (...args: unknown[]) => buildAndPersistSnapshot(...args),
+}));
+
+vi.mock("@/lib/google", () => ({
+  createAllDayEvent: (...args: unknown[]) => createAllDayEvent(...args),
+}));
+
+async function loadRoutes() {
   const mod = await import("@/app/api/editor/history/route");
-  return mod.GET;
+  return { GET: mod.GET, DELETE: mod.DELETE };
 }
 
 describe("/api/editor/history auth", () => {
   beforeEach(() => {
     authorizeEditorRequest.mockReset();
     readAuditEvents.mockReset();
+    clearAuditEvents.mockReset();
+    buildAndPersistSnapshot.mockReset();
+    createAllDayEvent.mockReset();
   });
 
   it("rejects invalid token", async () => {
     authorizeEditorRequest.mockReturnValue({ ok: false });
-    const GET = await loadGet();
+    const { GET } = await loadRoutes();
     const req = new Request("http://localhost/api/editor/history");
     const res = await GET(req);
     expect(res.status).toBe(401);
@@ -61,12 +76,43 @@ describe("/api/editor/history auth", () => {
       action: "sync",
       status: "success",
     }]);
-    const GET = await loadGet();
+    const { GET } = await loadRoutes();
     const req = new Request("http://localhost/api/editor/history?limit=50");
     const res = await GET(req);
     expect(res.status).toBe(200);
     const payload = await res.json() as { events?: unknown[] };
     expect(payload.events?.length).toBe(1);
     expect(readAuditEvents).toHaveBeenCalledWith("availability-snapshots", 50);
+  });
+
+  it("rejects DELETE with invalid token", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: false });
+    const { DELETE } = await loadRoutes();
+    const req = new Request("http://localhost/api/editor/history", { method: "DELETE" });
+    const res = await DELETE(req);
+    expect(res.status).toBe(401);
+    expect(clearAuditEvents).not.toHaveBeenCalled();
+  });
+
+  it("rejects DELETE for non-jeff editor", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
+    const { DELETE } = await loadRoutes();
+    const req = new Request("http://localhost/api/editor/history", { method: "DELETE" });
+    const res = await DELETE(req);
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "forbidden" });
+    expect(clearAuditEvents).not.toHaveBeenCalled();
+  });
+
+  it("accepts DELETE for jeff and clears events without google/sync calls", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    const { DELETE } = await loadRoutes();
+    const req = new Request("http://localhost/api/editor/history", { method: "DELETE" });
+    const res = await DELETE(req);
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ status: "ok" });
+    expect(clearAuditEvents).toHaveBeenCalledWith("availability-snapshots");
+    expect(buildAndPersistSnapshot).not.toHaveBeenCalled();
+    expect(createAllDayEvent).not.toHaveBeenCalled();
   });
 });

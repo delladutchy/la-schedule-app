@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
-import { readAuditEvents } from "@/lib/audit-log";
+import { clearAuditEvents, readAuditEvents } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -20,4 +20,19 @@ export async function GET(req: Request) {
     status: "ok",
     events,
   });
+}
+
+export async function DELETE(req: Request) {
+  const { env } = getConfig();
+  const auth = authorizeEditorRequest(req, env);
+  if (!auth.ok) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (auth.editorId !== "jeff") {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  await clearAuditEvents(env.BLOBS_STORE_NAME);
+  console.info("[editor:history] cleared editor=jeff");
+  return NextResponse.json({ status: "ok" });
 }

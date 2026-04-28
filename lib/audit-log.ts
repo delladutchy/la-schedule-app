@@ -141,6 +141,15 @@ export async function appendAuditEvent(
   await writeRemoteAuditEvents(storeName, next);
 }
 
+export async function clearAuditEvents(storeName: string): Promise<void> {
+  const emptyEvents: AuditEvent[] = [];
+  if (isLocalDev()) {
+    await writeLocalAuditEvents(storeName, emptyEvents);
+    return;
+  }
+  await writeRemoteAuditEvents(storeName, emptyEvents);
+}
+
 export function buildGigAuditFields(opts: {
   summary?: string;
   startDate?: string;
