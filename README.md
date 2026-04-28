@@ -192,7 +192,8 @@ In the Netlify site → **Site configuration** → **Environment variables**, ad
 | `GOOGLE_REFRESH_TOKEN` | output of `npm run google:auth` |
 | `BLOCKER_CALENDAR_IDS` | comma-separated, e.g. `primary,abcd1234...@group.calendar.google.com` |
 | `ADMIN_TOKEN` | `openssl rand -hex 32` |
-| `EDITOR_TOKEN` | `openssl rand -hex 32` (used only for `/api/gigs/create`) |
+| `EDITOR_TOKENS_JSON` | named editor tokens, e.g. `{"jeff":"...","dave":"...","milos":"..."}` |
+| `EDITOR_TOKEN` | optional legacy fallback token (maps to editor id `legacy`) |
 | `GOOGLE_CALENDAR_ID` | target calendar id for editor write-through creates |
 
 All scopes (`Production`, `Deploy previews`, `Branch deploys`) are fine.
@@ -203,6 +204,16 @@ Trigger a deploy. Netlify will:
 - build the Next.js app
 - register `scheduled-sync` with its cron (`*/10 * * * *`)
 - bind Netlify Blobs automatically (no extra config)
+
+Named editor token setup example:
+
+```bash
+export JEFF_EDITOR_TOKEN="$(openssl rand -hex 32)"
+export DAVE_EDITOR_TOKEN="$(openssl rand -hex 32)"
+export MILOS_EDITOR_TOKEN="$(openssl rand -hex 32)"
+
+EDITOR_TOKENS_JSON="{\"jeff\":\"$JEFF_EDITOR_TOKEN\",\"dave\":\"$DAVE_EDITOR_TOKEN\",\"milos\":\"$MILOS_EDITOR_TOKEN\"}"
+```
 
 ### 4. Prime the first snapshot
 
@@ -244,8 +255,10 @@ to 10 minutes.
 ### Creating an all-day gig (token-gated editor endpoint)
 
 ```bash
+export DAVE_EDITOR_TOKEN="the-token-value-from-EDITOR_TOKENS_JSON"
+
 curl -X POST https://your-site.netlify.app/api/gigs/create \
-  -H "Authorization: Bearer $EDITOR_TOKEN" \
+  -H "Authorization: Bearer $DAVE_EDITOR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "summary": "LA#71411 Wilmington Flower Market",

@@ -42,7 +42,7 @@ export const dynamic = "force-dynamic";
 const TODAY_TIMEZONE = "America/New_York";
 const AUTO_BOOTSTRAP_BACKOFF_MS = 2 * 60 * 1000;
 const AUTO_REFRESH_BACKOFF_MS = 60 * 1000;
-const AUTO_REFRESH_MIN_AGE_MINUTES = 1;
+const AUTO_REFRESH_MIN_AGE_MINUTES = 3;
 
 let autoBootstrapInFlight: Promise<void> | null = null;
 let autoBootstrapBlockedUntilMs = 0;
@@ -167,17 +167,12 @@ export default async function AvailabilityPage({
     || (state.ageMinutes ?? 0) >= AUTO_REFRESH_MIN_AGE_MINUTES
   );
   if (shouldAutoRefresh) {
-    await autoRefreshSnapshotIfNeeded(
+    void autoRefreshSnapshotIfNeeded(
       true,
       state.status === "stale"
         ? "snapshot-stale"
         : `${viewMode}-view-age-${Math.floor(state.ageMinutes ?? 0)}m`,
     );
-    snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
-    state = classifySnapshot(snapshot, Date.now(), {
-      freshTtlMinutes: file.freshTtlMinutes,
-      hardTtlMinutes: file.hardTtlMinutes,
-    });
   }
 
   // Fail-closed render
@@ -286,6 +281,10 @@ export default async function AvailabilityPage({
 
   const listToggleStart = viewMode === "month" ? `${monthNav.monthKey}-01` : effectiveWeekStart;
   const monthToggleKey = viewMode === "list" ? effectiveWeekStart.slice(0, 7) : monthNav.monthKey;
+  const weekPrevHref = `/?view=list&start=${weekNav.prevStart}`;
+  const weekNextHref = `/?view=list&start=${weekNav.nextStart}`;
+  const monthPrevHref = `/?view=month&month=${monthNav.prevMonth}`;
+  const monthNextHref = `/?view=month&month=${monthNav.nextMonth}`;
 
   return (
     <div className={`page${viewMode === "month" ? " page--month" : ""}`}>
@@ -323,7 +322,7 @@ export default async function AvailabilityPage({
         <>
           <nav className="nav" aria-label="Week navigation">
             {weekCanGoPrev ? (
-              <Link className="nav-button" href={`/?view=list&start=${weekNav.prevStart}`} aria-label="Previous week" prefetch={false}>
+              <Link className="nav-button" href={weekPrevHref} aria-label="Previous week" prefetch={false}>
                 ← Previous
               </Link>
             ) : (
@@ -335,7 +334,7 @@ export default async function AvailabilityPage({
               Today
             </Link>
             {weekCanGoNext ? (
-              <Link className="nav-button" href={`/?view=list&start=${weekNav.nextStart}`} aria-label="Next week" prefetch={false}>
+              <Link className="nav-button" href={weekNextHref} aria-label="Next week" prefetch={false}>
                 Next →
               </Link>
             ) : (
@@ -349,13 +348,59 @@ export default async function AvailabilityPage({
             weeks={weekRows}
             initialEditorToken={initialEditorToken}
             editorCalendarId={env.GOOGLE_CALENDAR_ID}
+            prevHref={weekPrevHref}
+            nextHref={weekNextHref}
+            canGoPrev={weekCanGoPrev}
+            canGoNext={weekCanGoNext}
           />
         </>
       ) : (
         <>
+          <div className="month-landscape-toolbar" aria-label="Month compact navigation">
+            <span className="month-landscape-label">{month.label}</span>
+            <div className="month-landscape-nav">
+              {monthCanGoPrev ? (
+                <Link
+                  className="month-landscape-nav-button"
+                  href={monthPrevHref}
+                  aria-label="Previous month"
+                  prefetch={false}
+                >
+                  ←
+                </Link>
+              ) : (
+                <span className="month-landscape-nav-button is-disabled" aria-hidden>
+                  ←
+                </span>
+              )}
+              <Link
+                className="month-landscape-nav-button"
+                href={`/?view=month&month=${todayMonthKey}`}
+                aria-label="Today"
+                prefetch={false}
+              >
+                Today
+              </Link>
+              {monthNav.hasNext ? (
+                <Link
+                  className="month-landscape-nav-button"
+                  href={monthNextHref}
+                  aria-label="Next month"
+                  prefetch={false}
+                >
+                  →
+                </Link>
+              ) : (
+                <span className="month-landscape-nav-button is-disabled" aria-hidden>
+                  →
+                </span>
+              )}
+            </div>
+          </div>
+
           <nav className="nav" aria-label="Month navigation">
             {monthCanGoPrev ? (
-              <Link className="nav-button" href={`/?view=month&month=${monthNav.prevMonth}`} aria-label="Previous month" prefetch={false}>
+              <Link className="nav-button" href={monthPrevHref} aria-label="Previous month" prefetch={false}>
                 ← Previous
               </Link>
             ) : (
@@ -367,7 +412,7 @@ export default async function AvailabilityPage({
               Today
             </Link>
             {monthNav.hasNext ? (
-              <Link className="nav-button" href={`/?view=month&month=${monthNav.nextMonth}`} aria-label="Next month" prefetch={false}>
+              <Link className="nav-button" href={monthNextHref} aria-label="Next month" prefetch={false}>
                 Next →
               </Link>
             ) : (
@@ -382,6 +427,10 @@ export default async function AvailabilityPage({
             todayKey={todayKey}
             initialEditorToken={initialEditorToken}
             editorCalendarId={env.GOOGLE_CALENDAR_ID}
+            prevHref={monthPrevHref}
+            nextHref={monthNextHref}
+            canGoPrev={monthCanGoPrev}
+            canGoNext={monthNav.hasNext}
           />
         </>
       )}

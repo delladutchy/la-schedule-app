@@ -482,12 +482,17 @@ body {
   opacity: 0.7;
 }
 
+.month-landscape-toolbar {
+  display: none;
+}
+
 /* ---------- Board ---------- */
 
 .board {
   display: flex;
   flex-direction: column;
   gap: 28px;
+  touch-action: pan-y;
   --connector-rail-right: -7px;
 }
 .board-empty {
@@ -765,6 +770,11 @@ body {
   border-color: var(--border-strong);
 }
 
+.board-day-modal-close-icon:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .board-day-modal-close-icon:focus-visible {
   outline: 2px solid var(--today-accent);
   outline-offset: 2px;
@@ -822,6 +832,11 @@ body {
   bottom: calc(50% - 0.5px);
   width: 13px;
   height: 1px;
+}
+
+.board,
+.month-board {
+  touch-action: pan-y;
 }
 
 /* ---------- Month board ---------- */
@@ -1045,6 +1060,11 @@ body {
   background: var(--available-bg);
   color: var(--available-text);
 }
+
+.month-cell-label-short {
+  display: none;
+}
+
 .month-day-placeholder {
   margin-top: auto;
   height: 14px;
@@ -1153,6 +1173,10 @@ body {
     min-height: 18px;
     font-size: 10.5px;
     padding: 2px 6px;
+    min-width: 0;
+  }
+  .month-row-bar-label {
+    min-width: 0;
   }
   .month-week-days { gap: 0; }
   .month-day {
@@ -1174,7 +1198,13 @@ body {
     font-size: 10px;
   }
   .month-day-availability {
-    font-size: 10px;
+    font-size: 9.5px;
+    line-height: 1.15;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-right: 1px;
   }
   .month-day-chip {
     gap: 5px;
@@ -1188,6 +1218,27 @@ body {
     font-size: 10.5px;
     padding: 4px 8px;
     min-height: 30px;
+    max-width: 100%;
+    justify-content: flex-start;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.15;
+  }
+  .month-day .month-cell-label-full {
+    display: none;
+  }
+  .month-day .month-cell-label-short {
+    display: inline;
+  }
+  .month-day-unavailable-text {
+    font-size: 9.5px;
+    line-height: 1.15;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-right: 1px;
   }
 }
 
@@ -1410,6 +1461,64 @@ body {
   color: #dc2626;
   font-size: 12px;
   font-weight: 500;
+}
+
+.board-day-modal-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 260;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg) 24%, transparent);
+  pointer-events: auto;
+}
+
+.board-day-modal-loading-indicator {
+  display: grid;
+  justify-items: center;
+  gap: 9px;
+  text-align: center;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 24%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
+}
+
+.board-day-modal-loading-svg {
+  width: 72px;
+  height: 72px;
+  display: block;
+  filter: drop-shadow(0 5px 14px color-mix(in srgb, var(--today-accent) 24%, transparent));
+}
+
+.board-day-modal-loading-track,
+.board-day-modal-loading-arc {
+  fill: none;
+  stroke-width: 8;
+}
+
+.board-day-modal-loading-track {
+  stroke: color-mix(in srgb, var(--text-subtle) 30%, transparent);
+}
+
+.board-day-modal-loading-arc {
+  stroke: color-mix(in srgb, #67e8f9 92%, var(--today-accent));
+  stroke-linecap: round;
+  stroke-dasharray: 30 140;
+}
+
+.board-day-modal-loading-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.board-day-modal-loading-copy {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
 }
 
 .month-booking-actions {
@@ -1692,9 +1801,11 @@ body {
 
   .board-day-modal {
     width: min(560px, calc(100vw - 10px));
+    max-width: calc(100vw - 10px);
     max-height: min(90dvh, 740px);
     padding: 14px 12px 12px;
     overflow: auto;
+    box-sizing: border-box;
   }
 
   .month-booking-form {
@@ -1713,6 +1824,8 @@ body {
 
   .month-booking-calendar {
     width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     padding: 12px;
   }
 
@@ -1767,5 +1880,362 @@ body {
   .month-booking-button {
     min-height: 40px;
     padding: 9px 14px;
+  }
+}
+
+@media (max-width: 760px) {
+  .board-day-modal-backdrop {
+    padding-top: max(4px, env(safe-area-inset-top, 0px));
+    padding-right: max(4px, env(safe-area-inset-right, 0px));
+    padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(4px, env(safe-area-inset-left, 0px));
+    align-items: flex-start;
+    justify-items: center;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+  }
+
+  .board-day-modal {
+    width: min(700px, calc(100vw - 8px));
+    max-width: calc(100vw - 8px);
+    max-height: calc(100dvh - 8px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    box-sizing: border-box;
+    padding: 10px 10px 8px;
+  }
+
+  .board-day-modal .month-booking-input,
+  .board-day-modal .month-booking-input--small,
+  .board-day-modal .month-booking-textarea,
+  .board-day-modal .month-booking-range-toggle,
+  .board-day-modal .month-booking-button,
+  .board-day-modal .month-booking-same-day-button,
+  .board-day-modal .month-booking-calendar-day,
+  .board-day-modal .month-booking-calendar-nav,
+  .board-day-modal .month-booking-la-prefix {
+    font-size: 16px;
+  }
+
+  .board-day-modal .month-booking-form {
+    gap: 10px;
+  }
+
+  .board-day-modal .month-booking-label {
+    line-height: 1.2;
+  }
+
+  .board-day-modal .month-booking-actions {
+    gap: 6px;
+    padding-top: 4px;
+    padding-bottom: max(2px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .board-day-modal .month-booking-textarea {
+    min-height: 76px;
+  }
+
+  .board-day-modal .board-day-modal-close-icon {
+    top: 8px;
+    right: 8px;
+  }
+}
+
+.period-label-animate {
+  animation: period-label-enter 160ms ease-out;
+}
+
+@keyframes period-label-enter {
+  from {
+    opacity: 0.72;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .period-label-animate {
+    animation: none;
+  }
+}
+
+@media (max-height: 520px) and (orientation: landscape) and (hover: none) {
+  .page {
+    padding-top: max(10px, env(safe-area-inset-top, 0px));
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(10px, env(safe-area-inset-left, 0px));
+    padding-right: max(10px, env(safe-area-inset-right, 0px));
+  }
+
+  .header {
+    margin-bottom: 8px;
+    gap: 8px;
+  }
+
+  .title {
+    font-size: 22px;
+    margin-bottom: 0;
+    line-height: 1.08;
+  }
+
+  .header-actions {
+    gap: 6px;
+  }
+
+  .view-toggle {
+    margin-bottom: 7px;
+    padding: 2px;
+  }
+
+  .view-toggle-button {
+    padding: 5px 9px;
+    font-size: 12px;
+  }
+
+  .nav {
+    gap: 6px;
+    margin-bottom: 8px;
+    flex-wrap: nowrap;
+  }
+
+  .nav-button {
+    padding: 5px 9px;
+    font-size: 12px;
+  }
+
+  .board {
+    gap: 10px;
+  }
+
+  .board-week {
+    padding: 4px 0;
+  }
+
+  .board-day {
+    padding: 11px 30px 11px 11px;
+    min-height: 50px;
+    gap: 10px;
+  }
+
+  .board-day-label {
+    font-size: 14px;
+  }
+
+  .board-day-modal-backdrop {
+    padding: 4px;
+    align-items: flex-start;
+  }
+
+  .board-day-modal {
+    width: min(760px, calc(100vw - 8px));
+    max-width: calc(100vw - 8px);
+    max-height: calc(100dvh - 8px);
+    overflow: auto;
+    overflow-x: hidden;
+    box-sizing: border-box;
+    padding: 11px 11px 9px;
+  }
+
+  .month-booking-input,
+  .month-booking-textarea,
+  .month-booking-range-toggle,
+  .month-booking-button {
+    font-size: 16px;
+  }
+
+  .month-booking-input--small {
+    font-size: 16px;
+  }
+
+  .month-booking-calendar {
+    padding: 10px;
+    gap: 8px;
+  }
+
+  .month-booking-calendar-grid {
+    gap: 5px;
+  }
+
+  .month-booking-calendar-day {
+    min-height: 36px;
+    font-size: 13px;
+    padding: 8px 0;
+  }
+
+  .month-booking-actions {
+    position: sticky;
+    bottom: 0;
+    padding-top: 6px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(
+      to top,
+      color-mix(in srgb, var(--surface) 96%, transparent),
+      color-mix(in srgb, var(--surface) 84%, transparent)
+    );
+  }
+
+  .page.page--month .header,
+  .page.page--month .view-toggle,
+  .page.page--month > .nav {
+    display: none;
+  }
+
+  .page.page--month {
+    max-width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    column-gap: 0;
+    row-gap: 5px;
+    padding-top: max(6px, env(safe-area-inset-top, 0px));
+    padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(8px, env(safe-area-inset-left, 0px));
+    padding-right: max(8px, env(safe-area-inset-right, 0px));
+  }
+
+  .page.page--month .month-landscape-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 28px;
+    padding: 0 max(2px, env(safe-area-inset-right, 0px));
+  }
+
+  .page.page--month .month-landscape-label {
+    font-size: 11.5px;
+    font-weight: 550;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-subtle);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .page.page--month .month-landscape-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: 0 0 auto;
+  }
+
+  .page.page--month .month-landscape-nav-button {
+    appearance: none;
+    text-decoration: none;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 520;
+    line-height: 1.1;
+    min-height: 25px;
+    min-width: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+  }
+
+  .page.page--month .month-landscape-nav-button.is-disabled {
+    color: var(--text-subtle);
+    border-color: var(--border);
+    opacity: 0.65;
+    pointer-events: none;
+  }
+
+  .page.page--month .month-board {
+    gap: 5px;
+    min-height: 0;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto 1fr;
+  }
+
+  .page.page--month .month-label-row {
+    display: none;
+  }
+
+  .page.page--month .month-weekend-today {
+    display: none;
+  }
+
+  .page.page--month .month-weekdays {
+    gap: 2px;
+  }
+
+  .page.page--month .month-weekday {
+    font-size: 10.5px;
+  }
+
+  .page.page--month .month-grid {
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: repeat(var(--month-week-count, 6), minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  .page.page--month .month-week {
+    min-height: 0;
+  }
+
+  .page.page--month .month-week-body,
+  .page.page--month .month-week-days {
+    height: 100%;
+  }
+
+  .page.page--month .month-week-row-bars {
+    top: 22px;
+    gap: 1px 0;
+    grid-template-rows: repeat(var(--month-week-bar-rows, 0), minmax(15px, auto));
+  }
+
+  .page.page--month .month-row-bar {
+    min-height: 15px;
+    font-size: 9.5px;
+    padding: 1px 6px;
+  }
+
+  .page.page--month .month-day {
+    min-height: 0;
+    padding: calc(22px + (var(--month-week-bar-rows, 0) * 16px)) 6px 6px;
+    justify-content: flex-end;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .page.page--month .month-day-num {
+    top: 4px;
+    left: 4px;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 5px;
+    font-size: 10.5px;
+  }
+
+  .page.page--month .month-day-availability,
+  .page.page--month .month-day-unavailable-text {
+    font-size: 9.5px;
+    line-height: 1.15;
+    margin-top: 0;
+  }
+
+  .page.page--month .month-day-book-button {
+    font-size: 9.5px;
+    min-height: 24px;
+    padding: 3px 6px;
+    margin-top: 0;
   }
 }

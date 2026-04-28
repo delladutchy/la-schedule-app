@@ -9,29 +9,42 @@ import {
 } from "@/lib/gigs";
 import { buildAllDayGigEventId } from "@/lib/gig-ids";
 import { readCurrentSnapshot } from "@/lib/store";
+import { authorizeEditorRequest } from "@/lib/editor-auth";
 
 export const dynamic = "force-dynamic";
 
-function constantTimeEquals(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
+interface RouteTimings {
+  snapshotReadMs: number;
+  preflightSyncMs: number;
+  googleWriteMs: number;
+  postSyncMs: number;
+  retryPreflightSyncMs: number;
+  retryGoogleWriteMs: number;
+  retryPostSyncMs: number;
 }
 
-function isAuthorized(req: Request): boolean {
-  try {
-    const { env } = getConfig();
-    const header = req.headers.get("authorization") ?? "";
-    const match = header.match(/^Bearer\s+(.+)$/i);
-    if (!match) return false;
-    const presented = match[1]?.trim() ?? "";
-    return constantTimeEquals(presented, env.EDITOR_TOKEN);
-  } catch {
-    return false;
-  }
+function createEmptyRouteTimings(): RouteTimings {
+  return {
+    snapshotReadMs: 0,
+    preflightSyncMs: 0,
+    googleWriteMs: 0,
+    postSyncMs: 0,
+    retryPreflightSyncMs: 0,
+    retryGoogleWriteMs: 0,
+    retryPostSyncMs: 0,
+  };
+}
+
+function logCreateRouteTiming(
+  outcome: string,
+  editorId: string,
+  routeStartedAt: number,
+  timings: RouteTimings,
+): void {
+  const totalMs = Date.now() - routeStartedAt;
+  console.info(
+    `[gigs:create] ${outcome} editor=${editorId} ms snapshotRead=${timings.snapshotReadMs} preflightSync=${timings.preflightSyncMs} googleWrite=${timings.googleWriteMs} postSync=${timings.postSyncMs} retryPreflightSync=${timings.retryPreflightSyncMs} retryGoogleWrite=${timings.retryGoogleWriteMs} retryPostSync=${timings.retryPostSyncMs} total=${totalMs}`,
+  );
 }
 
 function parsePayload(body: unknown) {
@@ -61,7 +74,14 @@ function parsePayload(body: unknown) {
 }
 
 export async function POST(req: Request) {
-  if (!isAuthorized(req)) {
+  const routeStartedAt = Date.now();
+  const timings = createEmptyRouteTimings();
+  const { file, env } = getConfig();
+  const auth = authorizeEditorRequest(req, env);
+  const editorId = auth.ok ? auth.editorId : "unknown";
+
+  if (!auth.ok) {
+    logCreateRouteTiming("unauthorized", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -69,24 +89,29 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
+    logCreateRouteTiming("invalid_json", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
   const payload = parsePayload(body);
   if (!payload.ok) {
+    logCreateRouteTiming("invalid_payload", editorId, routeStartedAt, timings);
     return NextResponse.json(
       { error: "invalid_payload", details: payload.error },
       { status: payload.status },
     );
   }
 
-  const { file, env } = getConfig();
-
   // Pre-write check against the same snapshot model used by the app.
+  const snapshotReadStartedAt = Date.now();
   let validationSnapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  timings.snapshotReadMs = Date.now() - snapshotReadStartedAt;
   if (!validationSnapshot) {
+    const preflightStartedAt = Date.now();
     const preflight = await buildAndPersistSnapshot();
+    timings.preflightSyncMs = Date.now() - preflightStartedAt;
     if (preflight.status !== "ok" || !preflight.snapshot) {
+      logCreateRouteTiming("snapshot_unavailable_prewrite", editorId, routeStartedAt, timings);
       return NextResponse.json(
         {
           error: "snapshot_unavailable",
@@ -105,6 +130,7 @@ export async function POST(req: Request) {
     payload.endDateInclusive,
   );
   if (!isAvailable) {
+    logCreateRouteTiming("day_already_booked_prewrite", editorId, routeStartedAt, timings);
     return NextResponse.json(
       { error: "day_already_booked", message: "Day already booked." },
       { status: 409 },
@@ -130,9 +156,15 @@ export async function POST(req: Request) {
   });
 
   try {
+    const googleWriteStartedAt = Date.now();
     const created = await createEvent(eventId);
+    timings.googleWriteMs = Date.now() - googleWriteStartedAt;
 
+    const postSyncStartedAt = Date.now();
     const postSync = await buildAndPersistSnapshot();
+    timings.postSyncMs = Date.now() - postSyncStartedAt;
+
+    logCreateRouteTiming("ok", editorId, routeStartedAt, timings);
 
     return NextResponse.json(
       {
@@ -162,8 +194,11 @@ export async function POST(req: Request) {
     if (error instanceof CalendarEventAlreadyExistsError) {
       // A deterministic id collision can happen even when the slot is now free.
       // Re-sync + re-check availability first, then retry once without custom id.
+      const retryPreflightStartedAt = Date.now();
       const refreshed = await buildAndPersistSnapshot();
+      timings.retryPreflightSyncMs = Date.now() - retryPreflightStartedAt;
       if (refreshed.status !== "ok" || !refreshed.snapshot) {
+        logCreateRouteTiming("snapshot_unavailable_after_conflict", editorId, routeStartedAt, timings);
         return NextResponse.json(
           {
             error: "snapshot_unavailable",
@@ -180,6 +215,7 @@ export async function POST(req: Request) {
         payload.endDateInclusive,
       );
       if (stillUnavailable) {
+        logCreateRouteTiming("day_already_booked_after_conflict", editorId, routeStartedAt, timings);
         return NextResponse.json(
           { error: "day_already_booked", message: "Day already booked." },
           { status: 409 },
@@ -187,8 +223,13 @@ export async function POST(req: Request) {
       }
 
       try {
+        const retryGoogleWriteStartedAt = Date.now();
         const created = await createEvent();
+        timings.retryGoogleWriteMs = Date.now() - retryGoogleWriteStartedAt;
+        const retryPostSyncStartedAt = Date.now();
         const postSync = await buildAndPersistSnapshot();
+        timings.retryPostSyncMs = Date.now() - retryPostSyncStartedAt;
+        logCreateRouteTiming("ok_retry_without_event_id", editorId, routeStartedAt, timings);
 
         return NextResponse.json(
           {
@@ -216,11 +257,13 @@ export async function POST(req: Request) {
         );
       } catch (retryError) {
         if (retryError instanceof CalendarEventAlreadyExistsError) {
+          logCreateRouteTiming("day_already_booked_retry_conflict", editorId, routeStartedAt, timings);
           return NextResponse.json(
             { error: "day_already_booked", message: "Day already booked." },
             { status: 409 },
           );
         }
+        logCreateRouteTiming("google_create_failed_retry", editorId, routeStartedAt, timings);
         return NextResponse.json(
           {
             error: "google_create_failed",
@@ -233,6 +276,7 @@ export async function POST(req: Request) {
       }
     }
 
+    logCreateRouteTiming("google_create_failed", editorId, routeStartedAt, timings);
     return NextResponse.json(
       {
         error: "google_create_failed",

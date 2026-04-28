@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type TouchEventHandler } from "react";
 import { useRouter } from "next/navigation";
 import { DateTime } from "luxon";
 import { summarizeBookedDayLabel, type MonthBoardData } from "@/lib/view";
@@ -17,6 +17,10 @@ interface Props {
   todayKey: string;
   initialEditorToken?: string;
   editorCalendarId?: string;
+  prevHref?: string;
+  nextHref?: string;
+  canGoPrev?: boolean;
+  canGoNext?: boolean;
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -131,8 +135,28 @@ function findEditableDetail(
 /**
  * Monthly board with compact multi-day event bars.
  */
-export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendarId }: Props) {
+export function MonthBoard({
+  month,
+  todayKey,
+  initialEditorToken,
+  editorCalendarId,
+  prevHref,
+  nextHref,
+  canGoPrev = false,
+  canGoNext = false,
+}: Props) {
   const router = useRouter();
+  const swipeRef = useRef<{
+    tracking: boolean;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  }>({
+    tracking: false,
+    startX: 0,
+    startY: 0,
+    moved: false,
+  });
   const [activeDetailPanel, setActiveDetailPanel] = useState<ActiveDetailPanel | null>(null);
   const [editorToken, setEditorToken] = useState<string | null>(null);
   const [activeBookingPanel, setActiveBookingPanel] = useState<ActiveBookingPanel | null>(null);
@@ -155,6 +179,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (isBookingSavePending || isDeletePending) return;
         setActiveDetailPanel(null);
         closeBookingPanel();
       }
@@ -162,7 +187,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeDetailPanel, activeBookingPanel]);
+  }, [activeDetailPanel, activeBookingPanel, isBookingSavePending, isDeletePending]);
 
   useEffect(() => {
     const fromProp = sanitizeEditorToken(initialEditorToken);
@@ -170,12 +195,12 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
       new URLSearchParams(window.location.search).get("editor"),
     );
     const fromSession = sanitizeEditorToken(
-      window.sessionStorage.getItem(EDITOR_TOKEN_SESSION_KEY),
+      window.localStorage.getItem(EDITOR_TOKEN_SESSION_KEY),
     );
     const resolved = fromProp ?? fromUrl ?? fromSession;
 
     if (resolved) {
-      window.sessionStorage.setItem(EDITOR_TOKEN_SESSION_KEY, resolved);
+      window.localStorage.setItem(EDITOR_TOKEN_SESSION_KEY, resolved);
       setEditorToken(resolved);
     } else {
       setEditorToken(null);
@@ -338,7 +363,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
       }
 
       if (response.status === 401) {
-        window.sessionStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+        window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
         setEditorToken(null);
         setBookingError("Editor session expired. Re-open the editor link.");
         return;
@@ -382,7 +407,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
       }
 
       if (response.status === 401) {
-        window.sessionStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+        window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
         setEditorToken(null);
         setDeleteError("Editor session expired. Re-open the editor link.");
         return;
@@ -453,11 +478,99 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
   const showDeleteConfirm = !!confirmDeleteEventId
     && !!activeEditableDetail
     && confirmDeleteEventId === activeEditableDetail.eventId;
+  const detailModalIsLocked = isDeletePending;
+  const bookingModalIsLocked = isBookingSavePending;
+  const renderLoadingOverlay = (title: "Saving job…" | "Deleting job…") => (
+    <div className="board-day-modal-loading-overlay" role="status" aria-live="polite">
+      <div className="board-day-modal-loading-indicator">
+        <svg
+          className="board-day-modal-loading-svg"
+          viewBox="0 0 50 50"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <circle className="board-day-modal-loading-track" cx="25" cy="25" r="20" />
+          <circle className="board-day-modal-loading-arc" cx="25" cy="25" r="20">
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              from="0 25 25"
+              to="360 25 25"
+              dur="0.8s"
+              repeatCount="indefinite"
+            />
+          </circle>
+        </svg>
+        <p className="board-day-modal-loading-title">{title}</p>
+        <p className="board-day-modal-loading-copy">Updating calendar</p>
+      </div>
+    </div>
+  );
+  const swipeDisabled = !!activeDetailPanel || !!activeBookingPanel || isDeletePending || isBookingSavePending;
+
+  const onTouchStart: TouchEventHandler<HTMLElement> = (event) => {
+    if (swipeDisabled) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("button, a, input, select, textarea, [role='button']")) {
+      return;
+    }
+    const touch = event.touches[0];
+    if (!touch) return;
+    swipeRef.current = {
+      tracking: true,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      moved: false,
+    };
+  };
+
+  const onTouchMove: TouchEventHandler<HTMLElement> = (event) => {
+    const state = swipeRef.current;
+    if (!state.tracking || state.moved || swipeDisabled) return;
+    const touch = event.touches[0];
+    if (!touch) return;
+    const dx = touch.clientX - state.startX;
+    const dy = touch.clientY - state.startY;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+
+    if (absDy > absDx && absDy > 16) {
+      state.tracking = false;
+      return;
+    }
+
+    if (absDx < 64 || absDx <= absDy) return;
+
+    state.moved = true;
+    state.tracking = false;
+    if (dx < 0 && canGoNext && nextHref) {
+      router.push(nextHref);
+      return;
+    }
+    if (dx > 0 && canGoPrev && prevHref) {
+      router.push(prevHref);
+    }
+  };
+
+  const onTouchEnd: TouchEventHandler<HTMLElement> = () => {
+    swipeRef.current.tracking = false;
+  };
+
+  const onTouchCancel: TouchEventHandler<HTMLElement> = () => {
+    swipeRef.current.tracking = false;
+  };
 
   return (
-    <section className="month-board" aria-label={month.label}>
+    <section
+      className="month-board"
+      aria-label={month.label}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={onTouchCancel}
+    >
       <div className="month-label-row">
-        <h2 className="month-label">{month.label}</h2>
+        <h2 className="month-label period-label-animate">{month.label}</h2>
       </div>
       {weekendToday ? (
         <div className="month-weekend-today" aria-label={`Today: ${weekendToday.date}`}>
@@ -474,7 +587,12 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
         ))}
       </div>
 
-      <div className="month-grid" role="grid" aria-label={`${month.label} schedule`}>
+      <div
+        className="month-grid"
+        role="grid"
+        aria-label={`${month.label} schedule`}
+        style={{ ["--month-week-count" as string]: String(month.weeks.length) }}
+      >
         {month.weeks.map((week, weekIndex) => {
           const currentMonthIndexes = week.days
             .map((day, index) => (day.isCurrentMonth ? index : -1))
@@ -613,13 +731,20 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                                 className="month-day-book-button"
                                 aria-hidden="true"
                               >
-                                Book
+                                <span className="month-cell-label-full">Available</span>
+                                <span className="month-cell-label-short">Avail</span>
                               </span>
                             ) : (
-                              <div className="month-day-availability" aria-hidden="true">Available</div>
+                              <div className="month-day-availability" aria-hidden="true">
+                                <span className="month-cell-label-full">Available</span>
+                                <span className="month-cell-label-short">Avail</span>
+                              </div>
                             )
                           ) : bookedLabel?.isPrivateUnavailable ? (
-                            <div className="month-day-unavailable-text" aria-hidden="true">Unavailable</div>
+                            <div className="month-day-unavailable-text" aria-hidden="true">
+                              <span className="month-cell-label-full">Unavailable</span>
+                              <span className="month-cell-label-short">Busy</span>
+                            </div>
                           ) : hasCoveringBar ? (
                             <div className="month-day-placeholder" aria-hidden="true" />
                           ) : (
@@ -644,7 +769,10 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
         <div
           className="board-day-modal-backdrop"
           role="presentation"
-          onClick={closeDetailPanel}
+          onClick={() => {
+            if (detailModalIsLocked) return;
+            closeDetailPanel();
+          }}
         >
           <section
             id="month-job-detail-modal"
@@ -652,13 +780,16 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
             role="dialog"
             aria-modal="true"
             aria-labelledby="month-job-detail-title"
+            aria-busy={detailModalIsLocked || undefined}
             onClick={(event) => event.stopPropagation()}
           >
+            {detailModalIsLocked ? renderLoadingOverlay("Deleting job…") : null}
             <button
               type="button"
               className="board-day-modal-close-icon"
               aria-label="Close details"
               onClick={closeDetailPanel}
+              disabled={detailModalIsLocked}
             >
               ×
             </button>
@@ -731,7 +862,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                         type="button"
                         className="month-booking-button month-booking-button--secondary"
                         onClick={() => setConfirmDeleteEventId(null)}
-                        disabled={isDeletePending}
+                        disabled={detailModalIsLocked}
                       >
                         Cancel
                       </button>
@@ -742,9 +873,9 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                           if (!activeEditableDetail.eventId) return;
                           void deleteActiveGig(activeEditableDetail.eventId);
                         }}
-                        disabled={isDeletePending}
+                        disabled={detailModalIsLocked}
                       >
-                        {isDeletePending ? "Deleting..." : "Confirm Delete"}
+                        {detailModalIsLocked ? "Deleting..." : "Confirm Delete"}
                       </button>
                     </div>
                   </div>
@@ -754,6 +885,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                       type="button"
                       className="month-booking-button month-booking-button--secondary"
                       onClick={() => openEditBookingPanel(activeEditableDetail)}
+                      disabled={detailModalIsLocked}
                     >
                       Edit
                     </button>
@@ -765,6 +897,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                         setConfirmDeleteEventId(activeEditableDetail.eventId);
                         setDeleteError(null);
                       }}
+                      disabled={detailModalIsLocked}
                     >
                       Delete
                     </button>
@@ -780,20 +913,26 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
         <div
           className="board-day-modal-backdrop"
           role="presentation"
-          onClick={closeBookingPanel}
+          onClick={() => {
+            if (bookingModalIsLocked) return;
+            closeBookingPanel();
+          }}
         >
           <section
             className="board-day-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="month-booking-title"
+            aria-busy={bookingModalIsLocked || undefined}
             onClick={(event) => event.stopPropagation()}
           >
+            {bookingModalIsLocked ? renderLoadingOverlay("Saving job…") : null}
             <button
               type="button"
               className="board-day-modal-close-icon"
               aria-label="Close booking editor"
               onClick={closeBookingPanel}
+              disabled={bookingModalIsLocked}
             >
               ×
             </button>
@@ -811,7 +950,12 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                 <span className="month-booking-la-prefix" aria-hidden="true">LA#</span>
                 <input
                   id="booking-la-number"
+                  name="job-number"
                   className="month-booking-input month-booking-input--la"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   value={bookingLaNumber}
                   onChange={(event) => {
                     setBookingLaNumber(event.target.value.replace(/\D/g, ""));
@@ -822,15 +966,19 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                   pattern="[0-9]*"
                   maxLength={12}
                   autoFocus
+                  disabled={bookingModalIsLocked}
                 />
               </div>
 
-              <label className="month-booking-label" htmlFor="booking-job-name">
-                Job Name
+              <label className="month-booking-label" htmlFor="booking-job-title">
+                Job Title
               </label>
               <input
-                id="booking-job-name"
+                id="booking-job-title"
+                name="job-title"
                 className="month-booking-input"
+                autoComplete="off"
+                autoCapitalize="words"
                 value={bookingJobName}
                 onChange={(event) => {
                   setBookingJobName(event.target.value);
@@ -838,6 +986,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                 }}
                 placeholder="Wilmington Flower Market"
                 maxLength={200}
+                disabled={bookingModalIsLocked}
               />
 
               <p className="month-booking-label">Date Range</p>
@@ -848,6 +997,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                   onClick={() => setBookingPickerExpanded((prev) => !prev)}
                   aria-expanded={bookingPickerExpanded}
                   aria-controls="month-booking-calendar-panel"
+                  disabled={bookingModalIsLocked}
                 >
                   <span>{bookingRangeLabel}</span>
                   <span className="month-booking-range-toggle-caret" aria-hidden="true">▾</span>
@@ -868,7 +1018,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                           setBookingPickerMonthKey(bookingViewMonth.minus({ months: 1 }).toFormat("yyyy-LL"));
                           if (bookingError) setBookingError(null);
                         }}
-                        disabled={!canGoToPreviousBookingMonth}
+                        disabled={bookingModalIsLocked || !canGoToPreviousBookingMonth}
                         aria-label="Previous month"
                       >
                         ‹
@@ -882,6 +1032,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                           setBookingPickerMonthKey(bookingViewMonth.plus({ months: 1 }).toFormat("yyyy-LL"));
                           if (bookingError) setBookingError(null);
                         }}
+                        disabled={bookingModalIsLocked}
                         aria-label="Next month"
                       >
                         ›
@@ -913,7 +1064,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                               isEnd ? "is-end" : "",
                               isInRange ? "is-in-range" : "",
                             ].filter(Boolean).join(" ")}
-                            disabled={isDisabled}
+                            disabled={bookingModalIsLocked || isDisabled}
                             onClick={() => {
                               setBookingEndDate(day.isoDate);
                               setBookingPickerExpanded(false);
@@ -931,6 +1082,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                         type="button"
                         className={`month-booking-same-day-button${bookingEndDate === bookingStartDate ? " is-active" : ""}`}
                         onClick={applySameDaySelection}
+                        disabled={bookingModalIsLocked}
                       >
                         Same day
                       </button>
@@ -944,12 +1096,15 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
               </label>
               <select
                 id="booking-call-time"
+                name="job-call-time"
                 className="month-booking-input"
+                autoComplete="off"
                 value={bookingCallTimeOption}
                 onChange={(event) => {
                   setBookingCallTimeOption(event.target.value);
                   if (bookingError) setBookingError(null);
                 }}
+                disabled={bookingModalIsLocked}
               >
                 {CALL_TIME_OPTIONS.map((value) => (
                   <option key={value} value={value}>
@@ -962,7 +1117,12 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
               {bookingCallTimeOption === "Other" ? (
                 <input
                   id="booking-call-time-other"
+                  name="job-call-time-other"
                   className="month-booking-input month-booking-input--small"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   value={bookingCallTimeOther}
                   onChange={(event) => {
                     setBookingCallTimeOther(event.target.value);
@@ -970,6 +1130,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                   }}
                   placeholder="Custom call time"
                   maxLength={120}
+                  disabled={bookingModalIsLocked}
                 />
               ) : null}
 
@@ -978,7 +1139,10 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
               </label>
               <textarea
                 id="booking-notes"
+                name="job-notes"
                 className="month-booking-textarea"
+                autoComplete="off"
+                autoCapitalize="sentences"
                 value={bookingNotes}
                 onChange={(event) => {
                   setBookingNotes(event.target.value);
@@ -987,6 +1151,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                 placeholder="Venue notes, contact, etc."
                 maxLength={4000}
                 rows={4}
+                disabled={bookingModalIsLocked}
               />
 
               {bookingError ? (
@@ -998,7 +1163,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                   type="button"
                   className="month-booking-button month-booking-button--secondary"
                   onClick={closeBookingPanel}
-                  disabled={isBookingSavePending}
+                  disabled={bookingModalIsLocked}
                 >
                   Cancel
                 </button>
@@ -1006,9 +1171,9 @@ export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendar
                   type="button"
                   className="month-booking-button month-booking-button--primary"
                   onClick={() => { void saveBooking(); }}
-                  disabled={isBookingSavePending}
+                  disabled={bookingModalIsLocked}
                 >
-                  {isBookingSavePending ? "Saving..." : "Save"}
+                  {bookingModalIsLocked ? "Saving..." : "Save"}
                 </button>
               </div>
             </div>

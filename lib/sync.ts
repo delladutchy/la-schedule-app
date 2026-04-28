@@ -33,6 +33,7 @@ export interface BuildResult {
 export async function buildAndPersistSnapshot(
   nowMs: number = Date.now(),
 ): Promise<BuildResult> {
+  const syncStartedAt = Date.now();
   const { file, env } = getConfig();
 
   // Window: from start of today in display zone, extending horizonDays forward.
@@ -42,24 +43,46 @@ export async function buildAndPersistSnapshot(
   const windowStartMs = startOfToday.toUTC().toMillis();
   const windowEndMs = startOfToday.plus({ days: file.horizonDays }).toUTC().toMillis();
 
-  let fb;
-  try {
-    fb = await fetchFreeBusy({
-      clientId: env.GOOGLE_CLIENT_ID,
-      clientSecret: env.GOOGLE_CLIENT_SECRET,
-      refreshToken: env.GOOGLE_REFRESH_TOKEN,
-      calendarIds: env.BLOCKER_CALENDAR_IDS,
-      timeMinMs: windowStartMs,
-      timeMaxMs: windowEndMs,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+  const freeBusyStartedAt = Date.now();
+  const freeBusyPromise = fetchFreeBusy({
+    clientId: env.GOOGLE_CLIENT_ID,
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+    refreshToken: env.GOOGLE_REFRESH_TOKEN,
+    calendarIds: env.BLOCKER_CALENDAR_IDS,
+    timeMinMs: windowStartMs,
+    timeMaxMs: windowEndMs,
+  });
+  const namedEventsStartedAt = Date.now();
+  const namedEventsPromise = fetchCalendarEvents({
+    clientId: env.GOOGLE_CLIENT_ID,
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+    refreshToken: env.GOOGLE_REFRESH_TOKEN,
+    calendarIds: env.BLOCKER_CALENDAR_IDS,
+    timeMinMs: windowStartMs,
+    timeMaxMs: windowEndMs,
+    displayTimezone: file.timezone,
+  });
+
+  const [freeBusyResult, namedEventsResult] = await Promise.allSettled([
+    freeBusyPromise,
+    namedEventsPromise,
+  ]);
+  const freeBusyDurationMs = Date.now() - freeBusyStartedAt;
+  const namedEventsDurationMs = Date.now() - namedEventsStartedAt;
+
+  if (freeBusyResult.status === "rejected") {
+    const msg = freeBusyResult.reason instanceof Error
+      ? freeBusyResult.reason.message
+      : String(freeBusyResult.reason);
     console.error("[sync] freebusy transport error:", msg);
+    console.info(`[sync] timings ms freebusy=${freeBusyDurationMs} namedEvents=${namedEventsDurationMs} total=${Date.now() - syncStartedAt}`);
     return { status: "failed", error: `FreeBusy transport error: ${msg}` };
   }
+  const fb = freeBusyResult.value;
 
   if (fb.erroredCalendarIds.length > 0) {
     console.error("[sync] freebusy per-calendar errors:", fb.erroredCalendarIds);
+    console.info(`[sync] timings ms freebusy=${freeBusyDurationMs} namedEvents=${namedEventsDurationMs} total=${Date.now() - syncStartedAt}`);
     return {
       status: "failed",
       error: "One or more calendars errored in FreeBusy response",
@@ -91,16 +114,8 @@ export async function buildAndPersistSnapshot(
   // We intentionally do not fail snapshot writes on title fetch errors,
   // so existing booked/available behavior remains reliable.
   let namedEvents: NamedEvent[] | undefined;
-  try {
-    const names = await fetchCalendarEvents({
-      clientId: env.GOOGLE_CLIENT_ID,
-      clientSecret: env.GOOGLE_CLIENT_SECRET,
-      refreshToken: env.GOOGLE_REFRESH_TOKEN,
-      calendarIds: env.BLOCKER_CALENDAR_IDS,
-      timeMinMs: windowStartMs,
-      timeMaxMs: windowEndMs,
-      displayTimezone: file.timezone,
-    });
+  if (namedEventsResult.status === "fulfilled") {
+    const names = namedEventsResult.value;
 
     if (names.erroredCalendarIds.length > 0) {
       console.error("[sync] events per-calendar errors (continuing without names):", names.erroredCalendarIds);
@@ -130,8 +145,10 @@ export async function buildAndPersistSnapshot(
           displayMode: event.displayMode,
         }));
     }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+  } else {
+    const msg = namedEventsResult.reason instanceof Error
+      ? namedEventsResult.reason.message
+      : String(namedEventsResult.reason);
     console.error("[sync] events transport error (continuing without names):", msg);
   }
 
@@ -155,10 +172,13 @@ export async function buildAndPersistSnapshot(
   };
 
   try {
+    const writeStartedAt = Date.now();
     await writeCurrentSnapshot(env.BLOBS_STORE_NAME, snapshot);
+    console.info(`[sync] timings ms freebusy=${freeBusyDurationMs} namedEvents=${namedEventsDurationMs} write=${Date.now() - writeStartedAt} total=${Date.now() - syncStartedAt}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[sync] snapshot write failed:", msg);
+    console.info(`[sync] timings ms freebusy=${freeBusyDurationMs} namedEvents=${namedEventsDurationMs} total=${Date.now() - syncStartedAt}`);
     return { status: "failed", error: `Snapshot write failed: ${msg}` };
   }
 

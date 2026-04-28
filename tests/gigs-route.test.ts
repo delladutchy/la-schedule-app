@@ -1,8 +1,32 @@
-import { describe, expect, it } from "vitest";
-import { DELETE, PATCH } from "@/app/api/gigs/[eventId]/route";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/config", () => ({
+  getConfig: () => ({
+    env: {
+      EDITOR_TOKEN: "legacy-editor-token-0123456789",
+      EDITOR_TOKENS_JSON: JSON.stringify({
+        jeff: "jeff-editor-token-0123456789",
+        dave: "dave-editor-token-0123456789",
+        milos: "milos-editor-token-0123456789",
+      }),
+    },
+    file: {
+      timezone: "America/New_York",
+    },
+  }),
+}));
+
+async function loadGigRoutes() {
+  const mod = await import("@/app/api/gigs/[eventId]/route");
+  return {
+    PATCH: mod.PATCH,
+    DELETE: mod.DELETE,
+  };
+}
 
 describe("/api/gigs/[eventId] auth", () => {
   it("rejects PATCH without bearer token", async () => {
+    const { PATCH } = await loadGigRoutes();
     const req = new Request("http://localhost/api/gigs/g123", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -18,6 +42,7 @@ describe("/api/gigs/[eventId] auth", () => {
   });
 
   it("rejects DELETE without bearer token", async () => {
+    const { DELETE } = await loadGigRoutes();
     const req = new Request("http://localhost/api/gigs/g123", {
       method: "DELETE",
     });

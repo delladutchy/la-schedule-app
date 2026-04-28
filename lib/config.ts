@@ -111,8 +111,14 @@ const EnvSchema = z.object({
   /** Token that must be presented to view /admin status page. */
   ADMIN_TOKEN: z.string().min(16, "ADMIN_TOKEN must be at least 16 chars"),
 
-  /** Token that must be presented to create/edit gigs. */
-  EDITOR_TOKEN: z.string().min(16, "EDITOR_TOKEN must be at least 16 chars"),
+  /** Legacy token that can be presented to create/edit gigs (mapped as "legacy"). */
+  EDITOR_TOKEN: z.string().min(16, "EDITOR_TOKEN must be at least 16 chars").optional(),
+
+  /**
+   * Preferred named editor-token mapping (JSON object), for example:
+   * {"jeff":"...","dave":"...","milos":"..."}
+   */
+  EDITOR_TOKENS_JSON: z.string().optional(),
 
   /** Calendar ID used for editor write-through gig creation. */
   GOOGLE_CALENDAR_ID: z.string().min(1, "GOOGLE_CALENDAR_ID is required"),
@@ -140,6 +146,16 @@ const EnvSchema = z.object({
 
   /** Set by Netlify automatically; used to detect deploy environment. */
   CONTEXT: z.string().optional(),
+}).superRefine((env, ctx) => {
+  const hasNamed = !!env.EDITOR_TOKENS_JSON?.trim();
+  const hasLegacy = !!env.EDITOR_TOKEN?.trim();
+  if (!hasNamed && !hasLegacy) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["EDITOR_TOKENS_JSON"],
+      message: "Provide EDITOR_TOKENS_JSON or EDITOR_TOKEN.",
+    });
+  }
 });
 
 export type FileConfig = z.infer<typeof FileConfigSchema>;

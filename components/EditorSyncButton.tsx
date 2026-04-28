@@ -25,12 +25,12 @@ export function EditorSyncButton({ initialEditorToken }: Props) {
       new URLSearchParams(window.location.search).get("editor"),
     );
     const fromSession = sanitizeEditorToken(
-      window.sessionStorage.getItem(EDITOR_TOKEN_SESSION_KEY),
+      window.localStorage.getItem(EDITOR_TOKEN_SESSION_KEY),
     );
     const resolved = fromProp ?? fromUrl ?? fromSession;
 
     if (resolved) {
-      window.sessionStorage.setItem(EDITOR_TOKEN_SESSION_KEY, resolved);
+      window.localStorage.setItem(EDITOR_TOKEN_SESSION_KEY, resolved);
       setEditorToken(resolved);
     } else {
       setEditorToken(null);
@@ -65,7 +65,7 @@ export function EditorSyncButton({ initialEditorToken }: Props) {
             });
 
             if (response.status === 401) {
-              window.sessionStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+              window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
               setEditorToken(null);
               setNotice({ kind: "error", message: "Editor session expired." });
               return;
@@ -93,7 +93,12 @@ export function EditorSyncButton({ initialEditorToken }: Props) {
         }}
         disabled={isPending}
       >
-        {isPending ? "Syncing..." : "Sync"}
+        {isPending ? (
+          <>
+            <span className="editor-sync-inline-spinner" aria-hidden="true" />
+            Syncing...
+          </>
+        ) : "Sync"}
       </button>
       {notice ? (
         <span

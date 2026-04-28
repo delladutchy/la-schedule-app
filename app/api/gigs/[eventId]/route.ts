@@ -8,29 +8,37 @@ import {
   isDateRangeAvailableForEditInSnapshot,
 } from "@/lib/gigs";
 import { readCurrentSnapshot } from "@/lib/store";
+import { authorizeEditorRequest } from "@/lib/editor-auth";
 
 export const dynamic = "force-dynamic";
 
-function constantTimeEquals(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
+interface RouteTimings {
+  snapshotReadMs: number;
+  preflightSyncMs: number;
+  googleWriteMs: number;
+  postSyncMs: number;
 }
 
-function isAuthorized(req: Request): boolean {
-  try {
-    const { env } = getConfig();
-    const header = req.headers.get("authorization") ?? "";
-    const match = header.match(/^Bearer\s+(.+)$/i);
-    if (!match) return false;
-    const presented = match[1]?.trim() ?? "";
-    return constantTimeEquals(presented, env.EDITOR_TOKEN);
-  } catch {
-    return false;
-  }
+function createEmptyRouteTimings(): RouteTimings {
+  return {
+    snapshotReadMs: 0,
+    preflightSyncMs: 0,
+    googleWriteMs: 0,
+    postSyncMs: 0,
+  };
+}
+
+function logGigRouteTiming(
+  action: "patch" | "delete",
+  outcome: string,
+  editorId: string,
+  routeStartedAt: number,
+  timings: RouteTimings,
+): void {
+  const totalMs = Date.now() - routeStartedAt;
+  console.info(
+    `[gigs:${action}] ${outcome} editor=${editorId} ms snapshotRead=${timings.snapshotReadMs} preflightSync=${timings.preflightSyncMs} googleWrite=${timings.googleWriteMs} postSync=${timings.postSyncMs} total=${totalMs}`,
+  );
 }
 
 function parsePayload(body: unknown) {
@@ -83,12 +91,20 @@ export async function PATCH(
   req: Request,
   context: { params: { eventId?: string } },
 ) {
-  if (!isAuthorized(req)) {
+  const routeStartedAt = Date.now();
+  const timings = createEmptyRouteTimings();
+  const { file, env } = getConfig();
+  const auth = authorizeEditorRequest(req, env);
+  const editorId = auth.ok ? auth.editorId : "unknown";
+
+  if (!auth.ok) {
+    logGigRouteTiming("patch", "unauthorized", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   const eventId = resolveEventId(context.params.eventId);
   if (!eventId) {
+    logGigRouteTiming("patch", "invalid_event_id", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "invalid_event_id" }, { status: 400 });
   }
 
@@ -96,23 +112,28 @@ export async function PATCH(
   try {
     body = await req.json();
   } catch {
+    logGigRouteTiming("patch", "invalid_json", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
   const payload = parsePayload(body);
   if (!payload.ok) {
+    logGigRouteTiming("patch", "invalid_payload", editorId, routeStartedAt, timings);
     return NextResponse.json(
       { error: "invalid_payload", details: payload.error },
       { status: payload.status },
     );
   }
 
-  const { file, env } = getConfig();
-
+  const snapshotReadStartedAt = Date.now();
   let validationSnapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  timings.snapshotReadMs = Date.now() - snapshotReadStartedAt;
   if (!validationSnapshot) {
+    const preflightStartedAt = Date.now();
     const preflight = await buildAndPersistSnapshot();
+    timings.preflightSyncMs = Date.now() - preflightStartedAt;
     if (preflight.status !== "ok" || !preflight.snapshot) {
+      logGigRouteTiming("patch", "snapshot_unavailable_prewrite", editorId, routeStartedAt, timings);
       return NextResponse.json(
         {
           error: "snapshot_unavailable",
@@ -135,6 +156,7 @@ export async function PATCH(
     },
   );
   if (!isAvailable) {
+    logGigRouteTiming("patch", "day_already_booked_prewrite", editorId, routeStartedAt, timings);
     return NextResponse.json(
       { error: "day_already_booked", message: "Day already booked." },
       { status: 409 },
@@ -142,6 +164,7 @@ export async function PATCH(
   }
 
   try {
+    const googleWriteStartedAt = Date.now();
     const updated = await updateAllDayEvent({
       clientId: env.GOOGLE_CLIENT_ID,
       clientSecret: env.GOOGLE_CLIENT_SECRET,
@@ -153,8 +176,12 @@ export async function PATCH(
       startDate: payload.startDate,
       endDateExclusive: payload.endDateExclusive,
     });
+    timings.googleWriteMs = Date.now() - googleWriteStartedAt;
 
+    const postSyncStartedAt = Date.now();
     const postSync = await buildAndPersistSnapshot();
+    timings.postSyncMs = Date.now() - postSyncStartedAt;
+    logGigRouteTiming("patch", "ok", editorId, routeStartedAt, timings);
 
     return NextResponse.json(
       {
@@ -183,11 +210,13 @@ export async function PATCH(
   } catch (error) {
     const status = extractHttpStatus(error);
     if (status === 404) {
+      logGigRouteTiming("patch", "event_not_found", editorId, routeStartedAt, timings);
       return NextResponse.json(
         { error: "event_not_found", message: "Event not found in editor calendar." },
         { status: 404 },
       );
     }
+    logGigRouteTiming("patch", "google_update_failed", editorId, routeStartedAt, timings);
     return NextResponse.json(
       {
         error: "google_update_failed",
@@ -202,17 +231,24 @@ export async function DELETE(
   req: Request,
   context: { params: { eventId?: string } },
 ) {
-  if (!isAuthorized(req)) {
+  const routeStartedAt = Date.now();
+  const timings = createEmptyRouteTimings();
+  const { env } = getConfig();
+  const auth = authorizeEditorRequest(req, env);
+  const editorId = auth.ok ? auth.editorId : "unknown";
+
+  if (!auth.ok) {
+    logGigRouteTiming("delete", "unauthorized", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   const eventId = resolveEventId(context.params.eventId);
   if (!eventId) {
+    logGigRouteTiming("delete", "invalid_event_id", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "invalid_event_id" }, { status: 400 });
   }
-
-  const { env } = getConfig();
   try {
+    const googleWriteStartedAt = Date.now();
     await deleteCalendarEvent({
       clientId: env.GOOGLE_CLIENT_ID,
       clientSecret: env.GOOGLE_CLIENT_SECRET,
@@ -220,8 +256,12 @@ export async function DELETE(
       calendarId: env.GOOGLE_CALENDAR_ID,
       eventId,
     });
+    timings.googleWriteMs = Date.now() - googleWriteStartedAt;
 
+    const postSyncStartedAt = Date.now();
     const postSync = await buildAndPersistSnapshot();
+    timings.postSyncMs = Date.now() - postSyncStartedAt;
+    logGigRouteTiming("delete", "ok", editorId, routeStartedAt, timings);
 
     return NextResponse.json(
       {
@@ -245,11 +285,13 @@ export async function DELETE(
   } catch (error) {
     const status = extractHttpStatus(error);
     if (status === 404) {
+      logGigRouteTiming("delete", "event_not_found", editorId, routeStartedAt, timings);
       return NextResponse.json(
         { error: "event_not_found", message: "Event not found in editor calendar." },
         { status: 404 },
       );
     }
+    logGigRouteTiming("delete", "google_delete_failed", editorId, routeStartedAt, timings);
     return NextResponse.json(
       {
         error: "google_delete_failed",
