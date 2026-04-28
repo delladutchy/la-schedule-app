@@ -126,6 +126,11 @@ const EnvSchema = z.object({
   /** Optional override for Netlify Blobs store name. */
   BLOBS_STORE_NAME: z.string().default("availability-snapshots"),
 
+  /** Optional email notification settings (used for successful create notifications). */
+  RESEND_API_KEY: z.string().optional(),
+  NOTIFY_EMAIL_TO: z.string().optional(),
+  NOTIFY_EMAIL_FROM: z.string().optional(),
+
   /**
    * If true (default), the public homepage will attempt a one-time server-side
    * snapshot bootstrap when it detects an unavailable state (for example, a

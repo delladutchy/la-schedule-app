@@ -11,6 +11,7 @@ import { buildAllDayGigEventId } from "@/lib/gig-ids";
 import { readCurrentSnapshot } from "@/lib/store";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { appendAuditEvent, buildGigAuditFields } from "@/lib/audit-log";
+import { sendCreateJobNotification } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -164,24 +165,42 @@ export async function POST(req: Request) {
     const postSyncStartedAt = Date.now();
     const postSync = await buildAndPersistSnapshot();
     timings.postSyncMs = Date.now() - postSyncStartedAt;
+    const auditFields = buildGigAuditFields({
+      summary: payload.summary,
+      startDate: payload.startDate,
+      endDate: payload.endDateInclusive,
+      description: payload.description,
+    });
 
     if (postSync.status === "ok") {
+      let appendedAudit = false;
       try {
         await appendAuditEvent(env.BLOBS_STORE_NAME, {
           editorId,
           action: "create",
           status: "success",
           eventId: created.id,
-          ...buildGigAuditFields({
-            summary: payload.summary,
-            startDate: payload.startDate,
-            endDate: payload.endDateInclusive,
-            description: payload.description,
-          }),
+          ...auditFields,
         });
+        appendedAudit = true;
       } catch (auditError) {
         const msg = auditError instanceof Error ? auditError.message : String(auditError);
         console.error("[audit] append failed after create:", msg);
+      }
+      if (appendedAudit) {
+        try {
+          await sendCreateJobNotification(env, {
+            editorId,
+            jobNumber: auditFields.jobNumber,
+            jobTitle: auditFields.jobTitle,
+            startDate: auditFields.startDate,
+            endDate: auditFields.endDate,
+            callTime: auditFields.callTime,
+          });
+        } catch (notifyError) {
+          const msg = notifyError instanceof Error ? notifyError.message : String(notifyError);
+          console.error(`[notify] create email failed editor=${editorId}:`, msg);
+        }
       }
     }
 
@@ -250,24 +269,42 @@ export async function POST(req: Request) {
         const retryPostSyncStartedAt = Date.now();
         const postSync = await buildAndPersistSnapshot();
         timings.retryPostSyncMs = Date.now() - retryPostSyncStartedAt;
+        const auditFields = buildGigAuditFields({
+          summary: payload.summary,
+          startDate: payload.startDate,
+          endDate: payload.endDateInclusive,
+          description: payload.description,
+        });
 
         if (postSync.status === "ok") {
+          let appendedAudit = false;
           try {
             await appendAuditEvent(env.BLOBS_STORE_NAME, {
               editorId,
               action: "create",
               status: "success",
               eventId: created.id,
-              ...buildGigAuditFields({
-                summary: payload.summary,
-                startDate: payload.startDate,
-                endDate: payload.endDateInclusive,
-                description: payload.description,
-              }),
+              ...auditFields,
             });
+            appendedAudit = true;
           } catch (auditError) {
             const msg = auditError instanceof Error ? auditError.message : String(auditError);
             console.error("[audit] append failed after create retry:", msg);
+          }
+          if (appendedAudit) {
+            try {
+              await sendCreateJobNotification(env, {
+                editorId,
+                jobNumber: auditFields.jobNumber,
+                jobTitle: auditFields.jobTitle,
+                startDate: auditFields.startDate,
+                endDate: auditFields.endDate,
+                callTime: auditFields.callTime,
+              });
+            } catch (notifyError) {
+              const msg = notifyError instanceof Error ? notifyError.message : String(notifyError);
+              console.error(`[notify] create email failed editor=${editorId}:`, msg);
+            }
           }
         }
         logCreateRouteTiming("ok_retry_without_event_id", editorId, routeStartedAt, timings);

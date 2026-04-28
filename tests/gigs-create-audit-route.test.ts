@@ -5,6 +5,7 @@ const buildAndPersistSnapshot = vi.fn();
 const readCurrentSnapshot = vi.fn();
 const appendAuditEvent = vi.fn();
 const authorizeEditorRequest = vi.fn();
+const sendCreateJobNotification = vi.fn();
 
 const snapshot = {
   version: 1 as const,
@@ -40,6 +41,9 @@ vi.mock("@/lib/config", () => ({
         dave: "dave-editor-token-0123456789",
         milos: "milos-editor-token-0123456789",
       }),
+      RESEND_API_KEY: "resend-key",
+      NOTIFY_EMAIL_TO: "jeff@example.com",
+      NOTIFY_EMAIL_FROM: "la-schedule@example.com",
     },
   }),
 }));
@@ -73,6 +77,10 @@ vi.mock("@/lib/editor-auth", async () => {
   };
 });
 
+vi.mock("@/lib/notifications", () => ({
+  sendCreateJobNotification: (...args: unknown[]) => sendCreateJobNotification(...args),
+}));
+
 async function loadRoute() {
   const mod = await import("@/app/api/gigs/create/route");
   return mod.POST;
@@ -85,6 +93,7 @@ describe("/api/gigs/create audit logging", () => {
     readCurrentSnapshot.mockReset();
     appendAuditEvent.mockReset();
     authorizeEditorRequest.mockReset();
+    sendCreateJobNotification.mockReset();
   });
 
   it("appends audit event after successful create", async () => {
@@ -113,6 +122,7 @@ describe("/api/gigs/create audit logging", () => {
     expect(payload.editorId).toBe("jeff");
     expect(payload.action).toBe("create");
     expect(payload.status).toBe("success");
+    expect(sendCreateJobNotification).toHaveBeenCalledTimes(1);
   });
 
   it("does not append audit when unauthorized", async () => {
@@ -130,5 +140,75 @@ describe("/api/gigs/create audit logging", () => {
     const res = await POST(req);
     expect(res.status).toBe(401);
     expect(appendAuditEvent).not.toHaveBeenCalled();
+    expect(sendCreateJobNotification).not.toHaveBeenCalled();
+  });
+
+  it("does not send notification when audit append fails", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    createAllDayEvent.mockResolvedValue({ id: "evt-123", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+    appendAuditEvent.mockRejectedValue(new Error("audit write failed"));
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12345 — Test Job",
+        date: "2026-05-07",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(appendAuditEvent).toHaveBeenCalledTimes(1);
+    expect(sendCreateJobNotification).not.toHaveBeenCalled();
+  });
+
+  it("does not append audit or send notification when post-sync fails", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    createAllDayEvent.mockResolvedValue({ id: "evt-123", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "failed", error: "sync failed" });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12345 — Test Job",
+        date: "2026-05-07",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(appendAuditEvent).not.toHaveBeenCalled();
+    expect(sendCreateJobNotification).not.toHaveBeenCalled();
+  });
+
+  it("still succeeds when notification sending fails", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    createAllDayEvent.mockResolvedValue({ id: "evt-123", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+    sendCreateJobNotification.mockRejectedValue(new Error("resend error"));
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12345 — Test Job",
+        date: "2026-05-07",
+        description: "Call Time: 9:00 AM",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(appendAuditEvent).toHaveBeenCalledTimes(1);
+    expect(sendCreateJobNotification).toHaveBeenCalledTimes(1);
   });
 });
