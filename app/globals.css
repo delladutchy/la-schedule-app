@@ -25,6 +25,46 @@
   color-scheme: dark;
 }
 
+.board-day-modal-actions {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+
+.board-day-modal-action-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.board-day-modal-confirm-delete {
+  display: grid;
+  gap: 8px;
+}
+
+.board-day-modal-confirm-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.board-day-modal-confirm-copy {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.board-day-modal-confirm-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.board-day-modal-event-meta--notes {
+  white-space: pre-line;
+}
+
 :root[data-theme="light"] {
   --bg: #f7f6f4;
   --surface: #ffffff;

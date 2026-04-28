@@ -3,10 +3,13 @@ import type { Snapshot } from "@/lib/types";
 import {
   GigCreateBodySchema,
   resolveAllDayRange,
-  buildAllDayGigEventId,
   buildLaJobSummary,
+  parseLaJobSummary,
+  parseGigDescription,
+  buildGigDescription,
   isDateRangeAvailableInSnapshot,
 } from "@/lib/gigs";
+import { buildAllDayGigEventId } from "@/lib/gig-ids";
 
 function makeSnapshot(partial: Partial<Snapshot> = {}): Snapshot {
   return {
@@ -123,6 +126,40 @@ describe("buildLaJobSummary", () => {
   it("rejects empty job name", () => {
     expect(() => buildLaJobSummary("71411", "   "))
       .toThrow("Job Name is required.");
+  });
+});
+
+describe("parseLaJobSummary", () => {
+  it("extracts LA job number and remaining title", () => {
+    expect(parseLaJobSummary("LA#71411 — Wilmington Flower Market")).toEqual({
+      jobNumber: "LA#71411",
+      jobName: "Wilmington Flower Market",
+    });
+  });
+
+  it("keeps raw title when no LA number exists", () => {
+    expect(parseLaJobSummary("Desert")).toEqual({
+      jobName: "Desert",
+    });
+  });
+});
+
+describe("parseGigDescription/buildGigDescription", () => {
+  it("round-trips call time and notes", () => {
+    const built = buildGigDescription("8:00 AM", "Venue loading at north dock");
+    expect(built).toBe("Call Time: 8:00 AM\nJob Notes: Venue loading at north dock");
+    expect(parseGigDescription(built)).toEqual({
+      callTime: "8:00 AM",
+      jobNotes: "Venue loading at north dock",
+    });
+  });
+
+  it("omits empty lines and parses multi-line notes", () => {
+    const parsed = parseGigDescription("Call Time: TBD\nJob Notes: First line\nSecond line");
+    expect(parsed).toEqual({
+      callTime: "TBD",
+      jobNotes: "First line\nSecond line",
+    });
   });
 });
 

@@ -5,11 +5,18 @@ import { useRouter } from "next/navigation";
 import { DateTime } from "luxon";
 import { summarizeBookedDayLabel, type MonthBoardData } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
+import {
+  buildGigDescription,
+  buildLaJobSummary,
+  parseGigDescription,
+  parseLaJobSummary,
+} from "@/lib/gigs";
 
 interface Props {
   month: MonthBoardData;
   todayKey: string;
   initialEditorToken?: string;
+  editorCalendarId?: string;
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -39,6 +46,8 @@ interface ActiveDetailPanel {
 }
 
 interface ActiveBookingPanel {
+  mode: "create" | "edit";
+  eventId?: string;
   date: string;
 }
 
@@ -107,24 +116,22 @@ function buildBookingCalendarDays(startIsoDate: string, monthKey: string): {
   };
 }
 
-function buildLaJobSummary(laNumberRaw: string, jobNameRaw: string): string {
-  const laNumber = laNumberRaw.trim();
-  const jobName = jobNameRaw.trim();
-
-  if (!/^\d+$/.test(laNumber)) {
-    throw new Error("LA # is required and must be numbers only.");
-  }
-  if (!jobName) {
-    throw new Error("Job Name is required.");
-  }
-
-  return `LA#${laNumber} — ${jobName}`;
+function findEditableDetail(
+  details: BookedLabel["details"],
+  editorCalendarId?: string,
+): BookedLabel["details"][number] | null {
+  return details.find((detail) => {
+    if ((detail.displayMode ?? "details") !== "details") return false;
+    if (!detail.eventId) return false;
+    if (editorCalendarId && detail.calendarId !== editorCalendarId) return false;
+    return true;
+  }) ?? null;
 }
 
 /**
  * Monthly board with compact multi-day event bars.
  */
-export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
+export function MonthBoard({ month, todayKey, initialEditorToken, editorCalendarId }: Props) {
   const router = useRouter();
   const [activeDetailPanel, setActiveDetailPanel] = useState<ActiveDetailPanel | null>(null);
   const [editorToken, setEditorToken] = useState<string | null>(null);
@@ -139,6 +146,9 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const [bookingNotes, setBookingNotes] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isBookingSavePending, setIsBookingSavePending] = useState(false);
+  const [confirmDeleteEventId, setConfirmDeleteEventId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeletePending, setIsDeletePending] = useState(false);
 
   useEffect(() => {
     if (!activeDetailPanel && !activeBookingPanel) return undefined;
@@ -191,13 +201,16 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setBookingNotes("");
     setBookingError(null);
     setIsBookingSavePending(false);
+    setConfirmDeleteEventId(null);
+    setDeleteError(null);
+    setIsDeletePending(false);
   };
 
   const editorModeActive = !!editorToken;
   const openBookingPanel = (date: string) => {
     const startMonthKey = DateTime.fromISO(date, { zone: "utc" }).toFormat("yyyy-LL");
     setActiveDetailPanel(null);
-    setActiveBookingPanel({ date });
+    setActiveBookingPanel({ mode: "create", date });
     setBookingLaNumber("");
     setBookingJobName("");
     setBookingEndDate(date);
@@ -207,6 +220,45 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
     setBookingCallTimeOther("");
     setBookingNotes("");
     setBookingError(null);
+    setConfirmDeleteEventId(null);
+    setDeleteError(null);
+  };
+
+  const openEditBookingPanel = (detail: BookedLabel["details"][number]) => {
+    const startDate = detail.startDate ?? detail.startUtc?.slice(0, 10) ?? "";
+    const endDate = detail.endDateInclusive ?? detail.endUtc?.slice(0, 10) ?? startDate;
+    if (!startDate || !detail.eventId) {
+      return;
+    }
+
+    const summary = parseLaJobSummary(detail.summary);
+    const parsedDescription = parseGigDescription(detail.description);
+    const startMonthKey = DateTime.fromISO(startDate, { zone: "utc" }).toFormat("yyyy-LL");
+
+    setActiveBookingPanel({
+      mode: "edit",
+      eventId: detail.eventId,
+      date: startDate,
+    });
+    setBookingLaNumber(summary.jobNumber?.replace(/\D/g, "") ?? "");
+    setBookingJobName(summary.jobName);
+    setBookingEndDate(endDate);
+    setBookingPickerMonthKey(startMonthKey);
+    setBookingPickerExpanded(false);
+    setBookingCallTimeOption(parsedDescription.callTime && CALL_TIME_OPTIONS.includes(parsedDescription.callTime as (typeof CALL_TIME_OPTIONS)[number])
+      ? parsedDescription.callTime
+      : parsedDescription.callTime
+        ? "Other"
+        : "TBD");
+    setBookingCallTimeOther(parsedDescription.callTime && !CALL_TIME_OPTIONS.includes(parsedDescription.callTime as (typeof CALL_TIME_OPTIONS)[number])
+      ? parsedDescription.callTime
+      : "");
+    setBookingNotes(parsedDescription.jobNotes ?? "");
+    setBookingError(null);
+    setConfirmDeleteEventId(null);
+    setDeleteError(null);
+    setIsDeletePending(false);
+    setActiveDetailPanel(null);
   };
 
   const applySameDaySelection = () => {
@@ -252,15 +304,21 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
       setIsBookingSavePending(false);
       return;
     }
-    const notes = bookingNotes.trim();
-    const description = [
-      callTime ? `Call Time: ${callTime}` : "",
-      notes ? `Job Notes: ${notes}` : "",
-    ].filter(Boolean).join("\n");
+    const description = buildGigDescription(callTime, bookingNotes);
 
     try {
-      const response = await fetch("/api/gigs/create", {
-        method: "POST",
+      const endpoint = activeBookingPanel.mode === "edit"
+        ? activeBookingPanel.eventId
+          ? `/api/gigs/${encodeURIComponent(activeBookingPanel.eventId)}`
+          : null
+        : "/api/gigs/create";
+      if (!endpoint) {
+        setBookingError("Missing event id for edit.");
+        setIsBookingSavePending(false);
+        return;
+      }
+      const response = await fetch(endpoint, {
+        method: activeBookingPanel.mode === "edit" ? "PATCH" : "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${editorToken}`,
@@ -303,6 +361,51 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
       setIsBookingSavePending(false);
     }
   }
+
+  async function deleteActiveGig(eventId: string) {
+    if (!editorToken || isDeletePending) return;
+
+    setDeleteError(null);
+    setIsDeletePending(true);
+    try {
+      const response = await fetch(`/api/gigs/${encodeURIComponent(eventId)}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${editorToken}`,
+        },
+      });
+
+      if (response.ok) {
+        setConfirmDeleteEventId(null);
+        setActiveDetailPanel(null);
+        router.refresh();
+        window.location.reload();
+        return;
+      }
+
+      if (response.status === 401) {
+        window.sessionStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+        setEditorToken(null);
+        setDeleteError("Editor session expired. Re-open the editor link.");
+        return;
+      }
+
+      let message = "Could not delete job.";
+      try {
+        const payload = await response.json() as { message?: string };
+        if (payload.message?.trim()) {
+          message = payload.message.trim();
+        }
+      } catch {
+        // ignore parse issues and keep generic message
+      }
+      setDeleteError(message);
+    } catch {
+      setDeleteError("Network error while deleting job.");
+    } finally {
+      setIsDeletePending(false);
+    }
+  }
   const todayMonthKey = todayKey.slice(0, 7);
   const monthIsPast = month.monthKey < todayMonthKey;
   const allDays = month.weeks.flatMap((w) => w.days);
@@ -340,6 +443,18 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
   const canGoToPreviousBookingMonth = bookingStartMonth && bookingViewMonth
     ? bookingViewMonth > bookingStartMonth
     : false;
+  const activeEditableDetail = activeDetailPanel
+    ? findEditableDetail(activeDetailPanel.details, editorCalendarId)
+    : null;
+  const activeEditableSummary = activeEditableDetail
+    ? parseLaJobSummary(activeEditableDetail.summary)
+    : null;
+  const activeEditableDescription = activeEditableDetail
+    ? parseGigDescription(activeEditableDetail.description)
+    : null;
+  const showDeleteConfirm = !!confirmDeleteEventId
+    && !!activeEditableDetail
+    && confirmDeleteEventId === activeEditableDetail.eventId;
 
   return (
     <section className="month-board" aria-label={month.label}>
@@ -567,6 +682,7 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                       || (activeDetailPanel.details.length === 1
                         && detail.summary === activeDetailPanel.header)
                     );
+                  const detailParsedDescription = parseGigDescription(detail.description);
 
                   return (
                     <li
@@ -584,6 +700,18 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
                           {detail.timeRangeLabel}
                         </p>
                       ) : null}
+                      {detailParsedDescription.callTime ? (
+                        <p className="board-day-modal-event-meta">
+                          <span className="board-day-modal-event-label">Call</span>{" "}
+                          {detailParsedDescription.callTime}
+                        </p>
+                      ) : null}
+                      {detailParsedDescription.jobNotes ? (
+                        <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
+                          <span className="board-day-modal-event-label">Notes</span>{" "}
+                          {detailParsedDescription.jobNotes}
+                        </p>
+                      ) : null}
                     </li>
                   );
                 })}
@@ -591,6 +719,64 @@ export function MonthBoard({ month, todayKey, initialEditorToken }: Props) {
             ) : (
               <p className="board-day-modal-empty">No event details available.</p>
             )}
+
+            {editorModeActive && activeEditableDetail ? (
+              <div className="board-day-modal-actions">
+                {showDeleteConfirm ? (
+                  <div className="board-day-modal-confirm-delete">
+                    <p className="board-day-modal-confirm-title">Delete this job?</p>
+                    <p className="board-day-modal-confirm-copy">
+                      This removes it from LA Jobs calendar.
+                    </p>
+                    {deleteError ? (
+                      <p className="month-booking-error" role="alert">{deleteError}</p>
+                    ) : null}
+                    <div className="board-day-modal-confirm-buttons">
+                      <button
+                        type="button"
+                        className="month-booking-button month-booking-button--secondary"
+                        onClick={() => setConfirmDeleteEventId(null)}
+                        disabled={isDeletePending}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="month-booking-button month-booking-button--primary"
+                        onClick={() => {
+                          if (!activeEditableDetail.eventId) return;
+                          void deleteActiveGig(activeEditableDetail.eventId);
+                        }}
+                        disabled={isDeletePending}
+                      >
+                        {isDeletePending ? "Deleting..." : "Delete"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="board-day-modal-action-buttons">
+                    <button
+                      type="button"
+                      className="month-booking-button month-booking-button--secondary"
+                      onClick={() => openEditBookingPanel(activeEditableDetail)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="month-booking-button month-booking-button--secondary"
+                      onClick={() => {
+                        if (!activeEditableDetail.eventId) return;
+                        setConfirmDeleteEventId(activeEditableDetail.eventId);
+                        setDeleteError(null);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : null}
           </section>
         </div>
       ) : null}

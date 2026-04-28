@@ -46,6 +46,8 @@ export interface NamedCalendarEvent {
   startMs: number;
   endMs: number;
   summary: string;
+  eventId?: string;
+  description?: string;
   calendarId: string;
 }
 
@@ -70,6 +72,21 @@ export interface CreatedCalendarEvent {
   id: string;
   status: string;
   htmlLink?: string;
+}
+
+export interface UpdateAllDayEventOptions extends CalendarAuthOptions {
+  calendarId: string;
+  eventId: string;
+  summary: string;
+  description?: string;
+  /** Inclusive local day in YYYY-MM-DD format. */
+  startDate: string;
+  /** Exclusive local day in YYYY-MM-DD format. */
+  endDateExclusive: string;
+}
+
+export interface DeletedCalendarEvent {
+  id: string;
 }
 
 export class CalendarEventAlreadyExistsError extends Error {
@@ -203,7 +220,7 @@ export async function fetchCalendarEvents(
             maxResults: 2500,
             pageToken,
             timeZone: opts.displayTimezone,
-            fields: "items(status,transparency,summary,start(date,dateTime),end(date,dateTime)),nextPageToken",
+            fields: "items(id,status,transparency,summary,description,start(date,dateTime),end(date,dateTime)),nextPageToken",
           });
         } catch {
           errored.add(calendarId);
@@ -225,6 +242,8 @@ export async function fetchCalendarEvents(
             startMs: startMs as number,
             endMs: endMs as number,
             summary,
+            ...(item.id ? { eventId: item.id } : {}),
+            ...(item.description ? { description: item.description } : {}),
             calendarId,
           });
         }
@@ -238,7 +257,9 @@ export async function fetchCalendarEvents(
 
   const deduped = new Map<string, NamedCalendarEvent>();
   for (const event of events) {
-    const key = `${event.calendarId}|${event.startMs}|${event.endMs}|${event.summary}`;
+    const key = event.eventId
+      ? `${event.calendarId}|id|${event.eventId}`
+      : `${event.calendarId}|${event.startMs}|${event.endMs}|${event.summary}`;
     if (!deduped.has(key)) deduped.set(key, event);
   }
 
@@ -293,4 +314,47 @@ export async function createAllDayEvent(
     status,
     ...(response.data.htmlLink ? { htmlLink: response.data.htmlLink } : {}),
   };
+}
+
+export async function updateAllDayEvent(
+  opts: UpdateAllDayEventOptions,
+): Promise<CreatedCalendarEvent> {
+  const calendar = buildCalendarClient(opts);
+  const response = await calendar.events.patch({
+    calendarId: opts.calendarId,
+    eventId: opts.eventId,
+    requestBody: {
+      summary: opts.summary.trim(),
+      ...(opts.description?.trim()
+        ? { description: opts.description.trim() }
+        : { description: "" }),
+      start: { date: opts.startDate },
+      end: { date: opts.endDateExclusive },
+      transparency: "opaque",
+    },
+    fields: "id,status,htmlLink",
+  });
+
+  const id = response.data.id?.trim();
+  const status = response.data.status?.trim();
+  if (!id || !status) {
+    throw new Error("Google Calendar did not return a valid event id/status.");
+  }
+
+  return {
+    id,
+    status,
+    ...(response.data.htmlLink ? { htmlLink: response.data.htmlLink } : {}),
+  };
+}
+
+export async function deleteCalendarEvent(
+  opts: CalendarAuthOptions & { calendarId: string; eventId: string },
+): Promise<DeletedCalendarEvent> {
+  const calendar = buildCalendarClient(opts);
+  await calendar.events.delete({
+    calendarId: opts.calendarId,
+    eventId: opts.eventId,
+  });
+  return { id: opts.eventId };
 }

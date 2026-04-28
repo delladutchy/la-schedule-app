@@ -43,6 +43,8 @@ export const NamedEventSchema = z.object({
   startUtc: z.string().datetime({ offset: true }),
   endUtc: z.string().datetime({ offset: true }),
   summary: z.string().min(1),
+  eventId: z.string().min(1).optional(),
+  description: z.string().optional(),
   // Optional for backward compatibility with older snapshots.
   calendarId: z.string().optional(),
   // Optional for backward compatibility; defaults to "details" in view logic.
@@ -108,6 +110,10 @@ export interface DayEventDetail {
   summary: string;
   startUtc: string;
   endUtc: string;
+  startDate?: string;
+  endDateInclusive?: string;
+  eventId?: string;
+  description?: string;
   dateRangeLabel: string;
   timeRangeLabel?: string;
   calendarId?: string;

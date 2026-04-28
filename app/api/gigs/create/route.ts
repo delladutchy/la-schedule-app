@@ -6,8 +6,8 @@ import {
   GigCreateBodySchema,
   resolveAllDayRange,
   isDateRangeAvailableInSnapshot,
-  buildAllDayGigEventId,
 } from "@/lib/gigs";
+import { buildAllDayGigEventId } from "@/lib/gig-ids";
 
 export const dynamic = "force-dynamic";
 

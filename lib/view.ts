@@ -217,6 +217,8 @@ export function trimWeekRowsForScheduleList(
 
 interface NamedEventInterval extends Interval {
   summary: string;
+  eventId?: string;
+  description?: string;
   calendarId?: string;
   displayMode: CalendarDisplayMode;
 }
@@ -370,6 +372,13 @@ export interface MonthDayStatus {
 export interface MonthEventBarDetail {
   summary: string;
   jobNumber?: string;
+  eventId?: string;
+  description?: string;
+  startUtc?: string;
+  endUtc?: string;
+  startDate?: string;
+  endDateInclusive?: string;
+  calendarId?: string;
   dateRangeLabel?: string;
   timeRangeLabel?: string;
   displayMode?: CalendarDisplayMode;
@@ -425,6 +434,8 @@ function snapshotNamedEvents(snapshot: Snapshot): NamedEventInterval[] {
       startMs: Date.parse(event.startUtc),
       endMs: Date.parse(event.endUtc),
       summary: normalizeEventName(event.summary),
+      eventId: event.eventId,
+      description: event.description,
       calendarId: event.calendarId,
       displayMode: event.displayMode ?? "details",
     }))
@@ -508,11 +519,25 @@ function collectEventDetails(
       if (seen.has(key)) continue;
       seen.add(key);
 
+      const localStart = DateTime.fromMillis(event.startMs, { zone: "utc" }).setZone(timezone);
+      const localEndRaw = DateTime.fromMillis(event.endMs, { zone: "utc" }).setZone(timezone);
+      let localEnd = localEndRaw;
+      if (isMidnight(localEndRaw) && localEndRaw > localStart) {
+        localEnd = localEndRaw.minus({ days: 1 });
+      }
+      if (localEnd < localStart) localEnd = localStart;
+
       const timeRangeLabel = formatEventTimeRange(event.startMs, event.endMs, timezone);
       out.push({
         summary: safeSummary,
         startUtc: new Date(event.startMs).toISOString(),
         endUtc: new Date(event.endMs).toISOString(),
+        startDate: localStart.startOf("day").toFormat("yyyy-LL-dd"),
+        endDateInclusive: localEnd.startOf("day").toFormat("yyyy-LL-dd"),
+        ...(event.eventId ? { eventId: event.eventId } : {}),
+        ...(event.displayMode === "details" && event.description
+          ? { description: event.description }
+          : {}),
         dateRangeLabel: formatEventDateRange(event.startMs, event.endMs, timezone, referenceYear),
         ...(timeRangeLabel ? { timeRangeLabel } : {}),
         ...(event.calendarId ? { calendarId: event.calendarId } : {}),
@@ -560,6 +585,13 @@ export function summarizeBookedDayLabel(
   details: Array<{
     summary: string;
     jobNumber?: string;
+    eventId?: string;
+    description?: string;
+    startUtc?: string;
+    endUtc?: string;
+    startDate?: string;
+    endDateInclusive?: string;
+    calendarId?: string;
     dateRangeLabel?: string;
     timeRangeLabel?: string;
     displayMode?: CalendarDisplayMode;
@@ -643,6 +675,13 @@ export function summarizeBookedDayLabel(
           return {
             summary: detail.summary,
             ...(detailJob ? { jobNumber: detailJob } : {}),
+            ...(detail.eventId ? { eventId: detail.eventId } : {}),
+            ...(detail.description ? { description: detail.description } : {}),
+            ...(detail.startUtc ? { startUtc: detail.startUtc } : {}),
+            ...(detail.endUtc ? { endUtc: detail.endUtc } : {}),
+            ...(detail.startDate ? { startDate: detail.startDate } : {}),
+            ...(detail.endDateInclusive ? { endDateInclusive: detail.endDateInclusive } : {}),
+            ...(detail.calendarId ? { calendarId: detail.calendarId } : {}),
             dateRangeLabel: detail.dateRangeLabel,
             ...(detail.timeRangeLabel ? { timeRangeLabel: detail.timeRangeLabel } : {}),
             displayMode: detail.displayMode ?? "details",
@@ -669,6 +708,13 @@ export function summarizeBookedDayLabel(
     details: (normalizedDetails.length > 0
       ? normalizedDetails.map((detail) => ({
         summary: detail.summary,
+        ...(detail.eventId ? { eventId: detail.eventId } : {}),
+        ...(detail.description ? { description: detail.description } : {}),
+        ...(detail.startUtc ? { startUtc: detail.startUtc } : {}),
+        ...(detail.endUtc ? { endUtc: detail.endUtc } : {}),
+        ...(detail.startDate ? { startDate: detail.startDate } : {}),
+        ...(detail.endDateInclusive ? { endDateInclusive: detail.endDateInclusive } : {}),
+        ...(detail.calendarId ? { calendarId: detail.calendarId } : {}),
         dateRangeLabel: detail.dateRangeLabel,
         ...(detail.timeRangeLabel ? { timeRangeLabel: detail.timeRangeLabel } : {}),
         displayMode: detail.displayMode ?? "details",
@@ -773,6 +819,13 @@ function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][
         details: labelMeta.details.map((row) => ({
           summary: row.summary,
           ...(row.jobNumber ? { jobNumber: row.jobNumber } : {}),
+          ...(row.eventId ? { eventId: row.eventId } : {}),
+          ...(row.description ? { description: row.description } : {}),
+          ...(row.startUtc ? { startUtc: row.startUtc } : {}),
+          ...(row.endUtc ? { endUtc: row.endUtc } : {}),
+          ...(row.startDate ? { startDate: row.startDate } : {}),
+          ...(row.endDateInclusive ? { endDateInclusive: row.endDateInclusive } : {}),
+          ...(row.calendarId ? { calendarId: row.calendarId } : {}),
           ...(row.dateRangeLabel ? { dateRangeLabel: row.dateRangeLabel } : {}),
           ...(row.timeRangeLabel ? { timeRangeLabel: row.timeRangeLabel } : {}),
           displayMode: row.displayMode,

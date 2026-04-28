@@ -1,6 +1,5 @@
 import { DateTime } from "luxon";
 import { z } from "zod";
-import { createHash } from "node:crypto";
 import type { Snapshot } from "./types";
 import type { Interval } from "./intervals";
 import { overlapsAny } from "./intervals";
@@ -82,18 +81,6 @@ export function resolveAllDayRange(input: GigCreateBody): ResolvedAllDayRange {
   };
 }
 
-export function buildAllDayGigEventId(
-  calendarId: string,
-  startDate: string,
-  endDateInclusive: string,
-): string {
-  const digest = createHash("sha256")
-    .update(`${calendarId}|${startDate}|${endDateInclusive}`)
-    .digest("hex")
-    .slice(0, 40);
-  return `g${digest}`;
-}
-
 export function buildLaJobSummary(laNumberRaw: string, jobNameRaw: string): string {
   const laNumber = laNumberRaw.trim();
   const jobName = jobNameRaw.trim();
@@ -106,6 +93,86 @@ export function buildLaJobSummary(laNumberRaw: string, jobNameRaw: string): stri
   }
 
   return `LA#${laNumber} — ${jobName}`;
+}
+
+export interface ParsedGigSummary {
+  jobNumber?: string;
+  jobName: string;
+}
+
+export function parseLaJobSummary(summaryRaw: string): ParsedGigSummary {
+  const summary = summaryRaw.trim().replace(/\s+/g, " ");
+  if (!summary) return { jobName: "" };
+
+  const match = summary.match(/^\s*LA\s*#?\s*(\d{3,})\s*(?:[—–\-:|]\s*)?(.*)$/i);
+  if (!match) {
+    return { jobName: summary };
+  }
+
+  const digits = match[1] ?? "";
+  const remainder = (match[2] ?? "").trim();
+  return {
+    jobNumber: `LA#${digits}`,
+    jobName: remainder || summary,
+  };
+}
+
+export interface ParsedGigDescription {
+  callTime?: string;
+  jobNotes?: string;
+}
+
+export function parseGigDescription(descriptionRaw?: string): ParsedGigDescription {
+  const description = descriptionRaw?.trim();
+  if (!description) return {};
+
+  const lines = description.split(/\r?\n/).map((line) => line.trim());
+  let callTime: string | undefined;
+  const notesParts: string[] = [];
+  const fallbackParts: string[] = [];
+  let readingNotes = false;
+
+  for (const line of lines) {
+    if (!line) continue;
+
+    const callMatch = line.match(/^Call\s*Time:\s*(.+)$/i);
+    if (callMatch) {
+      callTime = callMatch[1]?.trim() || undefined;
+      readingNotes = false;
+      continue;
+    }
+
+    const notesMatch = line.match(/^Job\s*Notes:\s*(.*)$/i);
+    if (notesMatch) {
+      const first = notesMatch[1]?.trim();
+      if (first) notesParts.push(first);
+      readingNotes = true;
+      continue;
+    }
+
+    if (readingNotes) {
+      notesParts.push(line);
+      continue;
+    }
+
+    fallbackParts.push(line);
+  }
+
+  const jobNotes = notesParts.join("\n").trim() || fallbackParts.join("\n").trim() || undefined;
+  return {
+    ...(callTime ? { callTime } : {}),
+    ...(jobNotes ? { jobNotes } : {}),
+  };
+}
+
+export function buildGigDescription(callTimeRaw?: string, jobNotesRaw?: string): string | undefined {
+  const callTime = callTimeRaw?.trim();
+  const jobNotes = jobNotesRaw?.trim();
+  const parts = [
+    callTime ? `Call Time: ${callTime}` : "",
+    jobNotes ? `Job Notes: ${jobNotes}` : "",
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join("\n") : undefined;
 }
 
 function busyIntervalsFromSnapshot(snapshot: Snapshot): Interval[] {

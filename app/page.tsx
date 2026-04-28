@@ -18,8 +18,10 @@ import Link from "next/link";
 /**
  * The public availability page.
  *
- * Read-only. Never calls Google at request time. Reads the last known-good
- * snapshot from storage and renders a simple employer-facing board:
+ * Read-only. Renders from the last known-good snapshot in storage, with a
+ * throttled opportunistic refresh path to reduce stale data windows.
+ *
+ * Snapshot-backed board:
  *
  *     Monday, Apr 21     Available
  *     Tuesday, Apr 22    Booked
@@ -38,9 +40,13 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 const TODAY_TIMEZONE = "America/New_York";
 const AUTO_BOOTSTRAP_BACKOFF_MS = 2 * 60 * 1000;
+const AUTO_REFRESH_BACKOFF_MS = 60 * 1000;
+const AUTO_REFRESH_MIN_AGE_MINUTES = 3;
 
 let autoBootstrapInFlight: Promise<void> | null = null;
 let autoBootstrapBlockedUntilMs = 0;
+let autoRefreshInFlight: Promise<void> | null = null;
+let autoRefreshBlockedUntilMs = 0;
 
 interface SearchParams {
   start?: string | string[]; // YYYY-MM-DD
@@ -94,12 +100,51 @@ async function autoBootstrapSnapshotIfNeeded(enabled: boolean): Promise<void> {
   await autoBootstrapInFlight;
 }
 
+async function autoRefreshSnapshotIfNeeded(enabled: boolean, reason: string): Promise<void> {
+  if (!enabled) return;
+  const now = Date.now();
+  if (now < autoRefreshBlockedUntilMs) return;
+
+  if (!autoRefreshInFlight) {
+    autoRefreshInFlight = (async () => {
+      const started = Date.now();
+      try {
+        const result = await buildAndPersistSnapshot();
+        const durationMs = Date.now() - started;
+        if (result.status === "ok") {
+          autoRefreshBlockedUntilMs = 0;
+          console.log(`[refresh] snapshot refreshed in ${durationMs}ms (${reason})`);
+          return;
+        }
+
+        autoRefreshBlockedUntilMs = Date.now() + AUTO_REFRESH_BACKOFF_MS;
+        console.error(
+          `[refresh] snapshot refresh failed in ${durationMs}ms (${reason}): ${result.error ?? "unknown error"}`,
+          result.erroredCalendarIds?.length
+            ? { erroredCalendarIds: result.erroredCalendarIds }
+            : undefined,
+        );
+      } catch (err) {
+        autoRefreshBlockedUntilMs = Date.now() + AUTO_REFRESH_BACKOFF_MS;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[refresh] exception (${reason}): ${msg}`);
+      }
+    })().finally(() => {
+      autoRefreshInFlight = null;
+    });
+  }
+
+  await autoRefreshInFlight;
+}
+
 export default async function AvailabilityPage({
   searchParams = {},
 }: {
   searchParams?: SearchParams;
 }) {
   const { file, env } = getConfig();
+  const viewMode = resolveViewMode(firstParam(searchParams.view));
+  const initialEditorToken = firstParam(searchParams.editor);
   const now = Date.now();
   let snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
   let state = classifySnapshot(snapshot, now, {
@@ -111,6 +156,27 @@ export default async function AvailabilityPage({
     await autoBootstrapSnapshotIfNeeded(env.AUTO_BOOTSTRAP_ON_UNAVAILABLE);
     snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
     state = classifySnapshot(snapshot, now, {
+      freshTtlMinutes: file.freshTtlMinutes,
+      hardTtlMinutes: file.hardTtlMinutes,
+    });
+  }
+
+  const shouldAutoRefresh = !!state.snapshot && (
+    state.status === "stale"
+    || (
+      viewMode === "month"
+      && (state.ageMinutes ?? 0) >= AUTO_REFRESH_MIN_AGE_MINUTES
+    )
+  );
+  if (shouldAutoRefresh) {
+    await autoRefreshSnapshotIfNeeded(
+      true,
+      state.status === "stale"
+        ? "snapshot-stale"
+        : `month-view-age-${Math.floor(state.ageMinutes ?? 0)}m`,
+    );
+    snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+    state = classifySnapshot(snapshot, Date.now(), {
       freshTtlMinutes: file.freshTtlMinutes,
       hardTtlMinutes: file.hardTtlMinutes,
     });
@@ -138,8 +204,6 @@ export default async function AvailabilityPage({
   const windowStartUtc = snapshotData.windowStartUtc;
   const windowEndUtc = snapshotData.windowEndUtc;
   const tz = file.timezone;
-  const viewMode = resolveViewMode(firstParam(searchParams.view));
-  const initialEditorToken = firstParam(searchParams.editor);
 
   // Single explicit timezone for current-day calculations.
   const todayKey = todayInZone(TODAY_TIMEZONE, now);
@@ -312,6 +376,7 @@ export default async function AvailabilityPage({
             month={month}
             todayKey={todayKey}
             initialEditorToken={initialEditorToken}
+            editorCalendarId={env.GOOGLE_CALENDAR_ID}
           />
         </>
       )}

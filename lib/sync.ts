@@ -110,6 +110,8 @@ export async function buildAndPersistSnapshot(
           startMs: Math.max(event.startMs, windowStartMs),
           endMs: Math.min(event.endMs, windowEndMs),
           summary: event.summary.trim(),
+          eventId: event.eventId?.trim(),
+          description: event.description,
           calendarId: event.calendarId,
           displayMode: env.CALENDAR_DISPLAY_MODES[event.calendarId] ?? "details",
         }))
@@ -118,6 +120,12 @@ export async function buildAndPersistSnapshot(
           startUtc: new Date(event.startMs).toISOString(),
           endUtc: new Date(event.endMs).toISOString(),
           summary: event.displayMode === "private" ? "Unavailable" : event.summary,
+          ...(event.displayMode === "details" && event.eventId
+            ? { eventId: event.eventId }
+            : {}),
+          ...(event.displayMode === "details" && event.description
+            ? { description: event.description }
+            : {}),
           calendarId: event.calendarId,
           displayMode: event.displayMode,
         }));
