@@ -564,6 +564,8 @@ describe("buildMonthBoard", () => {
           startUtc: "2026-04-26T14:00:00.000Z",
           endUtc: "2026-04-26T18:00:00.000Z",
           summary: "LA#71760 BPM after game concert Camden Yards Baltimore",
+          eventId: "evt_71760",
+          description: "Call Time: 8:00 AM\nJob Notes: Bring radios",
           calendarId: "jobs",
           displayMode: "details",
         },
@@ -578,6 +580,9 @@ describe("buildMonthBoard", () => {
     const bar = month.weeks.flatMap((w) => w.bars).find((b) => b.label === "LA#71760");
     expect(bar).toBeTruthy();
     expect(bar?.details[0]?.summary).toBe("LA#71760 BPM after game concert Camden Yards Baltimore");
+    expect(bar?.details[0]?.eventId).toBe("evt_71760");
+    expect(bar?.details[0]?.description).toBe("Call Time: 8:00 AM\nJob Notes: Bring radios");
+    expect(bar?.details[0]?.calendarId).toBe("jobs");
   });
 
   it("flags current month and today correctly", () => {

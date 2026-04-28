@@ -786,6 +786,12 @@ function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][
       summary: safeSummary,
       startUtc: eventStartUtc,
       endUtc: eventEndUtc,
+      startDate: localStart.startOf("day").toFormat("yyyy-LL-dd"),
+      endDateInclusive: localEnd.startOf("day").toFormat("yyyy-LL-dd"),
+      ...(event.eventId ? { eventId: event.eventId } : {}),
+      ...(event.displayMode === "details" && event.description
+        ? { description: event.description }
+        : {}),
       dateRangeLabel: formatEventDateRange(event.startMs, event.endMs, opts.timezone, opts.referenceYear),
       ...(timeRangeLabel ? { timeRangeLabel } : {}),
       ...(event.calendarId ? { calendarId: event.calendarId } : {}),
