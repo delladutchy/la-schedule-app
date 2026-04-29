@@ -542,7 +542,10 @@ export function DayBoard({
     <div className="board-day-modal-loading-overlay" role="status" aria-live="polite">
       <div className="board-day-modal-loading-indicator">
         <div className="board-day-modal-loading-spinner" aria-hidden="true">
-          <div className="board-day-modal-loading-spinner-ring" />
+          <span className="board-day-modal-loading-bar" />
+          <span className="board-day-modal-loading-bar" />
+          <span className="board-day-modal-loading-bar" />
+          <span className="board-day-modal-loading-bar" />
         </div>
         <p className="board-day-modal-loading-title">{title}</p>
         <p className="board-day-modal-loading-copy">{stagedLoadingCopy}</p>

@@ -1631,23 +1631,50 @@ body {
 }
 
 .board-day-modal-loading-spinner {
-  width: 56px;
+  width: 72px;
   height: 56px;
-  display: block;
-  position: relative;
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
 }
 
-.board-day-modal-loading-spinner-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 4px solid color-mix(in srgb, var(--text-subtle) 28%, transparent);
-  border-top-color: color-mix(in srgb, #67e8f9 92%, var(--today-accent));
-  animation: board-day-modal-loading-spin 0.8s linear infinite;
+.board-day-modal-loading-bar {
+  width: 8px;
+  height: 34px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--today-accent) 85%, #67e8f9),
+    color-mix(in srgb, #67e8f9 92%, #93c5fd)
+  );
+  box-shadow: 0 0 10px color-mix(in srgb, #67e8f9 38%, transparent);
+  transform-origin: 50% 100%;
+  opacity: 0.34;
+  animation: board-day-modal-loading-bar 0.82s ease-in-out infinite;
 }
 
-@keyframes board-day-modal-loading-spin {
-  to { transform: rotate(360deg); }
+.board-day-modal-loading-bar:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.board-day-modal-loading-bar:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+.board-day-modal-loading-bar:nth-child(4) {
+  animation-delay: 0.36s;
+}
+
+@keyframes board-day-modal-loading-bar {
+  0%, 100% {
+    transform: scaleY(0.42);
+    opacity: 0.35;
+  }
+  45% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
 }
 
 .editor-sync-inline-spinner {
@@ -1681,10 +1708,10 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .board-day-modal-loading-spinner-ring {
+  .board-day-modal-loading-bar {
     animation: none;
-    border-top-color: color-mix(in srgb, var(--text-subtle) 28%, transparent);
-    opacity: 0.85;
+    opacity: 0.88;
+    transform: scaleY(0.78);
   }
   .board-day-modal-loading-copy {
     animation: none;
