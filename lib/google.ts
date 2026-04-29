@@ -89,6 +89,22 @@ export interface DeletedCalendarEvent {
   id: string;
 }
 
+export interface RegisterCalendarWatchOptions extends CalendarAuthOptions {
+  calendarId: string;
+  webhookUrl: string;
+  channelId: string;
+  channelToken: string;
+  /** Optional Google channel TTL in seconds (max 604800). */
+  ttlSeconds?: number;
+}
+
+export interface RegisteredCalendarWatch {
+  channelId: string;
+  resourceId: string;
+  resourceUri?: string;
+  expiration?: string;
+}
+
 export class CalendarEventAlreadyExistsError extends Error {
   constructor(message: string = "Calendar event already exists for this date range.") {
     super(message);
@@ -270,6 +286,45 @@ export async function fetchCalendarEvents(
   });
 
   return { events: sorted, erroredCalendarIds: [...errored] };
+}
+
+export async function registerCalendarWatch(
+  opts: RegisterCalendarWatchOptions,
+): Promise<RegisteredCalendarWatch> {
+  const calendar = buildCalendarClient(opts);
+  const ttlSeconds = opts.ttlSeconds ? Math.max(60, Math.min(604800, Math.floor(opts.ttlSeconds))) : 604800;
+
+  const response = await calendar.events.watch({
+    calendarId: opts.calendarId,
+    requestBody: {
+      id: opts.channelId,
+      token: opts.channelToken,
+      type: "web_hook",
+      address: opts.webhookUrl,
+      params: {
+        ttl: String(ttlSeconds),
+      },
+    },
+    fields: "id,resourceId,resourceUri,expiration",
+  });
+
+  const channelId = response.data.id?.trim();
+  const resourceId = response.data.resourceId?.trim();
+  if (!channelId || !resourceId) {
+    throw new Error("Google watch registration did not return channel/resource ids.");
+  }
+
+  const expirationMs = response.data.expiration ? Number(response.data.expiration) : null;
+  const expiration = Number.isFinite(expirationMs)
+    ? new Date(expirationMs as number).toISOString()
+    : undefined;
+
+  return {
+    channelId,
+    resourceId,
+    ...(response.data.resourceUri ? { resourceUri: response.data.resourceUri } : {}),
+    ...(expiration ? { expiration } : {}),
+  };
 }
 
 

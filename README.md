@@ -275,6 +275,28 @@ Token auth:
 On valid token, it runs `buildAndPersistSnapshot()` and returns
 `{ "status": "ok", "durationMs": ... }`.
 
+### Register Google watch channel (Phase 2)
+
+Admin-only endpoint to register a Calendar watch channel for
+`GOOGLE_CALENDAR_ID`:
+
+```bash
+curl -X POST https://la-schedule-app.netlify.app/api/admin/google-calendar/watch \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+Behavior:
+- requires valid `ADMIN_TOKEN`
+- registers Google Calendar push watch for `GOOGLE_CALENDAR_ID`
+- uses the existing webhook receiver URL `/api/google/calendar/webhook`
+- passes `GOOGLE_WEBHOOK_TOKEN` as the channel token
+- stores watch metadata (channel/resource/expiration/calendar/webhook/createdAt)
+
+Run this after deploy (and again whenever you need to refresh/replace the
+watch channel).
+
+Phase 3 renewal/hardening is separate and not implemented in this pass.
+
 ### Creating an all-day gig (token-gated editor endpoint)
 
 ```bash
