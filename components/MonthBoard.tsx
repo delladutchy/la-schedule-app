@@ -965,8 +965,6 @@ export function MonthBoard({
                   </div>
                 )}
               </div>
-            ) : editorModeActive && activeEditableDetail && limitedEditorBlocked ? (
-              <p className="board-day-modal-permission-note">Only the creator can edit this booking.</p>
             ) : null}
           </section>
         </div>

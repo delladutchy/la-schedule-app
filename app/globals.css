@@ -61,14 +61,6 @@
   gap: 8px;
 }
 
-.board-day-modal-permission-note {
-  margin: 14px 0 0;
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  font-size: 0.76rem;
-  color: var(--text-muted);
-}
-
 .board-day-modal-event-meta--notes {
   white-space: pre-line;
 }
