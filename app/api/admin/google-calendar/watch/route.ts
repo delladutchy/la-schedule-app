@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { registerCalendarWatch } from "@/lib/google";
-import { writeGoogleCalendarWatchMetadata } from "@/lib/google-watch-store";
+import {
+  readGoogleCalendarWatchMetadata,
+  writeGoogleCalendarWatchMetadata,
+  type GoogleCalendarWatchMetadata,
+} from "@/lib/google-watch-store";
 
 export const dynamic = "force-dynamic";
+const RENEWAL_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 
 function constantTimeEquals(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -38,12 +43,96 @@ function resolveWebhookUrl(req: Request): string {
   return `${url.origin}/api/google/calendar/webhook`;
 }
 
+function parseForceParam(req: Request): boolean {
+  const force = new URL(req.url).searchParams.get("force")?.trim().toLowerCase();
+  return force === "1" || force === "true" || force === "yes";
+}
+
+function evaluateWatchHealth(
+  metadata: GoogleCalendarWatchMetadata | null,
+  nowMs: number,
+): { expiresInMs: number | null; needsRenewal: boolean } {
+  if (!metadata) {
+    return { expiresInMs: null, needsRenewal: true };
+  }
+  if (!metadata.expiration) {
+    return { expiresInMs: null, needsRenewal: true };
+  }
+
+  const expirationMs = Date.parse(metadata.expiration);
+  if (!Number.isFinite(expirationMs)) {
+    return { expiresInMs: null, needsRenewal: true };
+  }
+
+  const expiresInMs = expirationMs - nowMs;
+  return {
+    expiresInMs,
+    needsRenewal: expiresInMs <= RENEWAL_THRESHOLD_MS,
+  };
+}
+
+function toWatchStatusPayload(
+  metadata: GoogleCalendarWatchMetadata | null,
+  nowMs: number,
+) {
+  const { expiresInMs, needsRenewal } = evaluateWatchHealth(metadata, nowMs);
+  return {
+    ...(metadata
+      ? {
+          calendarId: metadata.calendarId,
+          channelId: metadata.channelId,
+          resourceId: metadata.resourceId,
+          ...(metadata.expiration ? { expiration: metadata.expiration } : {}),
+          createdAtUtc: metadata.createdAtUtc,
+          webhookUrl: metadata.webhookUrl,
+        }
+      : {}),
+    expiresInMs,
+    needsRenewal,
+  };
+}
+
+function ensureAdmin(req: Request): { ok: true } | { ok: false; response: NextResponse } {
+  const { env } = getConfig();
+  if (!isAuthorizedAdmin(req, env.ADMIN_TOKEN)) {
+    return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
+  }
+  return { ok: true };
+}
+
+export async function GET(req: Request) {
+  const auth = ensureAdmin(req);
+  if (!auth.ok) return auth.response;
+
+  const { env } = getConfig();
+  const metadata = await readGoogleCalendarWatchMetadata(env.BLOBS_STORE_NAME);
+  const nowMs = Date.now();
+  return NextResponse.json({
+    status: "ok",
+    ...toWatchStatusPayload(metadata, nowMs),
+  });
+}
+
 export async function POST(req: Request) {
   const started = Date.now();
-  const { env } = getConfig();
+  const auth = ensureAdmin(req);
+  if (!auth.ok) return auth.response;
 
-  if (!isAuthorizedAdmin(req, env.ADMIN_TOKEN)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const { env } = getConfig();
+  const nowMs = Date.now();
+  const force = parseForceParam(req);
+  const existing = await readGoogleCalendarWatchMetadata(env.BLOBS_STORE_NAME);
+  const existingHealth = evaluateWatchHealth(existing, nowMs);
+
+  if (!force && existing && !existingHealth.needsRenewal) {
+    const durationMs = Date.now() - started;
+    console.info(`[google:watch] ok action=skipped ms total=${durationMs}`);
+    return NextResponse.json({
+      status: "ok",
+      action: "skipped",
+      force,
+      ...toWatchStatusPayload(existing, nowMs),
+    });
   }
 
   const webhookToken = env.GOOGLE_WEBHOOK_TOKEN?.trim();
@@ -79,16 +168,24 @@ export async function POST(req: Request) {
     });
 
     const durationMs = Date.now() - started;
-    console.info(`[google:watch] ok ms total=${durationMs}`);
+    console.info(`[google:watch] ok action=registered ms total=${durationMs}`);
 
     return NextResponse.json({
       status: "ok",
-      calendarId: metadata.calendarId,
-      channelId: metadata.channelId,
-      resourceId: metadata.resourceId,
-      ...(metadata.expiration ? { expiration: metadata.expiration } : {}),
+      action: "registered",
+      force,
+      ...toWatchStatusPayload(metadata, nowMs),
+      ...(existing
+        ? {
+            previous: {
+              channelId: existing.channelId,
+              resourceId: existing.resourceId,
+              ...(existing.expiration ? { expiration: existing.expiration } : {}),
+            },
+          }
+        : {}),
     });
-  } catch (error) {
+  } catch {
     const durationMs = Date.now() - started;
     console.info(`[google:watch] failed ms total=${durationMs}`);
     return NextResponse.json(

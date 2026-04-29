@@ -275,27 +275,40 @@ Token auth:
 On valid token, it runs `buildAndPersistSnapshot()` and returns
 `{ "status": "ok", "durationMs": ... }`.
 
-### Register Google watch channel (Phase 2)
+### Google watch status + renewal
 
-Admin-only endpoint to register a Calendar watch channel for
-`GOOGLE_CALENDAR_ID`:
+GET status:
+
+```bash
+curl https://la-schedule-app.netlify.app/api/admin/google-calendar/watch \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+POST renew/register:
 
 ```bash
 curl -X POST https://la-schedule-app.netlify.app/api/admin/google-calendar/watch \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
+POST force renew:
+
+```bash
+curl -X POST "https://la-schedule-app.netlify.app/api/admin/google-calendar/watch?force=true" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
 Behavior:
-- requires valid `ADMIN_TOKEN`
-- registers Google Calendar push watch for `GOOGLE_CALENDAR_ID`
-- uses the existing webhook receiver URL `/api/google/calendar/webhook`
-- passes `GOOGLE_WEBHOOK_TOKEN` as the channel token
-- stores watch metadata (channel/resource/expiration/calendar/webhook/createdAt)
+- requires `ADMIN_TOKEN`
+- `GET` returns safe metadata plus `expiresInMs` and `needsRenewal`
+- `POST` registers if no watch exists
+- `POST` registers if the watch expires within 24 hours
+- `POST` skips if the watch is healthy unless `force=true`
+- uses `/api/google/calendar/webhook`
+- passes `GOOGLE_WEBHOOK_TOKEN` as channel token
+- stores safe metadata only
 
-Run this after deploy (and again whenever you need to refresh/replace the
-watch channel).
-
-Phase 3 renewal/hardening is separate and not implemented in this pass.
+Google watch channels expire, so check/renew before expiration.
 
 ### Creating an all-day gig (token-gated editor endpoint)
 
