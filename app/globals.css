@@ -1637,17 +1637,26 @@ body {
   position: relative;
 }
 
-.board-day-modal-loading-spinner-ring {
+.board-day-modal-loading-spinner-track {
   position: absolute;
   inset: 0;
   border-radius: 50%;
   border: 4px solid color-mix(in srgb, var(--text-subtle) 28%, transparent);
+}
+
+.board-day-modal-loading-spinner-arc {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 4px solid transparent;
   border-top-color: color-mix(in srgb, #67e8f9 92%, var(--today-accent));
+  will-change: transform;
   animation: board-day-modal-loading-spin 0.8s linear infinite;
 }
 
 @keyframes board-day-modal-loading-spin {
-  to { transform: rotate(360deg); }
+  from { transform: translateZ(0) rotate(0deg); }
+  to   { transform: translateZ(0) rotate(360deg); }
 }
 
 .editor-sync-inline-spinner {
@@ -1681,7 +1690,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .board-day-modal-loading-spinner-ring {
+  .board-day-modal-loading-spinner-arc {
     animation: none;
     border-top-color: color-mix(in srgb, var(--text-subtle) 28%, transparent);
     opacity: 0.85;
