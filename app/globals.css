@@ -2472,15 +2472,15 @@ body {
   .page.page--month .month-week-row-bars {
     top: 22px;
     gap: 1px 0;
-    grid-template-rows: repeat(var(--month-week-bar-rows, 0), minmax(12px, 12px));
+    grid-template-rows: repeat(var(--month-week-bar-rows, 0), minmax(15px, 15px));
   }
 
   .page.page--month .month-row-bar {
-    min-height: 12px;
-    height: 12px;
-    padding: 0 4px;
+    min-height: 15px;
+    height: 15px;
+    padding: 0 5px;
     border-radius: 4px;
-    opacity: 0.78;
+    opacity: 0.92;
   }
 
   /* Landscape iPhone Month: show LA# as a compact left tag so occupancy
@@ -2488,11 +2488,11 @@ body {
   .page.page--month .month-row-bar-label {
     display: inline-block;
     width: auto;
-    max-width: 52px;
+    max-width: 84px;
     padding: 0 4px;
     border-radius: 3px;
-    font-size: 7.8px;
-    line-height: 1.1;
+    font-size: 8.8px;
+    line-height: 1.12;
     font-weight: 600;
     text-align: left;
     white-space: nowrap;
@@ -2504,7 +2504,7 @@ body {
 
   .page.page--month .month-day {
     min-height: 0;
-    padding: calc(22px + (var(--month-week-bar-rows, 0) * 13px)) 6px 6px;
+    padding: calc(22px + (var(--month-week-bar-rows, 0) * 16px)) 6px 6px;
     justify-content: flex-end;
     align-items: flex-start;
     gap: 4px;
