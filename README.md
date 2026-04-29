@@ -196,6 +196,7 @@ In the Netlify site → **Site configuration** → **Environment variables**, ad
 | `EDITOR_TOKEN` | optional legacy fallback token (maps to editor id `legacy`) |
 | `GOOGLE_CALENDAR_ID` | target calendar id for editor write-through creates |
 | `GOOGLE_WEBHOOK_TOKEN` | optional shared secret for Google Calendar webhook receiver |
+| `PUBLIC_SITE_URL` | optional canonical site URL for watch registration (recommended: `https://la-schedule-app.netlify.app`) |
 
 All scopes (`Production`, `Deploy previews`, `Branch deploys`) are fine.
 
@@ -304,7 +305,7 @@ Behavior:
 - `POST` registers if no watch exists
 - `POST` registers if the watch expires within 24 hours
 - `POST` skips if the watch is healthy unless `force=true`
-- uses `/api/google/calendar/webhook`
+- uses `/api/google/calendar/webhook` on the canonical `PUBLIC_SITE_URL` when configured (falls back to request origin otherwise)
 - passes `GOOGLE_WEBHOOK_TOKEN` as channel token
 - stores safe metadata only
 

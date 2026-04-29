@@ -9,6 +9,7 @@ const WEBHOOK_TOKEN = "google-webhook-token-0123456789";
 const REFRESH_TOKEN = "refresh-token-abcdef";
 const NOW_ISO = "2026-04-29T12:00:00.000Z";
 const NOW_MS = Date.parse(NOW_ISO);
+let PUBLIC_SITE_URL: string | undefined;
 
 vi.mock("@/lib/config", () => ({
   getConfig: () => ({
@@ -20,6 +21,7 @@ vi.mock("@/lib/config", () => ({
       GOOGLE_REFRESH_TOKEN: REFRESH_TOKEN,
       GOOGLE_CALENDAR_ID: "la-jobs@group.calendar.google.com",
       BLOBS_STORE_NAME: "availability-snapshots",
+      PUBLIC_SITE_URL,
     },
   }),
 }));
@@ -45,6 +47,7 @@ describe("/api/admin/google-calendar/watch", () => {
     registerCalendarWatch.mockReset();
     readGoogleCalendarWatchMetadata.mockReset();
     writeGoogleCalendarWatchMetadata.mockReset();
+    PUBLIC_SITE_URL = undefined;
   });
 
   afterEach(() => {
@@ -161,6 +164,93 @@ describe("/api/admin/google-calendar/watch", () => {
     expect(body.action).toBe("registered");
     expect(registerCalendarWatch).toHaveBeenCalledTimes(1);
     expect(writeGoogleCalendarWatchMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it("POST uses PUBLIC_SITE_URL when provided", async () => {
+    PUBLIC_SITE_URL = "https://la-schedule-app.netlify.app";
+    readGoogleCalendarWatchMetadata.mockResolvedValue(null);
+    registerCalendarWatch.mockResolvedValue({
+      channelId: "channel-canonical",
+      resourceId: "resource-canonical",
+      expiration: new Date(NOW_MS + 5 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    writeGoogleCalendarWatchMetadata.mockResolvedValue({
+      version: 1,
+      channelId: "channel-canonical",
+      resourceId: "resource-canonical",
+      expiration: new Date(NOW_MS + 5 * 24 * 60 * 60 * 1000).toISOString(),
+      calendarId: "la-jobs@group.calendar.google.com",
+      webhookUrl: "https://la-schedule-app.netlify.app/api/google/calendar/webhook",
+      createdAtUtc: NOW_ISO,
+    });
+
+    const { POST } = await loadHandlers();
+    const req = new Request("https://main--la-schedule-app.netlify.app/api/admin/google-calendar/watch", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const registerArgs = registerCalendarWatch.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(registerArgs.webhookUrl).toBe("https://la-schedule-app.netlify.app/api/google/calendar/webhook");
+  });
+
+  it("POST normalizes trailing slash in PUBLIC_SITE_URL", async () => {
+    PUBLIC_SITE_URL = "https://la-schedule-app.netlify.app/";
+    readGoogleCalendarWatchMetadata.mockResolvedValue(null);
+    registerCalendarWatch.mockResolvedValue({
+      channelId: "channel-trailing",
+      resourceId: "resource-trailing",
+      expiration: new Date(NOW_MS + 5 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    writeGoogleCalendarWatchMetadata.mockResolvedValue({
+      version: 1,
+      channelId: "channel-trailing",
+      resourceId: "resource-trailing",
+      expiration: new Date(NOW_MS + 5 * 24 * 60 * 60 * 1000).toISOString(),
+      calendarId: "la-jobs@group.calendar.google.com",
+      webhookUrl: "https://la-schedule-app.netlify.app/api/google/calendar/webhook",
+      createdAtUtc: NOW_ISO,
+    });
+
+    const { POST } = await loadHandlers();
+    const req = new Request("https://main--la-schedule-app.netlify.app/api/admin/google-calendar/watch", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const registerArgs = registerCalendarWatch.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(registerArgs.webhookUrl).toBe("https://la-schedule-app.netlify.app/api/google/calendar/webhook");
+  });
+
+  it("POST falls back to request origin when PUBLIC_SITE_URL is missing", async () => {
+    PUBLIC_SITE_URL = undefined;
+    readGoogleCalendarWatchMetadata.mockResolvedValue(null);
+    registerCalendarWatch.mockResolvedValue({
+      channelId: "channel-fallback",
+      resourceId: "resource-fallback",
+      expiration: new Date(NOW_MS + 5 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    writeGoogleCalendarWatchMetadata.mockResolvedValue({
+      version: 1,
+      channelId: "channel-fallback",
+      resourceId: "resource-fallback",
+      expiration: new Date(NOW_MS + 5 * 24 * 60 * 60 * 1000).toISOString(),
+      calendarId: "la-jobs@group.calendar.google.com",
+      webhookUrl: "https://main--la-schedule-app.netlify.app/api/google/calendar/webhook",
+      createdAtUtc: NOW_ISO,
+    });
+
+    const { POST } = await loadHandlers();
+    const req = new Request("https://main--la-schedule-app.netlify.app/api/admin/google-calendar/watch", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const registerArgs = registerCalendarWatch.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(registerArgs.webhookUrl).toBe("https://main--la-schedule-app.netlify.app/api/google/calendar/webhook");
   });
 
   it("POST registers when existing metadata expires within 24 hours", async () => {

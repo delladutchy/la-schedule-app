@@ -38,7 +38,12 @@ function generateChannelId(calendarId: string): string {
   return `la-watch-${safeCalendar}-${timePart}-${suffix}`;
 }
 
-function resolveWebhookUrl(req: Request): string {
+function resolveWebhookUrl(req: Request, publicSiteUrl?: string): string {
+  const configured = publicSiteUrl?.trim();
+  if (configured) {
+    const normalizedBase = configured.replace(/\/+$/, "");
+    return `${normalizedBase}/api/google/calendar/webhook`;
+  }
   const url = new URL(req.url);
   return `${url.origin}/api/google/calendar/webhook`;
 }
@@ -143,7 +148,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const webhookUrl = resolveWebhookUrl(req);
+  const webhookUrl = resolveWebhookUrl(req, env.PUBLIC_SITE_URL);
   const channelId = generateChannelId(env.GOOGLE_CALENDAR_ID);
 
   try {
