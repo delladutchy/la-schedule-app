@@ -116,6 +116,11 @@ describe("/api/gigs/create audit logging", () => {
 
     const res = await POST(req);
     expect(res.status).toBe(201);
+    expect(createAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerEditor: "jeff",
+      }),
+    );
     expect(appendAuditEvent).toHaveBeenCalledTimes(1);
     const [storeName, payload] = appendAuditEvent.mock.calls[0] as [string, Record<string, unknown>];
     expect(storeName).toBe("availability-snapshots");
@@ -123,6 +128,32 @@ describe("/api/gigs/create audit logging", () => {
     expect(payload.action).toBe("create");
     expect(payload.status).toBe("success");
     expect(sendCreateJobNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores owner metadata for limited editor create", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    createAllDayEvent.mockResolvedValue({ id: "evt-limited", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12355 — Milos Test",
+        startDate: "2026-05-11",
+        endDate: "2026-05-11",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(createAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerEditor: "milos",
+      }),
+    );
   });
 
   it("does not append audit when unauthorized", async () => {

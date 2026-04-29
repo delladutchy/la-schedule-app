@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   authorizeEditorRequest,
+  canEditorModifyEventOwner,
+  resolveEditorRole,
   resolveEditorIdFromAuthorizationHeader,
   resolveEditorTokenMap,
 } from "@/lib/editor-auth";
@@ -46,5 +48,20 @@ describe("editor token auth helper", () => {
       EDITOR_TOKEN: "legacy-editor-token-0123456789",
       EDITOR_TOKENS_JSON: "not-json",
     })).toThrowError("EDITOR_TOKENS_JSON");
+  });
+
+  it("maps editor roles (Jeff/Dave full, Milos limited)", () => {
+    expect(resolveEditorRole("jeff")).toBe("full");
+    expect(resolveEditorRole("dave")).toBe("full");
+    expect(resolveEditorRole("legacy")).toBe("full");
+    expect(resolveEditorRole("milos")).toBe("limited");
+  });
+
+  it("enforces owner checks for limited editor only", () => {
+    expect(canEditorModifyEventOwner("jeff", undefined)).toBe(true);
+    expect(canEditorModifyEventOwner("dave", "milos")).toBe(true);
+    expect(canEditorModifyEventOwner("milos", "milos")).toBe(true);
+    expect(canEditorModifyEventOwner("milos", "dave")).toBe(false);
+    expect(canEditorModifyEventOwner("milos", undefined)).toBe(false);
   });
 });

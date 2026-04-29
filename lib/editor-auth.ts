@@ -6,6 +6,20 @@ export type EditorAuthResult =
   | { ok: true; editorId: string }
   | { ok: false };
 
+export type EditorRole = "full" | "limited";
+
+export function resolveEditorRole(editorId: string): EditorRole {
+  return editorId === "milos" ? "limited" : "full";
+}
+
+export function canEditorModifyEventOwner(
+  editorId: string,
+  ownerEditor: string | undefined,
+): boolean {
+  if (resolveEditorRole(editorId) === "full") return true;
+  return !!ownerEditor && ownerEditor === editorId;
+}
+
 function constantTimeEquals(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;

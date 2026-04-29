@@ -48,6 +48,7 @@ export interface NamedCalendarEvent {
   summary: string;
   eventId?: string;
   description?: string;
+  ownerEditor?: string;
   calendarId: string;
 }
 
@@ -61,6 +62,7 @@ export interface CreateAllDayEventOptions extends CalendarAuthOptions {
   calendarId: string;
   summary: string;
   description?: string;
+  ownerEditor?: string;
   eventId?: string;
   /** Inclusive local day in YYYY-MM-DD format. */
   startDate: string;
@@ -79,6 +81,7 @@ export interface UpdateAllDayEventOptions extends CalendarAuthOptions {
   eventId: string;
   summary: string;
   description?: string;
+  ownerEditor?: string;
   /** Inclusive local day in YYYY-MM-DD format. */
   startDate: string;
   /** Exclusive local day in YYYY-MM-DD format. */
@@ -198,6 +201,13 @@ function parseEventBoundary(
   return null;
 }
 
+function parseOwnerEditor(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{1,31}$/.test(normalized)) return undefined;
+  return normalized;
+}
+
 /**
  * Query Google Calendar Events for titles and boundaries.
  *
@@ -236,7 +246,7 @@ export async function fetchCalendarEvents(
             maxResults: 2500,
             pageToken,
             timeZone: opts.displayTimezone,
-            fields: "items(id,status,transparency,summary,description,start(date,dateTime),end(date,dateTime)),nextPageToken",
+            fields: "items(id,status,transparency,summary,description,extendedProperties(private(ownerEditor)),start(date,dateTime),end(date,dateTime)),nextPageToken",
           });
         } catch {
           errored.add(calendarId);
@@ -254,12 +264,14 @@ export async function fetchCalendarEvents(
           if ((endMs as number) <= (startMs as number)) continue;
 
           const summary = (item.summary ?? "").trim() || "Busy";
+          const ownerEditor = parseOwnerEditor(item.extendedProperties?.private?.ownerEditor);
           events.push({
             startMs: startMs as number,
             endMs: endMs as number,
             summary,
             ...(item.id ? { eventId: item.id } : {}),
             ...(item.description ? { description: item.description } : {}),
+            ...(ownerEditor ? { ownerEditor } : {}),
             calendarId,
           });
         }
@@ -342,6 +354,15 @@ export async function createAllDayEvent(
         ...(opts.description?.trim()
           ? { description: opts.description.trim() }
           : {}),
+        ...(opts.ownerEditor
+          ? {
+              extendedProperties: {
+                private: {
+                  ownerEditor: opts.ownerEditor,
+                },
+              },
+            }
+          : {}),
         start: { date: opts.startDate },
         end: { date: opts.endDateExclusive },
         transparency: "opaque",
@@ -383,6 +404,15 @@ export async function updateAllDayEvent(
       ...(opts.description?.trim()
         ? { description: opts.description.trim() }
         : { description: "" }),
+      ...(opts.ownerEditor
+        ? {
+            extendedProperties: {
+              private: {
+                ownerEditor: opts.ownerEditor,
+              },
+            },
+          }
+        : {}),
       start: { date: opts.startDate },
       end: { date: opts.endDateExclusive },
       transparency: "opaque",

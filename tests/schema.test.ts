@@ -65,6 +65,7 @@ describe("SnapshotSchema", () => {
         startUtc: "2025-10-14T08:00:00.000Z",
         endUtc: "2025-10-14T09:00:00.000Z",
         summary: "Unavailable",
+        ownerEditor: "milos",
         calendarId: "personal@group.calendar.google.com",
         displayMode: "private",
       }],

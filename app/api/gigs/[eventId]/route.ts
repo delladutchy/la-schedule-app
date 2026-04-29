@@ -7,8 +7,13 @@ import {
   resolveAllDayRange,
   isDateRangeAvailableForEditInSnapshot,
 } from "@/lib/gigs";
+import type { Snapshot } from "@/lib/types";
 import { readCurrentSnapshot } from "@/lib/store";
-import { authorizeEditorRequest } from "@/lib/editor-auth";
+import {
+  authorizeEditorRequest,
+  canEditorModifyEventOwner,
+  resolveEditorRole,
+} from "@/lib/editor-auth";
 import { appendAuditEvent, buildGigAuditFields } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
@@ -88,6 +93,38 @@ function resolveEventId(param: string | undefined): string | null {
   return eventId;
 }
 
+function normalizeOwnerEditor(ownerEditor: string | undefined): string | undefined {
+  if (!ownerEditor) return undefined;
+  const normalized = ownerEditor.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{1,31}$/.test(normalized)) return undefined;
+  return normalized;
+}
+
+function findOwnedEditorEvent(
+  snapshot: Snapshot | null,
+  eventId: string,
+  editorCalendarId: string,
+): { ownerEditor?: string; summary?: string; startUtc?: string; endUtc?: string; description?: string } | null {
+  if (!snapshot) return null;
+  const match = snapshot.namedEvents?.find((event) =>
+    event.eventId === eventId && event.calendarId === editorCalendarId);
+  if (!match) return null;
+  return {
+    ownerEditor: normalizeOwnerEditor(match.ownerEditor),
+    summary: match.summary,
+    startUtc: match.startUtc,
+    endUtc: match.endUtc,
+    description: match.description,
+  };
+}
+
+function forbiddenOwnerResponse() {
+  return NextResponse.json(
+    { error: "forbidden", message: "Only the creator can edit this booking." },
+    { status: 403 },
+  );
+}
+
 export async function PATCH(
   req: Request,
   context: { params: { eventId?: string } },
@@ -146,6 +183,13 @@ export async function PATCH(
     validationSnapshot = preflight.snapshot;
   }
 
+  const editableEvent = findOwnedEditorEvent(validationSnapshot, eventId, env.GOOGLE_CALENDAR_ID);
+  const ownerEditor = editableEvent?.ownerEditor;
+  if (!canEditorModifyEventOwner(editorId, ownerEditor)) {
+    logGigRouteTiming("patch", "forbidden_owner", editorId, routeStartedAt, timings);
+    return forbiddenOwnerResponse();
+  }
+
   const isAvailable = isDateRangeAvailableForEditInSnapshot(
     validationSnapshot,
     file.timezone,
@@ -174,6 +218,7 @@ export async function PATCH(
       eventId,
       summary: payload.summary,
       ...(payload.description ? { description: payload.description } : {}),
+      ...(ownerEditor ? { ownerEditor } : {}),
       startDate: payload.startDate,
       endDateExclusive: payload.endDateExclusive,
     });
@@ -268,9 +313,33 @@ export async function DELETE(
     logGigRouteTiming("delete", "invalid_event_id", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "invalid_event_id" }, { status: 400 });
   }
-  const deleteAuditSource = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
-  const deleteAuditEvent = deleteAuditSource?.namedEvents?.find((event) =>
-    event.eventId === eventId && event.calendarId === env.GOOGLE_CALENDAR_ID);
+
+  const snapshotReadStartedAt = Date.now();
+  let deleteAuditSource = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  timings.snapshotReadMs = Date.now() - snapshotReadStartedAt;
+  if (!deleteAuditSource && resolveEditorRole(editorId) === "limited") {
+    const preflightStartedAt = Date.now();
+    const preflight = await buildAndPersistSnapshot();
+    timings.preflightSyncMs = Date.now() - preflightStartedAt;
+    if (preflight.status !== "ok" || !preflight.snapshot) {
+      logGigRouteTiming("delete", "snapshot_unavailable_prewrite", editorId, routeStartedAt, timings);
+      return NextResponse.json(
+        {
+          error: "snapshot_unavailable",
+          message: preflight.error ?? "Could not refresh snapshot before delete.",
+        },
+        { status: 503 },
+      );
+    }
+    deleteAuditSource = preflight.snapshot;
+  }
+
+  const deleteAuditEvent = findOwnedEditorEvent(deleteAuditSource, eventId, env.GOOGLE_CALENDAR_ID);
+  if (!canEditorModifyEventOwner(editorId, deleteAuditEvent?.ownerEditor)) {
+    logGigRouteTiming("delete", "forbidden_owner", editorId, routeStartedAt, timings);
+    return forbiddenOwnerResponse();
+  }
+
   try {
     const googleWriteStartedAt = Date.now();
     await deleteCalendarEvent({

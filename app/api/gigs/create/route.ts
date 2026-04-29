@@ -150,6 +150,7 @@ export async function POST(req: Request) {
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     refreshToken: env.GOOGLE_REFRESH_TOKEN,
     calendarId: env.GOOGLE_CALENDAR_ID,
+    ownerEditor: editorId,
     ...(eventIdOverride ? { eventId: eventIdOverride } : {}),
     summary: payload.summary,
     ...(payload.description ? { description: payload.description } : {}),

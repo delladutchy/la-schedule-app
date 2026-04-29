@@ -186,6 +186,7 @@ export function MonthBoard({
   });
   const [activeDetailPanel, setActiveDetailPanel] = useState<ActiveDetailPanel | null>(null);
   const [editorToken, setEditorToken] = useState<string | null>(null);
+  const [resolvedEditorId, setResolvedEditorId] = useState<string | null>(null);
   const [activeBookingPanel, setActiveBookingPanel] = useState<ActiveBookingPanel | null>(null);
   const [bookingLaNumber, setBookingLaNumber] = useState("");
   const [bookingJobName, setBookingJobName] = useState("");
@@ -232,6 +233,7 @@ export function MonthBoard({
       setEditorToken(resolved);
     } else {
       setEditorToken(null);
+      setResolvedEditorId(null);
     }
 
     const url = new URL(window.location.href);
@@ -240,6 +242,44 @@ export function MonthBoard({
     const next = `${url.pathname}${url.search}${url.hash}`;
     window.history.replaceState(window.history.state, "", next);
   }, [initialEditorToken]);
+
+  useEffect(() => {
+    if (!editorToken) {
+      setResolvedEditorId(null);
+      return;
+    }
+    let cancelled = false;
+
+    async function loadEditorId() {
+      try {
+        const response = await fetch("/api/editor/history?limit=1", {
+          headers: {
+            Authorization: `Bearer ${editorToken}`,
+          },
+        });
+        if (cancelled) return;
+        if (response.status === 401) {
+          window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+          setEditorToken(null);
+          setResolvedEditorId(null);
+          return;
+        }
+        if (!response.ok) return;
+        const payload = await response.json() as { editorId?: string };
+        const nextEditorId = typeof payload.editorId === "string"
+          ? payload.editorId.trim().toLowerCase()
+          : null;
+        setResolvedEditorId(nextEditorId || null);
+      } catch {
+        // Keep existing editor id state on transient network issues.
+      }
+    }
+
+    void loadEditorId();
+    return () => {
+      cancelled = true;
+    };
+  }, [editorToken]);
 
   const closeDetailPanel = () => setActiveDetailPanel(null);
   const closeBookingPanel = () => {
@@ -503,6 +543,13 @@ export function MonthBoard({
   const activeEditableDescription = activeEditableDetail
     ? parseGigDescription(activeEditableDetail.description)
     : null;
+  const activeOwnerEditor = activeEditableDetail?.ownerEditor?.trim().toLowerCase();
+  const limitedEditorActive = resolvedEditorId === "milos";
+  const limitedEditorBlocked = limitedEditorActive
+    && (!activeOwnerEditor || activeOwnerEditor !== resolvedEditorId);
+  const canManageActiveDetail = editorModeActive
+    && !!activeEditableDetail
+    && !limitedEditorBlocked;
   const showDeleteConfirm = !!confirmDeleteEventId
     && !!activeEditableDetail
     && confirmDeleteEventId === activeEditableDetail.eventId;
@@ -860,7 +907,7 @@ export function MonthBoard({
               <p className="board-day-modal-empty">No event details available.</p>
             )}
 
-            {editorModeActive && activeEditableDetail ? (
+            {canManageActiveDetail ? (
               <div className="board-day-modal-actions">
                 {showDeleteConfirm ? (
                   <div className="board-day-modal-confirm-delete">
@@ -918,6 +965,8 @@ export function MonthBoard({
                   </div>
                 )}
               </div>
+            ) : editorModeActive && activeEditableDetail && limitedEditorBlocked ? (
+              <p className="board-day-modal-permission-note">Only the creator can edit this booking.</p>
             ) : null}
           </section>
         </div>

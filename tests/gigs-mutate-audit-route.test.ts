@@ -19,6 +19,7 @@ const snapshot = {
     summary: "LA#12347 — Delete Me",
     eventId: "evt-delete",
     description: "Call Time: 10:00 AM",
+    ownerEditor: "milos",
     calendarId: "la-jobs@group.calendar.google.com",
     displayMode: "details" as const,
   }],
@@ -122,6 +123,79 @@ describe("/api/gigs/[eventId] audit logging", () => {
     expect(payload.action).toBe("edit");
   });
 
+  it("preserves existing owner metadata on PATCH updates", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      busy: [{
+        startUtc: "2026-05-08T00:00:00.000Z",
+        endUtc: "2026-05-09T00:00:00.000Z",
+      }],
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-edit-owner",
+        startUtc: "2026-05-08T00:00:00.000Z",
+        endUtc: "2026-05-09T00:00:00.000Z",
+        ownerEditor: "milos",
+      }],
+    });
+    updateAllDayEvent.mockResolvedValue({ id: "evt-edit-owner", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-edit-owner", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12346 — Updated Job",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-edit-owner" } });
+    expect(res.status).toBe(200);
+    expect(updateAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventId: "evt-edit-owner",
+        ownerEditor: "milos",
+      }),
+    );
+  });
+
+  it("allows limited editor to edit own event", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      busy: [{
+        startUtc: "2026-05-08T00:00:00.000Z",
+        endUtc: "2026-05-09T00:00:00.000Z",
+      }],
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-own-edit",
+        startUtc: "2026-05-08T00:00:00.000Z",
+        endUtc: "2026-05-09T00:00:00.000Z",
+        ownerEditor: "milos",
+      }],
+    });
+    updateAllDayEvent.mockResolvedValue({ id: "evt-own-edit", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-own-edit", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12346 — Updated Job",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-own-edit" } });
+    expect(res.status).toBe(200);
+    expect(updateAllDayEvent).toHaveBeenCalled();
+  });
+
   it("appends audit event after successful delete", async () => {
     authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
     readCurrentSnapshot.mockResolvedValue(snapshot);
@@ -136,6 +210,77 @@ describe("/api/gigs/[eventId] audit logging", () => {
     const payload = appendAuditEvent.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(payload.editorId).toBe("milos");
     expect(payload.action).toBe("delete");
+  });
+
+  it("allows full editor to delete non-owned event", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        ownerEditor: "milos",
+      }],
+    });
+    deleteCalendarEvent.mockResolvedValue({ id: "evt-delete" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+    const { DELETE } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-delete" } });
+    expect(res.status).toBe(200);
+    expect(deleteCalendarEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks limited editor from editing non-owned event", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-edit",
+        ownerEditor: "dave",
+      }],
+    });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-edit", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12346 — Updated Job",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-edit" } });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "forbidden",
+      message: "Only the creator can edit this booking.",
+    });
+    expect(updateAllDayEvent).not.toHaveBeenCalled();
+    expect(appendAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("blocks limited editor from deleting unknown-owner event", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        ownerEditor: undefined,
+      }],
+    });
+    const { DELETE } = await loadRoutes();
+    const req = new Request("http://localhost/api/gigs/evt-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-delete" } });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "forbidden",
+      message: "Only the creator can edit this booking.",
+    });
+    expect(deleteCalendarEvent).not.toHaveBeenCalled();
+    expect(appendAuditEvent).not.toHaveBeenCalled();
   });
 
   it("does not append audit on unauthorized delete", async () => {

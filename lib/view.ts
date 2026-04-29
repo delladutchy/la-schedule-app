@@ -219,6 +219,7 @@ interface NamedEventInterval extends Interval {
   summary: string;
   eventId?: string;
   description?: string;
+  ownerEditor?: string;
   calendarId?: string;
   displayMode: CalendarDisplayMode;
 }
@@ -374,6 +375,7 @@ export interface MonthEventBarDetail {
   jobNumber?: string;
   eventId?: string;
   description?: string;
+  ownerEditor?: string;
   startUtc?: string;
   endUtc?: string;
   startDate?: string;
@@ -436,6 +438,7 @@ function snapshotNamedEvents(snapshot: Snapshot): NamedEventInterval[] {
       summary: normalizeEventName(event.summary),
       eventId: event.eventId,
       description: event.description,
+      ownerEditor: event.ownerEditor,
       calendarId: event.calendarId,
       displayMode: event.displayMode ?? "details",
     }))
@@ -538,6 +541,7 @@ function collectEventDetails(
         ...(event.displayMode === "details" && event.description
           ? { description: event.description }
           : {}),
+        ...(event.ownerEditor ? { ownerEditor: event.ownerEditor } : {}),
         dateRangeLabel: formatEventDateRange(event.startMs, event.endMs, timezone, referenceYear),
         ...(timeRangeLabel ? { timeRangeLabel } : {}),
         ...(event.calendarId ? { calendarId: event.calendarId } : {}),
@@ -587,6 +591,7 @@ export function summarizeBookedDayLabel(
     jobNumber?: string;
     eventId?: string;
     description?: string;
+    ownerEditor?: string;
     startUtc?: string;
     endUtc?: string;
     startDate?: string;
@@ -677,6 +682,7 @@ export function summarizeBookedDayLabel(
             ...(detailJob ? { jobNumber: detailJob } : {}),
             ...(detail.eventId ? { eventId: detail.eventId } : {}),
             ...(detail.description ? { description: detail.description } : {}),
+            ...(detail.ownerEditor ? { ownerEditor: detail.ownerEditor } : {}),
             ...(detail.startUtc ? { startUtc: detail.startUtc } : {}),
             ...(detail.endUtc ? { endUtc: detail.endUtc } : {}),
             ...(detail.startDate ? { startDate: detail.startDate } : {}),
@@ -710,6 +716,7 @@ export function summarizeBookedDayLabel(
         summary: detail.summary,
         ...(detail.eventId ? { eventId: detail.eventId } : {}),
         ...(detail.description ? { description: detail.description } : {}),
+        ...(detail.ownerEditor ? { ownerEditor: detail.ownerEditor } : {}),
         ...(detail.startUtc ? { startUtc: detail.startUtc } : {}),
         ...(detail.endUtc ? { endUtc: detail.endUtc } : {}),
         ...(detail.startDate ? { startDate: detail.startDate } : {}),
