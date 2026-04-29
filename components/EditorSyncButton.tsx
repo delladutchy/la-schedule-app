@@ -95,11 +95,9 @@ export function EditorSyncButton({ initialEditorToken }: Props) {
       >
         {isPending ? (
           <>
-            Syncing
+            Syncing...
             <span className="editor-sync-inline-spinner" aria-hidden="true">
-              <span className="editor-sync-inline-spinner-dot" />
-              <span className="editor-sync-inline-spinner-dot" />
-              <span className="editor-sync-inline-spinner-dot" />
+              <span className="editor-sync-inline-spinner-ring" />
             </span>
           </>
         ) : "Sync"}
