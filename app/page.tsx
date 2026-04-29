@@ -330,7 +330,7 @@ export default async function AvailabilityPage({
         <>
           <nav className="nav" aria-label="Week navigation">
             {weekCanGoPrev ? (
-              <Link className="nav-button" href={weekPrevHref} aria-label="Previous week" prefetch={false}>
+              <Link className="nav-button" href={weekPrevHref} aria-label="Previous week" prefetch={true}>
                 ← Previous
               </Link>
             ) : (
@@ -338,11 +338,11 @@ export default async function AvailabilityPage({
                 ← Previous
               </a>
             )}
-            <Link className="nav-button" href={`/?view=list&start=${todayKey}`} aria-label="Today" prefetch={false}>
+            <Link className="nav-button" href={`/?view=list&start=${todayKey}`} aria-label="Today" prefetch={true}>
               Today
             </Link>
             {weekCanGoNext ? (
-              <Link className="nav-button" href={weekNextHref} aria-label="Next week" prefetch={false}>
+              <Link className="nav-button" href={weekNextHref} aria-label="Next week" prefetch={true}>
                 Next →
               </Link>
             ) : (
@@ -372,7 +372,7 @@ export default async function AvailabilityPage({
                   className="month-landscape-nav-button"
                   href={monthPrevHref}
                   aria-label="Previous month"
-                  prefetch={false}
+                  prefetch={true}
                 >
                   ←
                 </Link>
@@ -385,7 +385,7 @@ export default async function AvailabilityPage({
                 className="month-landscape-nav-button"
                 href={`/?view=month&month=${todayMonthKey}`}
                 aria-label="Today"
-                prefetch={false}
+                prefetch={true}
               >
                 Today
               </Link>
@@ -394,7 +394,7 @@ export default async function AvailabilityPage({
                   className="month-landscape-nav-button"
                   href={monthNextHref}
                   aria-label="Next month"
-                  prefetch={false}
+                  prefetch={true}
                 >
                   →
                 </Link>
@@ -408,7 +408,7 @@ export default async function AvailabilityPage({
 
           <nav className="nav" aria-label="Month navigation">
             {monthCanGoPrev ? (
-              <Link className="nav-button" href={monthPrevHref} aria-label="Previous month" prefetch={false}>
+              <Link className="nav-button" href={monthPrevHref} aria-label="Previous month" prefetch={true}>
                 ← Previous
               </Link>
             ) : (
@@ -416,11 +416,11 @@ export default async function AvailabilityPage({
                 ← Previous
               </a>
             )}
-            <Link className="nav-button" href={`/?view=month&month=${todayMonthKey}`} aria-label="Today" prefetch={false}>
+            <Link className="nav-button" href={`/?view=month&month=${todayMonthKey}`} aria-label="Today" prefetch={true}>
               Today
             </Link>
             {monthNav.hasNext ? (
-              <Link className="nav-button" href={monthNextHref} aria-label="Next month" prefetch={false}>
+              <Link className="nav-button" href={monthNextHref} aria-label="Next month" prefetch={true}>
                 Next →
               </Link>
             ) : (
