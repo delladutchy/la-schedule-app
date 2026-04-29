@@ -2483,10 +2483,23 @@ body {
     opacity: 0.78;
   }
 
-  /* Landscape iPhone Month: keep booking spans visible, but hide LA# labels so
-     long text doesn't dominate the calendar rows. */
+  /* Landscape iPhone Month: show LA# as a compact left tag so occupancy
+     context remains visible without full-width messy labels. */
   .page.page--month .month-row-bar-label {
-    display: none;
+    display: inline-block;
+    width: auto;
+    max-width: 52px;
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 7.8px;
+    line-height: 1.1;
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: color-mix(in srgb, var(--surface) 72%, transparent);
+    color: color-mix(in srgb, var(--text) 88%, var(--text-subtle));
   }
 
   .page.page--month .month-day {
