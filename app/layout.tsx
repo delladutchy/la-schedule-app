@@ -1,10 +1,27 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Availability",
+  title: "LA Schedule",
   description: "Professional availability viewer",
+  applicationName: "LA Schedule",
   robots: { index: false, follow: false }, // default private-ish; user can share the URL explicitly
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "LA Schedule",
+  },
+  manifest: "/manifest.webmanifest",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
+    { media: "(prefers-color-scheme: light)", color: "#f7f6f4" },
+  ],
 };
 
 const themeInitScript = `
