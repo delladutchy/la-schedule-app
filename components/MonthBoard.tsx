@@ -40,6 +40,33 @@ const CALL_TIME_OPTIONS = [
   "5:00 PM",
 ] as const;
 
+const STAGED_LOADING_COPY: ReadonlyArray<{ delay: number; text: string }> = [
+  { delay: 0, text: "Updating calendar…" },
+  { delay: 700, text: "Confirming with Google…" },
+  { delay: 1800, text: "Refreshing schedule…" },
+  { delay: 5000, text: "Google Calendar is taking a little longer…" },
+];
+
+function useStagedLoadingCopy(isActive: boolean): string {
+  const [stage, setStage] = useState(0);
+
+  useEffect(() => {
+    if (!isActive) {
+      setStage(0);
+      return undefined;
+    }
+    setStage(0);
+    const timers = STAGED_LOADING_COPY.slice(1).map((entry, index) =>
+      window.setTimeout(() => setStage(index + 1), entry.delay),
+    );
+    return () => {
+      for (const id of timers) window.clearTimeout(id);
+    };
+  }, [isActive]);
+
+  return STAGED_LOADING_COPY[stage]?.text ?? STAGED_LOADING_COPY[0]!.text;
+}
+
 type BookedLabel = ReturnType<typeof summarizeBookedDayLabel>;
 
 interface ActiveDetailPanel {
@@ -173,6 +200,7 @@ export function MonthBoard({
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeletePending, setIsDeletePending] = useState(false);
+  const stagedLoadingCopy = useStagedLoadingCopy(isBookingSavePending || isDeletePending);
 
   useEffect(() => {
     if (!activeDetailPanel && !activeBookingPanel) return undefined;
@@ -493,7 +521,7 @@ export function MonthBoard({
           <circle className="board-day-modal-loading-arc" cx="25" cy="25" r="20" />
         </svg>
         <p className="board-day-modal-loading-title">{title}</p>
-        <p className="board-day-modal-loading-copy">Updating calendar</p>
+        <p className="board-day-modal-loading-copy">{stagedLoadingCopy}</p>
       </div>
     </div>
   );

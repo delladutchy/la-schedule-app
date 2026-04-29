@@ -1675,6 +1675,10 @@ body {
     stroke-dasharray: none;
     opacity: 0.85;
   }
+  .board-day-modal-loading-copy {
+    animation: none;
+    opacity: 0.85;
+  }
   .editor-sync-inline-spinner-dot {
     animation: none;
     opacity: 0.7;
@@ -1693,6 +1697,12 @@ body {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
+  animation: board-day-modal-loading-copy-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes board-day-modal-loading-copy-pulse {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 1; }
 }
 
 .month-booking-actions {
