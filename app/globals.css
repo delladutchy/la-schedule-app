@@ -1207,7 +1207,12 @@ body {
 /* ---------- Mobile ---------- */
 
 @media (max-width: 560px) {
-  .page { padding: 40px 16px 64px; }
+  .page {
+    padding-top: max(40px, env(safe-area-inset-top, 0px));
+    padding-right: 16px;
+    padding-bottom: max(64px, env(safe-area-inset-bottom, 0px));
+    padding-left: 16px;
+  }
   .page.page--month {
     max-width: 100%;
     padding-left: 12px;
@@ -2095,7 +2100,7 @@ body {
     padding-right: max(4px, env(safe-area-inset-right, 0px));
     padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
     padding-left: max(4px, env(safe-area-inset-left, 0px));
-    align-items: flex-start;
+    align-items: safe center;
     justify-items: center;
     overflow-x: hidden;
     overscroll-behavior: contain;
@@ -2233,8 +2238,11 @@ body {
   }
 
   .board-day-modal-backdrop {
-    padding: 4px;
-    align-items: flex-start;
+    padding-top: max(4px, env(safe-area-inset-top, 0px));
+    padding-right: max(4px, env(safe-area-inset-right, 0px));
+    padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(4px, env(safe-area-inset-left, 0px));
+    align-items: safe center;
   }
 
   .board-day-modal {
