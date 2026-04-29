@@ -2515,3 +2515,42 @@ body {
     margin-top: 0;
   }
 }
+
+/* Supplementary Month-label sizing for any phone-sized landscape viewport.
+   Broader than the tight (max-height: 520px) + hover: none + pointer: coarse
+   block above so it still matches in iOS Safari edge cases (per-site zoom,
+   accessibility text sizes, PWA standalone hover-feature quirks) where the
+   tight query misses. iPad landscape (height >= 768) does NOT match. */
+@media (orientation: landscape) and (max-height: 700px) {
+  .page.page--month .month-row-bar,
+  .page.page--month .month-row-bar.month-row-bar--single,
+  .page.page--month .month-row-bar.month-row-bar--span,
+  .page.page--month .month-row-bar.month-row-bar--details,
+  .page.page--month .month-row-bar.month-row-bar--private,
+  .page.page--month .month-row-bar-label,
+  .page.page--month .month-day-chip,
+  .page.page--month .month-day-chip.month-day-chip--booked,
+  .page.page--month .month-day-chip.month-day-chip--available {
+    font-family: inherit !important;
+    font-size: 8.5px !important;
+    line-height: 1.05 !important;
+    font-weight: 500 !important;
+    letter-spacing: 0 !important;
+    text-transform: none !important;
+    -webkit-text-size-adjust: none !important;
+    text-size-adjust: none !important;
+    transform: none !important;
+  }
+
+  .page.page--month .month-row-bar {
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    min-height: 15px;
+    padding: 1px 6px;
+  }
+
+  .page.page--month .month-day-chip {
+    padding: 1px 6px;
+    gap: 4px;
+  }
+}
