@@ -2472,6 +2472,23 @@ body {
     text-size-adjust: none;
   }
 
+  .page.page--month .month-day-chip {
+    font-size: 8.5px;
+    line-height: 1.05;
+    font-weight: 500;
+    letter-spacing: 0;
+    -webkit-text-size-adjust: none;
+    text-size-adjust: none;
+    padding: 1px 6px;
+    gap: 4px;
+  }
+
+  .page.page--month .month-row-bar,
+  .page.page--month .month-row-bar-label,
+  .page.page--month .month-day-chip {
+    font-family: inherit;
+  }
+
   .page.page--month .month-day {
     min-height: 0;
     padding: calc(22px + (var(--month-week-bar-rows, 0) * 16px)) 6px 6px;
