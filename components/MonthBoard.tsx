@@ -490,16 +490,7 @@ export function MonthBoard({
           focusable="false"
         >
           <circle className="board-day-modal-loading-track" cx="25" cy="25" r="20" />
-          <circle className="board-day-modal-loading-arc" cx="25" cy="25" r="20">
-            <animateTransform
-              attributeName="transform"
-              type="rotate"
-              from="0 25 25"
-              to="360 25 25"
-              dur="0.8s"
-              repeatCount="indefinite"
-            />
-          </circle>
+          <circle className="board-day-modal-loading-arc" cx="25" cy="25" r="20" />
         </svg>
         <p className="board-day-modal-loading-title">{title}</p>
         <p className="board-day-modal-loading-copy">Updating calendar</p>
