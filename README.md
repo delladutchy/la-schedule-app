@@ -259,9 +259,6 @@ to 10 minutes.
 `POST /api/google/calendar/webhook` can trigger the same snapshot sync
 pipeline after Google push notifications.
 
-Phase 1 in this repo only adds the secure receiver endpoint. It does **not**
-register Google watch channels and does **not** implement channel renewal yet.
-
 Example call:
 
 ```bash
@@ -308,8 +305,10 @@ Behavior:
 - uses `/api/google/calendar/webhook` on the canonical `PUBLIC_SITE_URL` when configured (falls back to request origin otherwise)
 - passes `GOOGLE_WEBHOOK_TOKEN` as channel token
 - stores safe metadata only
+- background auto-renew runs daily at `04:17 UTC` via Netlify Scheduled Function (`scheduled-google-watch-renew`) and re-registers only when needed
 
-Google watch channels expire, so check/renew before expiration.
+Google watch channels expire, so auto-renew keeps them alive; the manual
+commands above remain useful for status checks and forced troubleshooting.
 
 ### Creating an all-day gig (token-gated editor endpoint)
 

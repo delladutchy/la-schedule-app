@@ -11,6 +11,11 @@
 [functions."scheduled-sync"]
   schedule = "*/10 * * * *"
 
+# Scheduled watch renewal: validates existing watch metadata and only
+# registers a fresh Google Calendar watch when missing or expiring soon.
+[functions."scheduled-google-watch-renew"]
+  schedule = "17 4 * * *"
+
 # Security headers on every response.
 [[headers]]
   for = "/*"
