@@ -4,12 +4,12 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "LA Schedule",
   description: "Professional availability viewer",
-  applicationName: "LA Schedule",
+  applicationName: "Jeff",
   robots: { index: false, follow: false }, // default private-ish; user can share the URL explicitly
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "LA Schedule",
+    title: "Jeff",
   },
   manifest: "/manifest.webmanifest",
 };

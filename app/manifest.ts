@@ -5,8 +5,8 @@ import type { MetadataRoute } from "next";
 // (including any editor-link `?editor=TOKEN` query string).
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "LA Schedule",
-    short_name: "LA Schedule",
+    name: "Jeff",
+    short_name: "Jeff",
     description: "Professional availability viewer",
     display: "standalone",
     background_color: "#0a0a0a",
