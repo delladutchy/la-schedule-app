@@ -2129,6 +2129,25 @@ body {
     padding: 10px 10px 8px;
   }
 
+  .board-day-modal-backdrop--booking {
+    align-items: start;
+    justify-items: center;
+    padding-top: max(6px, env(safe-area-inset-top, 0px));
+  }
+
+  .board-day-modal--booking {
+    height: calc(
+      100dvh
+      - max(6px, env(safe-area-inset-top, 0px))
+      - max(6px, env(safe-area-inset-bottom, 0px))
+    );
+    max-height: calc(
+      100dvh
+      - max(6px, env(safe-area-inset-top, 0px))
+      - max(6px, env(safe-area-inset-bottom, 0px))
+    );
+  }
+
   .board-day-modal .month-booking-input,
   .board-day-modal .month-booking-input--small,
   .board-day-modal .month-booking-textarea,
@@ -2264,6 +2283,25 @@ body {
     overflow-x: hidden;
     box-sizing: border-box;
     padding: 11px 11px 9px;
+  }
+
+  .board-day-modal-backdrop--booking {
+    align-items: start;
+    justify-items: center;
+    padding-top: max(4px, env(safe-area-inset-top, 0px));
+  }
+
+  .board-day-modal--booking {
+    height: calc(
+      100dvh
+      - max(4px, env(safe-area-inset-top, 0px))
+      - max(4px, env(safe-area-inset-bottom, 0px))
+    );
+    max-height: calc(
+      100dvh
+      - max(4px, env(safe-area-inset-top, 0px))
+      - max(4px, env(safe-area-inset-bottom, 0px))
+    );
   }
 
   .month-booking-input,

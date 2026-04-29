@@ -868,7 +868,7 @@ export function DayBoard({
 
       {activeBookingPanel ? (
         <div
-          className="board-day-modal-backdrop"
+          className="board-day-modal-backdrop board-day-modal-backdrop--booking"
           role="presentation"
           onClick={() => {
             if (bookingModalIsLocked) return;
@@ -877,7 +877,7 @@ export function DayBoard({
         >
           <section
             id="week-booking-modal"
-            className="board-day-modal"
+            className="board-day-modal board-day-modal--booking"
             role="dialog"
             aria-modal="true"
             aria-labelledby="week-booking-title"

@@ -927,7 +927,7 @@ export function MonthBoard({
 
       {activeBookingPanel ? (
         <div
-          className="board-day-modal-backdrop"
+          className="board-day-modal-backdrop board-day-modal-backdrop--booking"
           role="presentation"
           onClick={() => {
             if (bookingModalIsLocked) return;
@@ -935,7 +935,7 @@ export function MonthBoard({
           }}
         >
           <section
-            className="board-day-modal"
+            className="board-day-modal board-day-modal--booking"
             role="dialog"
             aria-modal="true"
             aria-labelledby="month-booking-title"
