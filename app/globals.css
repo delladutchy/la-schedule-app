@@ -496,15 +496,21 @@ body {
   border-radius: 999px;
   font-size: 13px;
   font-weight: 500;
-  transition: background 0.12s ease, color 0.12s ease;
+  touch-action: manipulation;
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
 }
 .view-toggle-button:hover {
   color: var(--text);
   background: var(--bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 50%, transparent);
+}
+.view-toggle-button:active {
+  transform: translateY(1px) scale(0.985);
 }
 .view-toggle-button.active {
   color: var(--text);
   background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 /* ---------- Week navigation ---------- */
@@ -530,11 +536,15 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  touch-action: manipulation;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
 }
 .nav-button:hover {
   background: var(--bg);
   border-color: var(--border-strong);
+}
+.nav-button:active:not(.is-disabled) {
+  transform: translateY(1px) scale(0.985);
 }
 .nav-button:focus-visible {
   outline: 2px solid var(--today-accent);
@@ -1605,8 +1615,10 @@ body {
   text-align: center;
   padding: 10px 12px;
   border-radius: 14px;
-  background: color-mix(in srgb, var(--surface) 24%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
+  background: color-mix(in srgb, var(--surface) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 16%, transparent);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
 }
 
 .board-day-modal-loading-svg {
@@ -2329,6 +2341,11 @@ body {
     align-items: center;
     justify-content: center;
     touch-action: manipulation;
+    transition: transform 0.12s ease;
+  }
+
+  .page.page--month .month-landscape-nav-button:active:not(.is-disabled) {
+    transform: translateY(1px) scale(0.985);
   }
 
   .page.page--month .month-landscape-nav-button.is-disabled {
