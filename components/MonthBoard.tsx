@@ -887,7 +887,7 @@ export function MonthBoard({
                       </button>
                       <button
                         type="button"
-                        className="month-booking-button month-booking-button--primary"
+                        className="month-booking-button month-booking-button--danger"
                         onClick={() => {
                           if (!activeEditableDetail.eventId) return;
                           void deleteActiveGig(activeEditableDetail.eventId);
