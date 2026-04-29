@@ -1643,7 +1643,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  margin-right: 6px;
+  margin-left: 6px;
   vertical-align: 1px;
 }
 
