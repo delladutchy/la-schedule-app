@@ -2452,38 +2452,6 @@ body {
     grid-template-rows: repeat(var(--month-week-bar-rows, 0), minmax(15px, auto));
   }
 
-  .page.page--month .month-row-bar,
-  .page.page--month .month-row-bar.month-row-bar--single,
-  .page.page--month .month-row-bar.month-row-bar--span,
-  .page.page--month .month-row-bar.month-row-bar--details,
-  .page.page--month .month-row-bar.month-row-bar--private,
-  .page.page--month .month-row-bar-label,
-  .page.page--month .month-day-chip,
-  .page.page--month .month-day-chip.month-day-chip--booked,
-  .page.page--month .month-day-chip.month-day-chip--available {
-    font-family: inherit !important;
-    font-size: 8.5px !important;
-    line-height: 1.05 !important;
-    font-weight: 500 !important;
-    letter-spacing: 0 !important;
-    text-transform: none !important;
-    -webkit-text-size-adjust: none !important;
-    text-size-adjust: none !important;
-    transform: none !important;
-  }
-
-  .page.page--month .month-row-bar {
-    -webkit-appearance: none !important;
-    appearance: none !important;
-    min-height: 15px;
-    padding: 1px 6px;
-  }
-
-  .page.page--month .month-day-chip {
-    padding: 1px 6px;
-    gap: 4px;
-  }
-
   .page.page--month .month-day {
     min-height: 0;
     padding: calc(22px + (var(--month-week-bar-rows, 0) * 16px)) 6px 6px;
@@ -2516,12 +2484,22 @@ body {
   }
 }
 
-/* Supplementary Month-label sizing for any phone-sized landscape viewport.
-   Broader than the tight (max-height: 520px) + hover: none + pointer: coarse
-   block above so it still matches in iOS Safari edge cases (per-site zoom,
-   accessibility text sizes, PWA standalone hover-feature quirks) where the
-   tight query misses. iPad landscape (height >= 768) does NOT match. */
-@media (orientation: landscape) and (max-height: 700px) {
+/* Single consolidated Month LA# label typography for every phone-sized
+   Month context. Two-prong query catches:
+   (1) any phone in landscape (orientation: landscape AND max-height: 700px) —
+       the normal correctly-reporting iPhone landscape case.
+   (2) any narrow viewport (max-width: 560px) — definitive anchor for the
+       broken iPhone-landscape state where iOS Safari misreports the layout
+       viewport as narrow due to per-site zoom / accessibility text size /
+       PWA standalone-mode quirks. Required because diagnostic on the user's
+       device showed (max-width: 560px) was the rule winning, meaning the
+       tight landscape block's interaction-media-features failed to match.
+   iPad (>=768 wide and tall) and desktop windows (>700 tall in landscape,
+   >560 wide otherwise) do NOT match. Side effect: portrait iPhone bar/chip
+   labels also normalize to the same 9px metrics for visual consistency
+   between portrait and landscape on the same device. */
+@media (orientation: landscape) and (max-height: 700px),
+       (max-width: 560px) {
   .page.page--month .month-row-bar,
   .page.page--month .month-row-bar.month-row-bar--single,
   .page.page--month .month-row-bar.month-row-bar--span,
@@ -2532,7 +2510,7 @@ body {
   .page.page--month .month-day-chip.month-day-chip--booked,
   .page.page--month .month-day-chip.month-day-chip--available {
     font-family: inherit !important;
-    font-size: 8.5px !important;
+    font-size: 9px !important;
     line-height: 1.05 !important;
     font-weight: 500 !important;
     letter-spacing: 0 !important;
