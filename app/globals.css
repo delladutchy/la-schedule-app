@@ -1680,25 +1680,31 @@ body {
 .editor-sync-inline-spinner {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 3px;
   margin-left: 6px;
-  width: 12px;
-  height: 12px;
-  vertical-align: -1px;
+  vertical-align: 1px;
 }
 
-.editor-sync-inline-spinner-ring {
-  width: 12px;
-  height: 12px;
+.editor-sync-inline-spinner-dot {
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
-  border: 2px solid color-mix(in srgb, currentColor 26%, transparent);
-  border-top-color: currentColor;
-  animation: editor-sync-inline-spin 0.85s linear infinite;
+  background: currentColor;
+  opacity: 0.28;
+  animation: editor-sync-inline-dot 1.2s ease-in-out infinite;
 }
 
-@keyframes editor-sync-inline-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.editor-sync-inline-spinner-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.editor-sync-inline-spinner-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes editor-sync-inline-dot {
+  0%, 80%, 100% { opacity: 0.28; }
+  40% { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1711,9 +1717,9 @@ body {
     animation: none;
     opacity: 0.85;
   }
-  .editor-sync-inline-spinner-ring {
+  .editor-sync-inline-spinner-dot {
     animation: none;
-    border-top-color: color-mix(in srgb, currentColor 50%, transparent);
+    opacity: 0.7;
   }
 }
 
