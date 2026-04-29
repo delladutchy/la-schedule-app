@@ -18,6 +18,7 @@ export async function GET(req: Request) {
   const events = await readAuditEvents(env.BLOBS_STORE_NAME, limit);
   return NextResponse.json({
     status: "ok",
+    editorId: auth.editorId,
     events,
   });
 }

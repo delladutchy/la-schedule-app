@@ -55,6 +55,7 @@ function formatAuditRange(event: AuditEventItem): string | null {
 
 export function EditorHistoryButton({ initialEditorToken, buttonLabel = "Edit History" }: Props) {
   const [editorToken, setEditorToken] = useState<string | null>(null);
+  const [currentEditorId, setCurrentEditorId] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
@@ -87,6 +88,7 @@ export function EditorHistoryButton({ initialEditorToken, buttonLabel = "Edit Hi
       if (response.status === 401) {
         window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
         setEditorToken(null);
+        setCurrentEditorId(null);
         setError("Editor session expired. Re-open the editor link.");
         setEvents([]);
         return;
@@ -95,8 +97,11 @@ export function EditorHistoryButton({ initialEditorToken, buttonLabel = "Edit Hi
         setError("Could not load edit history.");
         return;
       }
-      const payload = await response.json() as { events?: AuditEventItem[] };
+      const payload = await response.json() as { editorId?: string; events?: AuditEventItem[] };
       setEvents(Array.isArray(payload.events) ? payload.events : []);
+      if (typeof payload.editorId === "string" && payload.editorId.trim()) {
+        setCurrentEditorId(payload.editorId.trim());
+      }
     } catch {
       setError("Network error while loading history.");
     } finally {
@@ -116,6 +121,7 @@ export function EditorHistoryButton({ initialEditorToken, buttonLabel = "Edit Hi
       if (response.status === 401) {
         window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
         setEditorToken(null);
+        setCurrentEditorId(null);
         setError("Editor session expired. Re-open the editor link.");
         return;
       }
@@ -183,44 +189,46 @@ export function EditorHistoryButton({ initialEditorToken, buttonLabel = "Edit Hi
             <h3 id="editor-history-title" className="board-day-modal-title">
               Edit History
             </h3>
-            <div className="editor-history-actions">
-              {!showClearConfirm ? (
-                <button
-                  type="button"
-                  className="month-booking-button month-booking-button--secondary"
-                  onClick={() => setShowClearConfirm(true)}
-                  disabled={isLoading || isClearing}
-                >
-                  Clear History
-                </button>
-              ) : (
-                <div className="editor-history-clear-confirm">
-                  <p className="editor-history-note">
-                    Clear edit history? This only removes history entries and does not delete calendar jobs.
-                  </p>
-                  <div className="editor-history-clear-buttons">
-                    <button
-                      type="button"
-                      className="month-booking-button month-booking-button--secondary"
-                      onClick={() => setShowClearConfirm(false)}
-                      disabled={isClearing}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className="month-booking-button month-booking-button--primary"
-                      onClick={() => {
-                        void clearHistory();
-                      }}
-                      disabled={isClearing}
-                    >
-                      {isClearing ? "Clearing..." : "Confirm Clear"}
-                    </button>
+            {currentEditorId === "jeff" ? (
+              <div className="editor-history-actions">
+                {!showClearConfirm ? (
+                  <button
+                    type="button"
+                    className="month-booking-button month-booking-button--secondary"
+                    onClick={() => setShowClearConfirm(true)}
+                    disabled={isLoading || isClearing}
+                  >
+                    Clear History
+                  </button>
+                ) : (
+                  <div className="editor-history-clear-confirm">
+                    <p className="editor-history-note">
+                      Clear edit history? This only removes history entries and does not delete calendar jobs.
+                    </p>
+                    <div className="editor-history-clear-buttons">
+                      <button
+                        type="button"
+                        className="month-booking-button month-booking-button--secondary"
+                        onClick={() => setShowClearConfirm(false)}
+                        disabled={isClearing}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="month-booking-button month-booking-button--primary"
+                        onClick={() => {
+                          void clearHistory();
+                        }}
+                        disabled={isClearing}
+                      >
+                        {isClearing ? "Clearing..." : "Confirm Clear"}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            ) : null}
 
             {isLoading ? (
               <p className="editor-history-note">Loading…</p>
