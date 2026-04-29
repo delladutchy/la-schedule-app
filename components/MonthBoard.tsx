@@ -511,15 +511,9 @@ export function MonthBoard({
   const renderLoadingOverlay = (title: "Saving job…" | "Deleting job…") => (
     <div className="board-day-modal-loading-overlay" role="status" aria-live="polite">
       <div className="board-day-modal-loading-indicator">
-        <svg
-          className="board-day-modal-loading-svg"
-          viewBox="0 0 50 50"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <circle className="board-day-modal-loading-track" cx="25" cy="25" r="20" />
-          <circle className="board-day-modal-loading-arc" cx="25" cy="25" r="20" />
-        </svg>
+        <div className="board-day-modal-loading-spinner" aria-hidden="true">
+          <div className="board-day-modal-loading-spinner-ring" />
+        </div>
         <p className="board-day-modal-loading-title">{title}</p>
         <p className="board-day-modal-loading-copy">{stagedLoadingCopy}</p>
       </div>

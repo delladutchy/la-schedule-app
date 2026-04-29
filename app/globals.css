@@ -1630,29 +1630,19 @@ body {
   -webkit-backdrop-filter: blur(8px) saturate(120%);
 }
 
-.board-day-modal-loading-svg {
-  width: 72px;
-  height: 72px;
+.board-day-modal-loading-spinner {
+  width: 56px;
+  height: 56px;
   display: block;
-  filter: drop-shadow(0 5px 14px color-mix(in srgb, var(--today-accent) 24%, transparent));
+  position: relative;
 }
 
-.board-day-modal-loading-track,
-.board-day-modal-loading-arc {
-  fill: none;
-  stroke-width: 8;
-}
-
-.board-day-modal-loading-track {
-  stroke: color-mix(in srgb, var(--text-subtle) 30%, transparent);
-}
-
-.board-day-modal-loading-arc {
-  stroke: color-mix(in srgb, #67e8f9 92%, var(--today-accent));
-  stroke-linecap: round;
-  stroke-dasharray: 30 140;
-  transform-box: fill-box;
-  transform-origin: center;
+.board-day-modal-loading-spinner-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 4px solid color-mix(in srgb, var(--text-subtle) 28%, transparent);
+  border-top-color: color-mix(in srgb, #67e8f9 92%, var(--today-accent));
   animation: board-day-modal-loading-spin 0.8s linear infinite;
 }
 
@@ -1691,9 +1681,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .board-day-modal-loading-arc {
+  .board-day-modal-loading-spinner-ring {
     animation: none;
-    stroke-dasharray: none;
+    border-top-color: color-mix(in srgb, var(--text-subtle) 28%, transparent);
     opacity: 0.85;
   }
   .board-day-modal-loading-copy {
