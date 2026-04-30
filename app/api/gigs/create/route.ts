@@ -129,7 +129,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const summary = isMikeProfile(editorProfile) ? "Overture Booking" : payload.summary;
+  const summary = isMikeProfile(editorProfile) ? "Overture" : payload.summary;
 
   // Pre-write check against the same snapshot model used by the app.
   const snapshotReadStartedAt = Date.now();

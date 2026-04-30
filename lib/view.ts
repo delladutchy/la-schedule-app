@@ -799,6 +799,9 @@ function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][
       ...(event.displayMode === "details" && event.description
         ? { description: event.description }
         : {}),
+      ...(event.displayMode === "details" && event.ownerEditor
+        ? { ownerEditor: event.ownerEditor }
+        : {}),
       dateRangeLabel: formatEventDateRange(event.startMs, event.endMs, opts.timezone, opts.referenceYear),
       ...(timeRangeLabel ? { timeRangeLabel } : {}),
       ...(event.calendarId ? { calendarId: event.calendarId } : {}),
@@ -834,6 +837,7 @@ function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][
           ...(row.jobNumber ? { jobNumber: row.jobNumber } : {}),
           ...(row.eventId ? { eventId: row.eventId } : {}),
           ...(row.description ? { description: row.description } : {}),
+          ...(row.ownerEditor ? { ownerEditor: row.ownerEditor } : {}),
           ...(row.startUtc ? { startUtc: row.startUtc } : {}),
           ...(row.endUtc ? { endUtc: row.endUtc } : {}),
           ...(row.startDate ? { startDate: row.startDate } : {}),

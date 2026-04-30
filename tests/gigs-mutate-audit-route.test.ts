@@ -313,7 +313,7 @@ describe("/api/gigs/[eventId] audit logging", () => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        summary: "Overture Booking",
+        summary: "Overture",
         startDate: "2026-05-08",
         endDate: "2026-05-08",
       }),
@@ -432,7 +432,7 @@ describe("/api/gigs/[eventId] audit logging", () => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        summary: "Overture Booking",
+        summary: "Overture",
         startDate: "2026-05-08",
         endDate: "2026-05-08",
       }),

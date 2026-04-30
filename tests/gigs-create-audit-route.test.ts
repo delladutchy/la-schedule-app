@@ -184,7 +184,7 @@ describe("/api/gigs/create audit logging", () => {
       expect.objectContaining({
         calendarId: "overture@group.calendar.google.com",
         ownerEditor: "mike",
-        summary: "Overture Booking",
+        summary: "Overture",
       }),
     );
   });

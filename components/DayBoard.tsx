@@ -415,7 +415,7 @@ export function DayBoard({
     }
     let summary: string;
     if (isMikeEditor) {
-      summary = "Overture Booking";
+      summary = "Overture";
     } else {
       try {
         summary = buildLaJobSummary(bookingLaNumber, bookingJobName);
@@ -1006,7 +1006,7 @@ export function DayBoard({
 
             <div className="month-booking-form">
               {isMikeEditor ? (
-                <p className="board-day-modal-event-meta">Overture Booking</p>
+                <p className="board-day-modal-event-meta">Overture</p>
               ) : (
                 <>
                   <label className="month-booking-label" htmlFor="week-booking-la-number">

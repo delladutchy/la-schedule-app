@@ -566,6 +566,7 @@ describe("buildMonthBoard", () => {
           summary: "LA#71760 BPM after game concert Camden Yards Baltimore",
           eventId: "evt_71760",
           description: "Call Time: 8:00 AM\nJob Notes: Bring radios",
+          ownerEditor: "dave",
           calendarId: "jobs",
           displayMode: "details",
         },
@@ -582,7 +583,35 @@ describe("buildMonthBoard", () => {
     expect(bar?.details[0]?.summary).toBe("LA#71760 BPM after game concert Camden Yards Baltimore");
     expect(bar?.details[0]?.eventId).toBe("evt_71760");
     expect(bar?.details[0]?.description).toBe("Call Time: 8:00 AM\nJob Notes: Bring radios");
+    expect(bar?.details[0]?.ownerEditor).toBe("dave");
     expect(bar?.details[0]?.calendarId).toBe("jobs");
+  });
+
+  it("preserves ownerEditor in month bar details for scoped editor actions", () => {
+    const snap = makeSnapshot({
+      busy: [{ startUtc: "2026-04-26T04:00:00.000Z", endUtc: "2026-04-27T04:00:00.000Z" }],
+      namedEvents: [
+        {
+          startUtc: "2026-04-26T04:00:00.000Z",
+          endUtc: "2026-04-27T04:00:00.000Z",
+          summary: "Overture",
+          eventId: "evt_overture_1",
+          ownerEditor: "mike",
+          calendarId: "overture@group.calendar.google.com",
+          displayMode: "details",
+        },
+      ],
+    });
+    const month = buildMonthBoard({
+      snapshot: snap,
+      month: "2026-04",
+      timezone: TZ,
+    });
+
+    const bar = month.weeks.flatMap((w) => w.bars).find((b) => b.details[0]?.eventId === "evt_overture_1");
+    expect(bar).toBeTruthy();
+    expect(bar?.details[0]?.ownerEditor).toBe("mike");
+    expect(bar?.details[0]?.calendarId).toBe("overture@group.calendar.google.com");
   });
 
   it("flags current month and today correctly", () => {
