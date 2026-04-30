@@ -85,6 +85,7 @@ interface ActiveBookingPanel {
   mode: "create" | "edit";
   eventId?: string;
   date: string;
+  bookingMode: "la" | "overture";
 }
 
 function stripJobPrefix(summary: string, jobNumber?: string): string {
@@ -100,6 +101,16 @@ function stripJobPrefix(summary: string, jobNumber?: string): string {
 function normalizeEditorId(rawEditorId: string | null): string | null {
   const normalized = rawEditorId?.trim().toLowerCase();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function resolveBookingModeFromDetail(
+  detail: BookedLabel["details"][number],
+  isMikeEditor: boolean,
+  overtureCalendarId?: string,
+): "la" | "overture" {
+  if (isMikeEditor) return "overture";
+  if (overtureCalendarId && detail.calendarId === overtureCalendarId) return "overture";
+  return "la";
 }
 
 function canManageDetailForEditor(
@@ -240,6 +251,9 @@ export function DayBoard({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeletePending, setIsDeletePending] = useState(false);
   const stagedLoadingCopy = useStagedLoadingCopy(isBookingSavePending || isDeletePending);
+  const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
+  const isMikeEditor = normalizedEditorId === "mike";
+  const defaultBookingMode: "la" | "overture" = isMikeEditor ? "overture" : "la";
 
   useEffect(() => {
     if (!activeDetailPanel && !activeBookingPanel) return undefined;
@@ -347,7 +361,7 @@ export function DayBoard({
   const openBookingPanel = (date: string) => {
     const startMonthKey = DateTime.fromISO(date, { zone: "utc" }).toFormat("yyyy-LL");
     setActiveDetailPanel(null);
-    setActiveBookingPanel({ mode: "create", date });
+    setActiveBookingPanel({ mode: "create", date, bookingMode: defaultBookingMode });
     setBookingLaNumber("");
     setBookingJobName("");
     setBookingEndDate(date);
@@ -376,6 +390,7 @@ export function DayBoard({
       mode: "edit",
       eventId: detail.eventId,
       date: startDate,
+      bookingMode: resolveBookingModeFromDetail(detail, isMikeEditor, overtureCalendarId),
     });
     setBookingLaNumber(summary.jobNumber?.replace(/\D/g, "") ?? "");
     setBookingJobName(summary.jobName);
@@ -414,7 +429,7 @@ export function DayBoard({
       return;
     }
     let summary: string;
-    if (isMikeEditor) {
+    if (activeBookingPanel.bookingMode === "overture") {
       summary = "Overture";
     } else {
       try {
@@ -594,8 +609,7 @@ export function DayBoard({
   });
   const weekConnectorParts = buildWeekConnectorParts(weekRows.map((week) => week.connectorKeys));
   const editorModeActive = !!(editorToken || resolvedEditorId);
-  const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
-  const isMikeEditor = normalizedEditorId === "mike";
+  const isOvertureBookingMode = activeBookingPanel?.bookingMode === "overture";
   const bookingDateLabel = activeBookingPanel
     ? formatShortDate(activeBookingPanel.date)
     : null;
@@ -1005,7 +1019,7 @@ export function DayBoard({
             <p className="board-day-modal-event-date">{bookingDateLabel}</p>
 
             <div className="month-booking-form">
-              {isMikeEditor ? (
+              {isOvertureBookingMode ? (
                 <p className="board-day-modal-event-meta">Overture</p>
               ) : (
                 <>

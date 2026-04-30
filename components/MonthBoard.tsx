@@ -81,6 +81,7 @@ interface ActiveBookingPanel {
   mode: "create" | "edit";
   eventId?: string;
   date: string;
+  bookingMode: "la" | "overture";
 }
 
 export function monthBarGridStyle(startDayIndex: number, endDayIndex: number, laneIndex: number): {
@@ -151,6 +152,16 @@ function buildBookingCalendarDays(startIsoDate: string, monthKey: string): {
 function normalizeEditorId(rawEditorId: string | null): string | null {
   const normalized = rawEditorId?.trim().toLowerCase();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function resolveBookingModeFromDetail(
+  detail: BookedLabel["details"][number],
+  isMikeEditor: boolean,
+  overtureCalendarId?: string,
+): "la" | "overture" {
+  if (isMikeEditor) return "overture";
+  if (overtureCalendarId && detail.calendarId === overtureCalendarId) return "overture";
+  return "la";
 }
 
 function canManageDetailForEditor(
@@ -344,10 +355,11 @@ export function MonthBoard({
   const editorModeActive = !!(editorToken || resolvedEditorId);
   const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
   const isMikeEditor = normalizedEditorId === "mike";
+  const defaultBookingMode: "la" | "overture" = isMikeEditor ? "overture" : "la";
   const openBookingPanel = (date: string) => {
     const startMonthKey = DateTime.fromISO(date, { zone: "utc" }).toFormat("yyyy-LL");
     setActiveDetailPanel(null);
-    setActiveBookingPanel({ mode: "create", date });
+    setActiveBookingPanel({ mode: "create", date, bookingMode: defaultBookingMode });
     setBookingLaNumber("");
     setBookingJobName("");
     setBookingEndDate(date);
@@ -376,6 +388,7 @@ export function MonthBoard({
       mode: "edit",
       eventId: detail.eventId,
       date: startDate,
+      bookingMode: resolveBookingModeFromDetail(detail, isMikeEditor, overtureCalendarId),
     });
     setBookingLaNumber(summary.jobNumber?.replace(/\D/g, "") ?? "");
     setBookingJobName(summary.jobName);
@@ -414,7 +427,7 @@ export function MonthBoard({
       return;
     }
     let summary: string;
-    if (isMikeEditor) {
+    if (activeBookingPanel.bookingMode === "overture") {
       summary = "Overture";
     } else {
       try {
@@ -563,6 +576,7 @@ export function MonthBoard({
   const bookingDateLabel = activeBookingPanel
     ? formatShortDate(activeBookingPanel.date)
     : null;
+  const isOvertureBookingMode = activeBookingPanel?.bookingMode === "overture";
   const bookingStartDate = activeBookingPanel?.date ?? "";
   const bookingStartMonth = bookingStartDate
     ? DateTime.fromISO(bookingStartDate, { zone: "utc" }).startOf("month")
@@ -1063,7 +1077,7 @@ export function MonthBoard({
             <p className="board-day-modal-event-date">{bookingDateLabel}</p>
 
             <div className="month-booking-form">
-              {isMikeEditor ? (
+              {isOvertureBookingMode ? (
                 <p className="board-day-modal-event-meta">Overture</p>
               ) : (
                 <>
