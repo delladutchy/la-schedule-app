@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  EDITOR_SESSION_COOKIE_NAME,
+  buildEditorSessionCookieValue,
+} from "@/lib/editor-auth";
 
 const buildAndPersistSnapshot = vi.fn();
 const appendAuditEvent = vi.fn();
@@ -80,5 +84,62 @@ describe("/api/editor/sync auth", () => {
     } finally {
       infoSpy.mockRestore();
     }
+  });
+
+  it("accepts same-origin cookie session when bearer header is missing", async () => {
+    const POST = await loadPost();
+    buildAndPersistSnapshot.mockResolvedValue({
+      status: "ok",
+      snapshot: {
+        busy: [],
+        generatedAtUtc: "2026-04-28T00:00:00.000Z",
+      },
+    });
+    const cookie = buildEditorSessionCookieValue("jeff", {
+      EDITOR_TOKEN: "legacy-editor-token-0123456789",
+      EDITOR_TOKENS_JSON: JSON.stringify({
+        jeff: "jeff-editor-token-0123456789",
+        dave: "dave-editor-token-0123456789",
+        milos: "milos-editor-token-0123456789",
+      }),
+    });
+    const req = new Request("http://localhost/api/editor/sync", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost",
+        cookie: `${EDITOR_SESSION_COOKIE_NAME}=${cookie}`,
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(buildAndPersistSnapshot).toHaveBeenCalledTimes(1);
+    expect(appendAuditEvent).toHaveBeenCalledTimes(1);
+    const auditPayload = appendAuditEvent.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(auditPayload.editorId).toBe("jeff");
+  });
+
+  it("rejects cross-origin cookie session writes", async () => {
+    const POST = await loadPost();
+    const cookie = buildEditorSessionCookieValue("jeff", {
+      EDITOR_TOKEN: "legacy-editor-token-0123456789",
+      EDITOR_TOKENS_JSON: JSON.stringify({
+        jeff: "jeff-editor-token-0123456789",
+        dave: "dave-editor-token-0123456789",
+        milos: "milos-editor-token-0123456789",
+      }),
+    });
+    const req = new Request("http://localhost/api/editor/sync", {
+      method: "POST",
+      headers: {
+        origin: "http://evil.example.com",
+        cookie: `${EDITOR_SESSION_COOKIE_NAME}=${cookie}`,
+      },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "forbidden" });
+    expect(buildAndPersistSnapshot).not.toHaveBeenCalled();
+    expect(appendAuditEvent).not.toHaveBeenCalled();
   });
 });

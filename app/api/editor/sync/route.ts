@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { buildAndPersistSnapshot } from "@/lib/sync";
 import { getConfig } from "@/lib/config";
-import { authorizeEditorRequest } from "@/lib/editor-auth";
+import {
+  authorizeEditorRequest,
+  isSameOriginEditorMutation,
+} from "@/lib/editor-auth";
 import { appendAuditEvent } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +17,10 @@ export async function POST(req: Request) {
   if (!auth.ok) {
     console.info(`[editor:sync] unauthorized editor=${editorId}`);
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (auth.source === "cookie" && !isSameOriginEditorMutation(req)) {
+    console.info(`[editor:sync] forbidden_origin editor=${editorId}`);
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
   const started = Date.now();

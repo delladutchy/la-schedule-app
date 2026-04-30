@@ -15,6 +15,7 @@ import { MonthBoard } from "@/components/MonthBoard";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { EditorSyncButton } from "@/components/EditorSyncButton";
 import { EditorHistoryButton } from "@/components/EditorHistoryButton";
+import { EditorTokenBridge } from "@/components/EditorTokenBridge";
 import Link from "next/link";
 
 /**
@@ -289,6 +290,7 @@ export default async function AvailabilityPage({
 
   return (
     <div className={`page${viewMode === "month" ? " page--month" : ""}`}>
+      <EditorTokenBridge />
       <header className="header">
         <h1 className="title">
           <span>{titleMain}</span>

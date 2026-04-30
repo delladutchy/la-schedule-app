@@ -16,12 +16,25 @@ export function EditorTokenBridge() {
     if (!token) return;
 
     window.localStorage.setItem(EDITOR_TOKEN_SESSION_KEY, token);
-
-    const url = new URL(window.location.href);
-    if (!url.searchParams.has("editor")) return;
-    url.searchParams.delete("editor");
-    const next = `${url.pathname}${url.search}${url.hash}`;
-    window.history.replaceState(window.history.state, "", next);
+    void (async () => {
+      try {
+        await fetch("/api/editor/session", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          credentials: "same-origin",
+        });
+      } catch {
+        // Keep localStorage token fallback when session bootstrap is unavailable.
+      } finally {
+        const url = new URL(window.location.href);
+        if (!url.searchParams.has("editor")) return;
+        url.searchParams.delete("editor");
+        const next = `${url.pathname}${url.search}${url.hash}`;
+        window.history.replaceState(window.history.state, "", next);
+      }
+    })();
   }, [searchParams]);
 
   return null;

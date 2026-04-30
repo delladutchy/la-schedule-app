@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
-import { authorizeEditorRequest } from "@/lib/editor-auth";
+import {
+  authorizeEditorRequest,
+  isSameOriginEditorMutation,
+} from "@/lib/editor-auth";
 import { clearAuditEvents, readAuditEvents } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +31,9 @@ export async function DELETE(req: Request) {
   const auth = authorizeEditorRequest(req, env);
   if (!auth.ok) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (auth.source === "cookie" && !isSameOriginEditorMutation(req)) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   if (auth.editorId !== "jeff") {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });

@@ -16,6 +16,7 @@ interface SyncNotice {
 export function EditorSyncButton({ initialEditorToken }: Props) {
   const router = useRouter();
   const [editorToken, setEditorToken] = useState<string | null>(null);
+  const [isEditorSessionActive, setIsEditorSessionActive] = useState(false);
   const [isPending, setIsPending] = useState(false);
   const [notice, setNotice] = useState<SyncNotice | null>(null);
 
@@ -32,10 +33,46 @@ export function EditorSyncButton({ initialEditorToken }: Props) {
     if (resolved) {
       window.localStorage.setItem(EDITOR_TOKEN_SESSION_KEY, resolved);
       setEditorToken(resolved);
+      setIsEditorSessionActive(true);
     } else {
       setEditorToken(null);
+      setIsEditorSessionActive(false);
     }
   }, [initialEditorToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function probeSession() {
+      try {
+        const headers: Record<string, string> = {};
+        if (editorToken) {
+          headers.Authorization = `Bearer ${editorToken}`;
+        }
+        const response = await fetch("/api/editor/history?limit=1", {
+          headers,
+          credentials: "same-origin",
+        });
+        if (cancelled) return;
+        if (response.status === 401) {
+          if (editorToken) {
+            window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+            setEditorToken(null);
+          }
+          setIsEditorSessionActive(false);
+          return;
+        }
+        setIsEditorSessionActive(response.ok);
+      } catch {
+        if (!cancelled) {
+          setIsEditorSessionActive(!!editorToken);
+        }
+      }
+    }
+    void probeSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [editorToken]);
 
   useEffect(() => {
     if (!notice || notice.kind !== "ok") return undefined;
@@ -45,7 +82,7 @@ export function EditorSyncButton({ initialEditorToken }: Props) {
     return () => window.clearTimeout(timeoutId);
   }, [notice]);
 
-  if (!editorToken) return null;
+  if (!isEditorSessionActive) return null;
 
   return (
     <div className="editor-sync-control">
@@ -57,16 +94,20 @@ export function EditorSyncButton({ initialEditorToken }: Props) {
           setNotice(null);
           setIsPending(true);
           try {
+            const headers: Record<string, string> = {};
+            if (editorToken) {
+              headers.Authorization = `Bearer ${editorToken}`;
+            }
             const response = await fetch("/api/editor/sync", {
               method: "POST",
-              headers: {
-                Authorization: `Bearer ${editorToken}`,
-              },
+              headers,
+              credentials: "same-origin",
             });
 
             if (response.status === 401) {
               window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
               setEditorToken(null);
+              setIsEditorSessionActive(false);
               setNotice({ kind: "error", message: "Editor session expired." });
               return;
             }

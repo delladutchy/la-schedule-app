@@ -104,6 +104,21 @@ describe("/api/editor/history auth", () => {
     expect(clearAuditEvents).not.toHaveBeenCalled();
   });
 
+  it("rejects cross-origin cookie-auth DELETE", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff", source: "cookie" });
+    const { DELETE } = await loadRoutes();
+    const req = new Request("http://localhost/api/editor/history", {
+      method: "DELETE",
+      headers: {
+        origin: "http://evil.example.com",
+      },
+    });
+    const res = await DELETE(req);
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "forbidden" });
+    expect(clearAuditEvents).not.toHaveBeenCalled();
+  });
+
   it("accepts DELETE for jeff and clears events without google/sync calls", async () => {
     authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
     const { DELETE } = await loadRoutes();

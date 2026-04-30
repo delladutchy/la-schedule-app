@@ -241,23 +241,24 @@ export function DayBoard({
   }, [initialEditorToken]);
 
   useEffect(() => {
-    if (!editorToken) {
-      setResolvedEditorId(null);
-      return;
-    }
     let cancelled = false;
 
     async function loadEditorId() {
       try {
+        const headers: Record<string, string> = {};
+        if (editorToken) {
+          headers.Authorization = `Bearer ${editorToken}`;
+        }
         const response = await fetch("/api/editor/history?limit=1", {
-          headers: {
-            Authorization: `Bearer ${editorToken}`,
-          },
+          headers,
+          credentials: "same-origin",
         });
         if (cancelled) return;
         if (response.status === 401) {
-          window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
-          setEditorToken(null);
+          if (editorToken) {
+            window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+            setEditorToken(null);
+          }
           setResolvedEditorId(null);
           return;
         }
@@ -367,7 +368,7 @@ export function DayBoard({
 
   async function saveBooking() {
     if (!activeBookingPanel || isBookingSavePending) return;
-    if (!editorToken) {
+    if (!editorModeActive) {
       setBookingError("Editor token missing. Re-open the editor link.");
       return;
     }
@@ -412,12 +413,16 @@ export function DayBoard({
         setIsBookingSavePending(false);
         return;
       }
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (editorToken) {
+        headers.Authorization = `Bearer ${editorToken}`;
+      }
       const response = await fetch(endpoint, {
         method: activeBookingPanel.mode === "edit" ? "PATCH" : "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${editorToken}`,
-        },
+        headers,
+        credentials: "same-origin",
         body: JSON.stringify({
           summary,
           ...(description ? { description } : {}),
@@ -435,6 +440,7 @@ export function DayBoard({
       if (response.status === 401) {
         window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
         setEditorToken(null);
+        setResolvedEditorId(null);
         setBookingError("Editor session expired. Re-open the editor link.");
         return;
       }
@@ -457,16 +463,19 @@ export function DayBoard({
   }
 
   async function deleteActiveGig(eventId: string) {
-    if (!editorToken || isDeletePending) return;
+    if (!editorModeActive || isDeletePending) return;
 
     setDeleteError(null);
     setIsDeletePending(true);
     try {
+      const headers: Record<string, string> = {};
+      if (editorToken) {
+        headers.Authorization = `Bearer ${editorToken}`;
+      }
       const response = await fetch(`/api/gigs/${encodeURIComponent(eventId)}`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${editorToken}`,
-        },
+        headers,
+        credentials: "same-origin",
       });
 
       if (response.ok) {
@@ -479,6 +488,7 @@ export function DayBoard({
       if (response.status === 401) {
         window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
         setEditorToken(null);
+        setResolvedEditorId(null);
         setDeleteError("Editor session expired. Re-open the editor link.");
         return;
       }
@@ -536,7 +546,7 @@ export function DayBoard({
     };
   });
   const weekConnectorParts = buildWeekConnectorParts(weekRows.map((week) => week.connectorKeys));
-  const editorModeActive = !!editorToken;
+  const editorModeActive = !!(editorToken || resolvedEditorId);
   const bookingDateLabel = activeBookingPanel
     ? formatShortDate(activeBookingPanel.date)
     : null;

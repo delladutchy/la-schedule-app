@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  EDITOR_SESSION_COOKIE_NAME,
   authorizeEditorRequest,
+  buildEditorSessionCookieValue,
   canEditorModifyEventOwner,
+  isSameOriginEditorMutation,
   resolveEditorRole,
   resolveEditorIdFromAuthorizationHeader,
   resolveEditorTokenMap,
@@ -40,7 +43,72 @@ describe("editor token auth helper", () => {
       method: "POST",
       headers: { Authorization: "Bearer dave-editor-token-0123456789" },
     });
-    expect(authorizeEditorRequest(request, env)).toEqual({ ok: true, editorId: "dave" });
+    expect(authorizeEditorRequest(request, env)).toEqual({
+      ok: true,
+      editorId: "dave",
+      source: "bearer",
+    });
+  });
+
+  it("authorizes request via signed editor session cookie", () => {
+    const cookie = buildEditorSessionCookieValue("milos", env, Date.now());
+    const request = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: {
+        cookie: `${EDITOR_SESSION_COOKIE_NAME}=${cookie}`,
+      },
+    });
+    expect(authorizeEditorRequest(request, env)).toEqual({
+      ok: true,
+      editorId: "milos",
+      source: "cookie",
+    });
+  });
+
+  it("prefers bearer token over cookie session when both are present", () => {
+    const cookie = buildEditorSessionCookieValue("milos", env);
+    const request = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer dave-editor-token-0123456789",
+        cookie: `${EDITOR_SESSION_COOKIE_NAME}=${cookie}`,
+      },
+    });
+    expect(authorizeEditorRequest(request, env)).toEqual({
+      ok: true,
+      editorId: "dave",
+      source: "bearer",
+    });
+  });
+
+  it("rejects tampered editor session cookies", () => {
+    const cookie = buildEditorSessionCookieValue("milos", env);
+    const [payload] = cookie.split(".", 1);
+    const request = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: {
+        cookie: `${EDITOR_SESSION_COOKIE_NAME}=${payload}.invalid`,
+      },
+    });
+    expect(authorizeEditorRequest(request, env)).toEqual({ ok: false });
+  });
+
+  it("enforces same-origin checks for cookie-authenticated mutations", () => {
+    const sameOriginRequest = new Request("https://la-schedule-app.netlify.app/api/gigs/create", {
+      method: "POST",
+      headers: {
+        origin: "https://la-schedule-app.netlify.app",
+      },
+    });
+    expect(isSameOriginEditorMutation(sameOriginRequest)).toBe(true);
+
+    const crossOriginRequest = new Request("https://la-schedule-app.netlify.app/api/gigs/create", {
+      method: "POST",
+      headers: {
+        origin: "https://evil.example.com",
+      },
+    });
+    expect(isSameOriginEditorMutation(crossOriginRequest)).toBe(false);
   });
 
   it("throws on malformed EDITOR_TOKENS_JSON", () => {

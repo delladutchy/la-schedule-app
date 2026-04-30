@@ -55,6 +55,7 @@ function formatAuditRange(event: AuditEventItem): string | null {
 
 export function EditorHistoryButton({ initialEditorToken, buttonLabel = "Edit History" }: Props) {
   const [editorToken, setEditorToken] = useState<string | null>(null);
+  const [isEditorSessionActive, setIsEditorSessionActive] = useState(false);
   const [currentEditorId, setCurrentEditorId] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -72,23 +73,75 @@ export function EditorHistoryButton({ initialEditorToken, buttonLabel = "Edit Hi
     if (resolved) {
       window.localStorage.setItem(EDITOR_TOKEN_SESSION_KEY, resolved);
       setEditorToken(resolved);
+      setIsEditorSessionActive(true);
     } else {
       setEditorToken(null);
+      setIsEditorSessionActive(false);
     }
   }, [initialEditorToken]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function probeSession() {
+      try {
+        const headers: Record<string, string> = {};
+        if (editorToken) {
+          headers.Authorization = `Bearer ${editorToken}`;
+        }
+        const response = await fetch("/api/editor/history?limit=1", {
+          headers,
+          credentials: "same-origin",
+        });
+        if (cancelled) return;
+        if (response.status === 401) {
+          if (editorToken) {
+            window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+            setEditorToken(null);
+          }
+          setCurrentEditorId(null);
+          setIsEditorSessionActive(false);
+          return;
+        }
+        if (response.ok) {
+          setIsEditorSessionActive(true);
+          const payload = await response.json() as { editorId?: string };
+          const nextEditorId = typeof payload.editorId === "string" ? payload.editorId.trim() : "";
+          setCurrentEditorId(nextEditorId || null);
+          return;
+        }
+        setIsEditorSessionActive(false);
+      } catch {
+        if (!cancelled) {
+          setIsEditorSessionActive(!!editorToken);
+        }
+      }
+    }
+    void probeSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [editorToken]);
+
   async function loadHistory() {
-    if (!editorToken) return;
+    if (!isEditorSessionActive) return;
     setIsLoading(true);
     setError(null);
     try {
+      const headers: Record<string, string> = {};
+      if (editorToken) {
+        headers.Authorization = `Bearer ${editorToken}`;
+      }
       const response = await fetch("/api/editor/history?limit=100", {
-        headers: { Authorization: `Bearer ${editorToken}` },
+        headers,
+        credentials: "same-origin",
       });
       if (response.status === 401) {
-        window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
-        setEditorToken(null);
+        if (editorToken) {
+          window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+          setEditorToken(null);
+        }
         setCurrentEditorId(null);
+        setIsEditorSessionActive(false);
         setError("Editor session expired. Re-open the editor link.");
         setEvents([]);
         return;
@@ -110,18 +163,26 @@ export function EditorHistoryButton({ initialEditorToken, buttonLabel = "Edit Hi
   }
 
   async function clearHistory() {
-    if (!editorToken || isClearing) return;
+    if (!isEditorSessionActive || isClearing) return;
     setIsClearing(true);
     setError(null);
     try {
+      const headers: Record<string, string> = {};
+      if (editorToken) {
+        headers.Authorization = `Bearer ${editorToken}`;
+      }
       const response = await fetch("/api/editor/history", {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${editorToken}` },
+        headers,
+        credentials: "same-origin",
       });
       if (response.status === 401) {
-        window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
-        setEditorToken(null);
+        if (editorToken) {
+          window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
+          setEditorToken(null);
+        }
         setCurrentEditorId(null);
+        setIsEditorSessionActive(false);
         setError("Editor session expired. Re-open the editor link.");
         return;
       }
@@ -142,7 +203,7 @@ export function EditorHistoryButton({ initialEditorToken, buttonLabel = "Edit Hi
     }
   }
 
-  if (!editorToken) return null;
+  if (!isEditorSessionActive) return null;
 
   return (
     <>

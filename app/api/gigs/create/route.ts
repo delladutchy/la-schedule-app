@@ -9,7 +9,10 @@ import {
 } from "@/lib/gigs";
 import { buildAllDayGigEventId } from "@/lib/gig-ids";
 import { readCurrentSnapshot } from "@/lib/store";
-import { authorizeEditorRequest } from "@/lib/editor-auth";
+import {
+  authorizeEditorRequest,
+  isSameOriginEditorMutation,
+} from "@/lib/editor-auth";
 import { appendAuditEvent, buildGigAuditFields } from "@/lib/audit-log";
 import { sendCreateJobNotification } from "@/lib/notifications";
 
@@ -85,6 +88,10 @@ export async function POST(req: Request) {
   if (!auth.ok) {
     logCreateRouteTiming("unauthorized", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (auth.source === "cookie" && !isSameOriginEditorMutation(req)) {
+    logCreateRouteTiming("forbidden_origin", editorId, routeStartedAt, timings);
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
   let body: unknown;

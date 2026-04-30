@@ -12,6 +12,7 @@ import { readCurrentSnapshot } from "@/lib/store";
 import {
   authorizeEditorRequest,
   canEditorModifyEventOwner,
+  isSameOriginEditorMutation,
   resolveEditorRole,
 } from "@/lib/editor-auth";
 import { appendAuditEvent, buildGigAuditFields } from "@/lib/audit-log";
@@ -138,6 +139,10 @@ export async function PATCH(
   if (!auth.ok) {
     logGigRouteTiming("patch", "unauthorized", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (auth.source === "cookie" && !isSameOriginEditorMutation(req)) {
+    logGigRouteTiming("patch", "forbidden_origin", editorId, routeStartedAt, timings);
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
   const eventId = resolveEventId(context.params.eventId);
@@ -306,6 +311,10 @@ export async function DELETE(
   if (!auth.ok) {
     logGigRouteTiming("delete", "unauthorized", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (auth.source === "cookie" && !isSameOriginEditorMutation(req)) {
+    logGigRouteTiming("delete", "forbidden_origin", editorId, routeStartedAt, timings);
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
   const eventId = resolveEventId(context.params.eventId);
