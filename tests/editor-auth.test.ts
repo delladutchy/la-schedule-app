@@ -134,11 +134,12 @@ describe("editor token auth helper", () => {
     })).toThrowError("EDITOR_TOKENS_JSON");
   });
 
-  it("maps editor roles (Jeff/Dave full, Milos limited)", () => {
+  it("maps editor roles (Jeff/Dave full, Milos/Mike limited)", () => {
     expect(resolveEditorRole("jeff")).toBe("full");
     expect(resolveEditorRole("dave")).toBe("full");
     expect(resolveEditorRole("legacy")).toBe("full");
     expect(resolveEditorRole("milos")).toBe("limited");
+    expect(resolveEditorRole("mike")).toBe("limited");
   });
 
   it("enforces owner checks for limited editor only", () => {
@@ -147,5 +148,7 @@ describe("editor token auth helper", () => {
     expect(canEditorModifyEventOwner("milos", "milos")).toBe(true);
     expect(canEditorModifyEventOwner("milos", "dave")).toBe(false);
     expect(canEditorModifyEventOwner("milos", undefined)).toBe(false);
+    expect(canEditorModifyEventOwner("mike", "mike")).toBe(true);
+    expect(canEditorModifyEventOwner("mike", "dave")).toBe(false);
   });
 });

@@ -15,6 +15,11 @@ import {
 } from "@/lib/editor-auth";
 import { appendAuditEvent, buildGigAuditFields } from "@/lib/audit-log";
 import { sendCreateJobNotification } from "@/lib/notifications";
+import {
+  isMikeProfile,
+  resolveEditorProfile,
+  resolveProfileWriteCalendar,
+} from "@/lib/editor-profiles";
 
 export const dynamic = "force-dynamic";
 
@@ -94,6 +99,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
+  const editorProfile = resolveEditorProfile(editorId);
+  const writeCalendar = resolveProfileWriteCalendar(editorProfile, env);
+  if (!writeCalendar.ok) {
+    logCreateRouteTiming(writeCalendar.error, editorId, routeStartedAt, timings);
+    return NextResponse.json(
+      {
+        error: writeCalendar.error,
+        message: writeCalendar.message,
+      },
+      { status: 503 },
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();
@@ -110,6 +128,8 @@ export async function POST(req: Request) {
       { status: payload.status },
     );
   }
+
+  const summary = isMikeProfile(editorProfile) ? "Overture Booking" : payload.summary;
 
   // Pre-write check against the same snapshot model used by the app.
   const snapshotReadStartedAt = Date.now();
@@ -147,7 +167,7 @@ export async function POST(req: Request) {
   }
 
   const eventId = buildAllDayGigEventId(
-    env.GOOGLE_CALENDAR_ID,
+    writeCalendar.calendarId,
     payload.startDate,
     payload.endDateInclusive,
   );
@@ -156,13 +176,20 @@ export async function POST(req: Request) {
     clientId: env.GOOGLE_CLIENT_ID,
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     refreshToken: env.GOOGLE_REFRESH_TOKEN,
-    calendarId: env.GOOGLE_CALENDAR_ID,
+    calendarId: writeCalendar.calendarId,
     ownerEditor: editorId,
     ...(eventIdOverride ? { eventId: eventIdOverride } : {}),
-    summary: payload.summary,
+    summary,
     ...(payload.description ? { description: payload.description } : {}),
     startDate: payload.startDate,
     endDateExclusive: payload.endDateExclusive,
+  });
+
+  const auditFields = buildGigAuditFields({
+    summary,
+    startDate: payload.startDate,
+    endDate: payload.endDateInclusive,
+    description: payload.description,
   });
 
   try {
@@ -173,12 +200,6 @@ export async function POST(req: Request) {
     const postSyncStartedAt = Date.now();
     const postSync = await buildAndPersistSnapshot();
     timings.postSyncMs = Date.now() - postSyncStartedAt;
-    const auditFields = buildGigAuditFields({
-      summary: payload.summary,
-      startDate: payload.startDate,
-      endDate: payload.endDateInclusive,
-      description: payload.description,
-    });
 
     if (postSync.status === "ok") {
       let appendedAudit = false;
@@ -219,7 +240,7 @@ export async function POST(req: Request) {
         status: "ok",
         event: created,
         gig: {
-          summary: payload.summary,
+          summary,
           startDate: payload.startDate,
           endDate: payload.endDateInclusive,
         },
@@ -277,12 +298,6 @@ export async function POST(req: Request) {
         const retryPostSyncStartedAt = Date.now();
         const postSync = await buildAndPersistSnapshot();
         timings.retryPostSyncMs = Date.now() - retryPostSyncStartedAt;
-        const auditFields = buildGigAuditFields({
-          summary: payload.summary,
-          startDate: payload.startDate,
-          endDate: payload.endDateInclusive,
-          description: payload.description,
-        });
 
         if (postSync.status === "ok") {
           let appendedAudit = false;
@@ -322,7 +337,7 @@ export async function POST(req: Request) {
             status: "ok",
             event: created,
             gig: {
-              summary: payload.summary,
+              summary,
               startDate: payload.startDate,
               endDate: payload.endDateInclusive,
             },

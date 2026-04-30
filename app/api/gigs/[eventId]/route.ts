@@ -11,11 +11,15 @@ import type { Snapshot } from "@/lib/types";
 import { readCurrentSnapshot } from "@/lib/store";
 import {
   authorizeEditorRequest,
-  canEditorModifyEventOwner,
   isSameOriginEditorMutation,
-  resolveEditorRole,
 } from "@/lib/editor-auth";
 import { appendAuditEvent, buildGigAuditFields } from "@/lib/audit-log";
+import {
+  canProfileManageEvent,
+  resolveEditorProfile,
+  type EditorProfile,
+  type ProfileCalendarEnv,
+} from "@/lib/editor-profiles";
 
 export const dynamic = "force-dynamic";
 
@@ -101,21 +105,59 @@ function normalizeOwnerEditor(ownerEditor: string | undefined): string | undefin
   return normalized;
 }
 
-function findOwnedEditorEvent(
+interface SnapshotEventLookup {
+  ownerEditor?: string;
+  summary?: string;
+  startUtc?: string;
+  endUtc?: string;
+  description?: string;
+  calendarId: string;
+}
+
+function buildSnapshotEventLookupEntries(
+  snapshot: Snapshot,
+  eventId: string,
+  env: ProfileCalendarEnv,
+): SnapshotEventLookup[] {
+  return (snapshot.namedEvents ?? [])
+    .filter((event) => event.eventId === eventId)
+    .map((event) => ({
+      ownerEditor: normalizeOwnerEditor(event.ownerEditor),
+      summary: event.summary,
+      startUtc: event.startUtc,
+      endUtc: event.endUtc,
+      description: event.description,
+      calendarId: event.calendarId?.trim() || env.GOOGLE_CALENDAR_ID,
+    }));
+}
+
+function resolveScopedSnapshotEvent(
   snapshot: Snapshot | null,
   eventId: string,
-  editorCalendarId: string,
-): { ownerEditor?: string; summary?: string; startUtc?: string; endUtc?: string; description?: string } | null {
-  if (!snapshot) return null;
-  const match = snapshot.namedEvents?.find((event) =>
-    event.eventId === eventId && event.calendarId === editorCalendarId);
-  if (!match) return null;
+  editorProfile: EditorProfile,
+  env: ProfileCalendarEnv,
+): { anyMatch: boolean; manageableMatch: SnapshotEventLookup | null } {
+  if (!snapshot) return { anyMatch: false, manageableMatch: null };
+
+  const entries = buildSnapshotEventLookupEntries(snapshot, eventId, env);
+  if (entries.length === 0) {
+    return { anyMatch: false, manageableMatch: null };
+  }
+
+  const manageableMatch = entries.find((entry) =>
+    canProfileManageEvent(
+      editorProfile,
+      {
+        calendarId: entry.calendarId,
+        ownerEditor: entry.ownerEditor,
+      },
+      env,
+    ),
+  ) ?? null;
+
   return {
-    ownerEditor: normalizeOwnerEditor(match.ownerEditor),
-    summary: match.summary,
-    startUtc: match.startUtc,
-    endUtc: match.endUtc,
-    description: match.description,
+    anyMatch: true,
+    manageableMatch,
   };
 }
 
@@ -144,6 +186,8 @@ export async function PATCH(
     logGigRouteTiming("patch", "forbidden_origin", editorId, routeStartedAt, timings);
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
+
+  const editorProfile = resolveEditorProfile(editorId);
 
   const eventId = resolveEventId(context.params.eventId);
   if (!eventId) {
@@ -188,12 +232,20 @@ export async function PATCH(
     validationSnapshot = preflight.snapshot;
   }
 
-  const editableEvent = findOwnedEditorEvent(validationSnapshot, eventId, env.GOOGLE_CALENDAR_ID);
-  const ownerEditor = editableEvent?.ownerEditor;
-  if (!canEditorModifyEventOwner(editorId, ownerEditor)) {
-    logGigRouteTiming("patch", "forbidden_owner", editorId, routeStartedAt, timings);
+  const scopedEvent = resolveScopedSnapshotEvent(validationSnapshot, eventId, editorProfile, env);
+  if (scopedEvent.anyMatch && !scopedEvent.manageableMatch) {
+    logGigRouteTiming("patch", "forbidden_owner_or_scope", editorId, routeStartedAt, timings);
     return forbiddenOwnerResponse();
   }
+
+  if (!scopedEvent.manageableMatch && editorProfile.scope !== "all") {
+    logGigRouteTiming("patch", "forbidden_missing_scoped_event", editorId, routeStartedAt, timings);
+    return forbiddenOwnerResponse();
+  }
+
+  const editableEvent = scopedEvent.manageableMatch;
+  const ownerEditor = editableEvent?.ownerEditor;
+  const editorCalendarId = editableEvent?.calendarId ?? env.GOOGLE_CALENDAR_ID;
 
   const isAvailable = isDateRangeAvailableForEditInSnapshot(
     validationSnapshot,
@@ -202,7 +254,7 @@ export async function PATCH(
     payload.endDateInclusive,
     {
       eventId,
-      editorCalendarId: env.GOOGLE_CALENDAR_ID,
+      editorCalendarId,
     },
   );
   if (!isAvailable) {
@@ -219,7 +271,7 @@ export async function PATCH(
       clientId: env.GOOGLE_CLIENT_ID,
       clientSecret: env.GOOGLE_CLIENT_SECRET,
       refreshToken: env.GOOGLE_REFRESH_TOKEN,
-      calendarId: env.GOOGLE_CALENDAR_ID,
+      calendarId: editorCalendarId,
       eventId,
       summary: payload.summary,
       ...(payload.description ? { description: payload.description } : {}),
@@ -317,6 +369,8 @@ export async function DELETE(
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
+  const editorProfile = resolveEditorProfile(editorId);
+
   const eventId = resolveEventId(context.params.eventId);
   if (!eventId) {
     logGigRouteTiming("delete", "invalid_event_id", editorId, routeStartedAt, timings);
@@ -326,7 +380,7 @@ export async function DELETE(
   const snapshotReadStartedAt = Date.now();
   let deleteAuditSource = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
   timings.snapshotReadMs = Date.now() - snapshotReadStartedAt;
-  if (!deleteAuditSource && resolveEditorRole(editorId) === "limited") {
+  if (!deleteAuditSource) {
     const preflightStartedAt = Date.now();
     const preflight = await buildAndPersistSnapshot();
     timings.preflightSyncMs = Date.now() - preflightStartedAt;
@@ -343,11 +397,19 @@ export async function DELETE(
     deleteAuditSource = preflight.snapshot;
   }
 
-  const deleteAuditEvent = findOwnedEditorEvent(deleteAuditSource, eventId, env.GOOGLE_CALENDAR_ID);
-  if (!canEditorModifyEventOwner(editorId, deleteAuditEvent?.ownerEditor)) {
-    logGigRouteTiming("delete", "forbidden_owner", editorId, routeStartedAt, timings);
+  const scopedEvent = resolveScopedSnapshotEvent(deleteAuditSource, eventId, editorProfile, env);
+  if (scopedEvent.anyMatch && !scopedEvent.manageableMatch) {
+    logGigRouteTiming("delete", "forbidden_owner_or_scope", editorId, routeStartedAt, timings);
     return forbiddenOwnerResponse();
   }
+
+  if (!scopedEvent.manageableMatch && editorProfile.scope !== "all") {
+    logGigRouteTiming("delete", "forbidden_missing_scoped_event", editorId, routeStartedAt, timings);
+    return forbiddenOwnerResponse();
+  }
+
+  const deleteAuditEvent = scopedEvent.manageableMatch;
+  const editorCalendarId = deleteAuditEvent?.calendarId ?? env.GOOGLE_CALENDAR_ID;
 
   try {
     const googleWriteStartedAt = Date.now();
@@ -355,7 +417,7 @@ export async function DELETE(
       clientId: env.GOOGLE_CLIENT_ID,
       clientSecret: env.GOOGLE_CLIENT_SECRET,
       refreshToken: env.GOOGLE_REFRESH_TOKEN,
-      calendarId: env.GOOGLE_CALENDAR_ID,
+      calendarId: editorCalendarId,
       eventId,
     });
     timings.googleWriteMs = Date.now() - googleWriteStartedAt;

@@ -24,27 +24,31 @@ const snapshot = {
   },
 };
 
+const mockEnv = {
+  BLOBS_STORE_NAME: "availability-snapshots",
+  GOOGLE_CLIENT_ID: "client-id",
+  GOOGLE_CLIENT_SECRET: "client-secret",
+  GOOGLE_REFRESH_TOKEN: "refresh-token",
+  GOOGLE_CALENDAR_ID: "la-jobs@group.calendar.google.com",
+  OVERTURE_CALENDAR_ID: "overture@group.calendar.google.com",
+  EDITOR_TOKEN: "legacy-editor-token-0123456789",
+  EDITOR_TOKENS_JSON: JSON.stringify({
+    jeff: "jeff-editor-token-0123456789",
+    dave: "dave-editor-token-0123456789",
+    milos: "milos-editor-token-0123456789",
+    mike: "mike-editor-token-0123456789",
+  }),
+  RESEND_API_KEY: "resend-key",
+  NOTIFY_EMAIL_TO: "jeff@example.com",
+  NOTIFY_EMAIL_FROM: "la-schedule@example.com",
+};
+
 vi.mock("@/lib/config", () => ({
   getConfig: () => ({
     file: {
       timezone: "America/New_York",
     },
-    env: {
-      BLOBS_STORE_NAME: "availability-snapshots",
-      GOOGLE_CLIENT_ID: "client-id",
-      GOOGLE_CLIENT_SECRET: "client-secret",
-      GOOGLE_REFRESH_TOKEN: "refresh-token",
-      GOOGLE_CALENDAR_ID: "la-jobs@group.calendar.google.com",
-      EDITOR_TOKEN: "legacy-editor-token-0123456789",
-      EDITOR_TOKENS_JSON: JSON.stringify({
-        jeff: "jeff-editor-token-0123456789",
-        dave: "dave-editor-token-0123456789",
-        milos: "milos-editor-token-0123456789",
-      }),
-      RESEND_API_KEY: "resend-key",
-      NOTIFY_EMAIL_TO: "jeff@example.com",
-      NOTIFY_EMAIL_FROM: "la-schedule@example.com",
-    },
+    env: mockEnv,
   }),
 }));
 
@@ -94,6 +98,7 @@ describe("/api/gigs/create audit logging", () => {
     appendAuditEvent.mockReset();
     authorizeEditorRequest.mockReset();
     sendCreateJobNotification.mockReset();
+    mockEnv.OVERTURE_CALENDAR_ID = "overture@group.calendar.google.com";
   });
 
   it("appends audit event after successful create", async () => {
@@ -154,6 +159,57 @@ describe("/api/gigs/create audit logging", () => {
         ownerEditor: "milos",
       }),
     );
+  });
+
+  it("routes Mike create to Overture calendar with neutral summary", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "mike" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    createAllDayEvent.mockResolvedValue({ id: "evt-mike", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "Ignored by server",
+        startDate: "2026-05-12",
+        endDate: "2026-05-12",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(createAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: "overture@group.calendar.google.com",
+        ownerEditor: "mike",
+        summary: "Overture Booking",
+      }),
+    );
+  });
+
+  it("fails Mike create safely when Overture calendar is not configured", async () => {
+    mockEnv.OVERTURE_CALENDAR_ID = "";
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "mike" });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "Ignored by server",
+        date: "2026-05-12",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({
+      error: "overture_calendar_not_configured",
+      message: "Overture calendar is not configured.",
+    });
+    expect(createAllDayEvent).not.toHaveBeenCalled();
   });
 
   it("does not append audit when unauthorized", async () => {

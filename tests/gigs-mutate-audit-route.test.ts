@@ -34,24 +34,28 @@ const snapshot = {
   },
 };
 
+const mockEnv = {
+  BLOBS_STORE_NAME: "availability-snapshots",
+  GOOGLE_CLIENT_ID: "client-id",
+  GOOGLE_CLIENT_SECRET: "client-secret",
+  GOOGLE_REFRESH_TOKEN: "refresh-token",
+  GOOGLE_CALENDAR_ID: "la-jobs@group.calendar.google.com",
+  OVERTURE_CALENDAR_ID: "overture@group.calendar.google.com",
+  EDITOR_TOKEN: "legacy-editor-token-0123456789",
+  EDITOR_TOKENS_JSON: JSON.stringify({
+    jeff: "jeff-editor-token-0123456789",
+    dave: "dave-editor-token-0123456789",
+    milos: "milos-editor-token-0123456789",
+    mike: "mike-editor-token-0123456789",
+  }),
+};
+
 vi.mock("@/lib/config", () => ({
   getConfig: () => ({
     file: {
       timezone: "America/New_York",
     },
-    env: {
-      BLOBS_STORE_NAME: "availability-snapshots",
-      GOOGLE_CLIENT_ID: "client-id",
-      GOOGLE_CLIENT_SECRET: "client-secret",
-      GOOGLE_REFRESH_TOKEN: "refresh-token",
-      GOOGLE_CALENDAR_ID: "la-jobs@group.calendar.google.com",
-      EDITOR_TOKEN: "legacy-editor-token-0123456789",
-      EDITOR_TOKENS_JSON: JSON.stringify({
-        jeff: "jeff-editor-token-0123456789",
-        dave: "dave-editor-token-0123456789",
-        milos: "milos-editor-token-0123456789",
-      }),
-    },
+    env: mockEnv,
   }),
 }));
 
@@ -97,11 +101,20 @@ describe("/api/gigs/[eventId] audit logging", () => {
     readCurrentSnapshot.mockReset();
     appendAuditEvent.mockReset();
     authorizeEditorRequest.mockReset();
+    mockEnv.OVERTURE_CALENDAR_ID = "overture@group.calendar.google.com";
   });
 
   it("appends audit event after successful edit", async () => {
     authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
-    readCurrentSnapshot.mockResolvedValue(snapshot);
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-edit",
+        ownerEditor: "dave",
+        calendarId: "la-jobs@group.calendar.google.com",
+      }],
+    });
     updateAllDayEvent.mockResolvedValue({ id: "evt-edit", status: "confirmed" });
     buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
     const { PATCH } = await loadRoutes();
@@ -281,6 +294,203 @@ describe("/api/gigs/[eventId] audit logging", () => {
     });
     expect(deleteCalendarEvent).not.toHaveBeenCalled();
     expect(appendAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("blocks Dave from editing Overture booking", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-overture-edit",
+        ownerEditor: "mike",
+        calendarId: "overture@group.calendar.google.com",
+      }],
+    });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-overture-edit", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "Overture Booking",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-overture-edit" } });
+    expect(res.status).toBe(403);
+    expect(updateAllDayEvent).not.toHaveBeenCalled();
+  });
+
+  it("blocks Dave from deleting Overture booking", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-overture-delete",
+        ownerEditor: "mike",
+        calendarId: "overture@group.calendar.google.com",
+      }],
+    });
+    const { DELETE } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-overture-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-overture-delete" } });
+    expect(res.status).toBe(403);
+    expect(deleteCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it("blocks Milos from deleting Overture booking", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-overture-delete",
+        ownerEditor: "mike",
+        calendarId: "overture@group.calendar.google.com",
+      }],
+    });
+    const { DELETE } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-overture-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-overture-delete" } });
+    expect(res.status).toBe(403);
+    expect(deleteCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it("allows Jeff to delete Overture booking", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-overture-delete",
+        ownerEditor: "mike",
+        calendarId: "overture@group.calendar.google.com",
+      }],
+    });
+    deleteCalendarEvent.mockResolvedValue({ id: "evt-overture-delete" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+    const { DELETE } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-overture-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-overture-delete" } });
+    expect(res.status).toBe(200);
+    expect(deleteCalendarEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: "overture@group.calendar.google.com",
+      }),
+    );
+  });
+
+  it("allows Mike to delete own Overture booking", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "mike" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-overture-own-delete",
+        ownerEditor: "mike",
+        calendarId: "overture@group.calendar.google.com",
+      }],
+    });
+    deleteCalendarEvent.mockResolvedValue({ id: "evt-overture-own-delete" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+    const { DELETE } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-overture-own-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-overture-own-delete" } });
+    expect(res.status).toBe(200);
+    expect(deleteCalendarEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: "overture@group.calendar.google.com",
+      }),
+    );
+  });
+
+  it("allows Mike to edit own Overture booking", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "mike" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-overture-own-edit",
+        ownerEditor: "mike",
+        calendarId: "overture@group.calendar.google.com",
+        startUtc: "2026-05-08T00:00:00.000Z",
+        endUtc: "2026-05-09T00:00:00.000Z",
+      }],
+    });
+    updateAllDayEvent.mockResolvedValue({ id: "evt-overture-own-edit", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-overture-own-edit", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "Overture Booking",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-overture-own-edit" } });
+    expect(res.status).toBe(200);
+    expect(updateAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: "overture@group.calendar.google.com",
+        ownerEditor: "mike",
+      }),
+    );
+  });
+
+  it("blocks Mike from editing LA booking", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "mike" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-la-edit",
+        ownerEditor: "mike",
+        calendarId: "la-jobs@group.calendar.google.com",
+      }],
+    });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-la-edit", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12346 — Updated Job",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-la-edit" } });
+    expect(res.status).toBe(403);
+    expect(updateAllDayEvent).not.toHaveBeenCalled();
+  });
+
+  it("blocks Mike from deleting LA booking", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "mike" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-la-delete",
+        ownerEditor: "mike",
+        calendarId: "la-jobs@group.calendar.google.com",
+      }],
+    });
+    const { DELETE } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-la-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-la-delete" } });
+    expect(res.status).toBe(403);
+    expect(deleteCalendarEvent).not.toHaveBeenCalled();
   });
 
   it("does not append audit on unauthorized delete", async () => {

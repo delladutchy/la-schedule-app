@@ -22,7 +22,7 @@ export type EditorAuthResult =
 export type EditorRole = "full" | "limited";
 
 export function resolveEditorRole(editorId: string): EditorRole {
-  return editorId === "milos" ? "limited" : "full";
+  return editorId === "milos" || editorId === "mike" ? "limited" : "full";
 }
 
 export function canEditorModifyEventOwner(

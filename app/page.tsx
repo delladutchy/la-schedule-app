@@ -358,6 +358,7 @@ export default async function AvailabilityPage({
             weeks={weekRows}
             initialEditorToken={initialEditorToken}
             editorCalendarId={env.GOOGLE_CALENDAR_ID}
+            overtureCalendarId={env.OVERTURE_CALENDAR_ID}
             prevHref={weekPrevHref}
             nextHref={weekNextHref}
             canGoPrev={weekCanGoPrev}
@@ -440,6 +441,7 @@ export default async function AvailabilityPage({
             todayKey={todayKey}
             initialEditorToken={initialEditorToken}
             editorCalendarId={env.GOOGLE_CALENDAR_ID}
+            overtureCalendarId={env.OVERTURE_CALENDAR_ID}
             prevHref={monthPrevHref}
             nextHref={monthNextHref}
             canGoPrev={monthCanGoPrev}

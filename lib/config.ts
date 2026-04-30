@@ -120,8 +120,11 @@ const EnvSchema = z.object({
    */
   EDITOR_TOKENS_JSON: z.string().optional(),
 
-  /** Calendar ID used for editor write-through gig creation. */
+  /** Calendar ID used for LA editor write-through gig creation. */
   GOOGLE_CALENDAR_ID: z.string().min(1, "GOOGLE_CALENDAR_ID is required"),
+
+  /** Optional Calendar ID used for Overture editor write-through gig creation. */
+  OVERTURE_CALENDAR_ID: z.string().min(1).optional(),
 
   /** Optional override for Netlify Blobs store name. */
   BLOBS_STORE_NAME: z.string().default("availability-snapshots"),

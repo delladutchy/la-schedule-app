@@ -17,6 +17,7 @@ interface Props {
   todayKey: string;
   initialEditorToken?: string;
   editorCalendarId?: string;
+  overtureCalendarId?: string;
   prevHref?: string;
   nextHref?: string;
   canGoPrev?: boolean;
@@ -147,16 +148,55 @@ function buildBookingCalendarDays(startIsoDate: string, monthKey: string): {
   };
 }
 
+function normalizeEditorId(rawEditorId: string | null): string | null {
+  const normalized = rawEditorId?.trim().toLowerCase();
+  return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function canManageDetailForEditor(
+  detail: BookedLabel["details"][number],
+  resolvedEditorId: string | null,
+  laCalendarId?: string,
+  overtureCalendarId?: string,
+): boolean {
+  if ((detail.displayMode ?? "details") !== "details") return false;
+  if (!detail.eventId) return false;
+
+  const editorId = normalizeEditorId(resolvedEditorId);
+  if (!editorId) return true;
+
+  const calendarId = detail.calendarId;
+  const ownerEditor = normalizeEditorId(detail.ownerEditor ?? null);
+
+  if (editorId === "jeff" || editorId === "legacy") return true;
+
+  if (editorId === "dave") {
+    return !!laCalendarId && calendarId === laCalendarId;
+  }
+
+  if (editorId === "milos") {
+    return !!laCalendarId
+      && calendarId === laCalendarId
+      && ownerEditor === editorId;
+  }
+
+  if (editorId === "mike") {
+    return !!overtureCalendarId
+      && calendarId === overtureCalendarId
+      && ownerEditor === editorId;
+  }
+
+  return true;
+}
+
 function findEditableDetail(
   details: BookedLabel["details"],
-  editorCalendarId?: string,
+  resolvedEditorId: string | null,
+  laCalendarId?: string,
+  overtureCalendarId?: string,
 ): BookedLabel["details"][number] | null {
-  return details.find((detail) => {
-    if ((detail.displayMode ?? "details") !== "details") return false;
-    if (!detail.eventId) return false;
-    if (editorCalendarId && detail.calendarId !== editorCalendarId) return false;
-    return true;
-  }) ?? null;
+  return details.find((detail) =>
+    canManageDetailForEditor(detail, resolvedEditorId, laCalendarId, overtureCalendarId)) ?? null;
 }
 
 /**
@@ -167,6 +207,7 @@ export function MonthBoard({
   todayKey,
   initialEditorToken,
   editorCalendarId,
+  overtureCalendarId,
   prevHref,
   nextHref,
   canGoPrev = false,
@@ -301,6 +342,8 @@ export function MonthBoard({
   };
 
   const editorModeActive = !!(editorToken || resolvedEditorId);
+  const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
+  const isMikeEditor = normalizedEditorId === "mike";
   const openBookingPanel = (date: string) => {
     const startMonthKey = DateTime.fromISO(date, { zone: "utc" }).toFormat("yyyy-LL");
     setActiveDetailPanel(null);
@@ -371,11 +414,15 @@ export function MonthBoard({
       return;
     }
     let summary: string;
-    try {
-      summary = buildLaJobSummary(bookingLaNumber, bookingJobName);
-    } catch (error) {
-      setBookingError(error instanceof Error ? error.message : "Invalid LA job details.");
-      return;
+    if (isMikeEditor) {
+      summary = "Overture Booking";
+    } else {
+      try {
+        summary = buildLaJobSummary(bookingLaNumber, bookingJobName);
+      } catch (error) {
+        setBookingError(error instanceof Error ? error.message : "Invalid LA job details.");
+        return;
+      }
     }
     const startDate = activeBookingPanel.date;
     const endDate = bookingEndDate.trim() || startDate;
@@ -547,7 +594,12 @@ export function MonthBoard({
     ? bookingViewMonth > bookingStartMonth
     : false;
   const activeEditableDetail = activeDetailPanel
-    ? findEditableDetail(activeDetailPanel.details, editorCalendarId)
+    ? findEditableDetail(
+        activeDetailPanel.details,
+        normalizedEditorId,
+        editorCalendarId,
+        overtureCalendarId,
+      )
     : null;
   const activeEditableSummary = activeEditableDetail
     ? parseLaJobSummary(activeEditableDetail.summary)
@@ -555,13 +607,8 @@ export function MonthBoard({
   const activeEditableDescription = activeEditableDetail
     ? parseGigDescription(activeEditableDetail.description)
     : null;
-  const activeOwnerEditor = activeEditableDetail?.ownerEditor?.trim().toLowerCase();
-  const limitedEditorActive = resolvedEditorId === "milos";
-  const limitedEditorBlocked = limitedEditorActive
-    && (!activeOwnerEditor || activeOwnerEditor !== resolvedEditorId);
   const canManageActiveDetail = editorModeActive
-    && !!activeEditableDetail
-    && !limitedEditorBlocked;
+    && !!activeEditableDetail;
   const showDeleteConfirm = !!confirmDeleteEventId
     && !!activeEditableDetail
     && confirmDeleteEventId === activeEditableDetail.eventId;
@@ -925,7 +972,7 @@ export function MonthBoard({
                   <div className="board-day-modal-confirm-delete">
                     <p className="board-day-modal-confirm-title">Delete this job?</p>
                     <p className="board-day-modal-confirm-copy">
-                      This removes it from LA Jobs calendar.
+                      This removes it from the calendar.
                     </p>
                     {deleteError ? (
                       <p className="month-booking-error" role="alert">{deleteError}</p>
@@ -1016,51 +1063,57 @@ export function MonthBoard({
             <p className="board-day-modal-event-date">{bookingDateLabel}</p>
 
             <div className="month-booking-form">
-              <label className="month-booking-label" htmlFor="booking-la-number">
-                LA #
-              </label>
-              <div className="month-booking-la-field">
-                <span className="month-booking-la-prefix" aria-hidden="true">LA#</span>
-                <input
-                  id="booking-la-number"
-                  name="job-number"
-                  className="month-booking-input month-booking-input--la"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  value={bookingLaNumber}
-                  onChange={(event) => {
-                    setBookingLaNumber(event.target.value.replace(/\D/g, ""));
-                    if (bookingError) setBookingError(null);
-                  }}
-                  placeholder="71411"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={12}
-                  autoFocus
-                  disabled={bookingModalIsLocked}
-                />
-              </div>
+              {isMikeEditor ? (
+                <p className="board-day-modal-event-meta">Overture Booking</p>
+              ) : (
+                <>
+                  <label className="month-booking-label" htmlFor="booking-la-number">
+                    LA #
+                  </label>
+                  <div className="month-booking-la-field">
+                    <span className="month-booking-la-prefix" aria-hidden="true">LA#</span>
+                    <input
+                      id="booking-la-number"
+                      name="job-number"
+                      className="month-booking-input month-booking-input--la"
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      value={bookingLaNumber}
+                      onChange={(event) => {
+                        setBookingLaNumber(event.target.value.replace(/\D/g, ""));
+                        if (bookingError) setBookingError(null);
+                      }}
+                      placeholder="71411"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={12}
+                      autoFocus
+                      disabled={bookingModalIsLocked}
+                    />
+                  </div>
 
-              <label className="month-booking-label" htmlFor="booking-job-title">
-                Job Title
-              </label>
-              <input
-                id="booking-job-title"
-                name="job-title"
-                className="month-booking-input"
-                autoComplete="off"
-                autoCapitalize="words"
-                value={bookingJobName}
-                onChange={(event) => {
-                  setBookingJobName(event.target.value);
-                  if (bookingError) setBookingError(null);
-                }}
-                placeholder="Wilmington Flower Market"
-                maxLength={200}
-                disabled={bookingModalIsLocked}
-              />
+                  <label className="month-booking-label" htmlFor="booking-job-title">
+                    Job Title
+                  </label>
+                  <input
+                    id="booking-job-title"
+                    name="job-title"
+                    className="month-booking-input"
+                    autoComplete="off"
+                    autoCapitalize="words"
+                    value={bookingJobName}
+                    onChange={(event) => {
+                      setBookingJobName(event.target.value);
+                      if (bookingError) setBookingError(null);
+                    }}
+                    placeholder="Wilmington Flower Market"
+                    maxLength={200}
+                    disabled={bookingModalIsLocked}
+                  />
+                </>
+              )}
 
               <p className="month-booking-label">Date Range</p>
               <div className="month-booking-end-date-control">
