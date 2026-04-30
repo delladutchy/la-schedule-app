@@ -493,9 +493,11 @@ export function MonthBoard({
 
       let message = "Could not delete job.";
       try {
-        const payload = await response.json() as { message?: string };
+        const payload = await response.json() as { message?: string; error?: string };
         if (payload.message?.trim()) {
           message = payload.message.trim();
+        } else if (payload.error?.trim()) {
+          message = `Could not delete job (${response.status} ${payload.error.trim()}).`;
         }
       } catch {
         // ignore parse issues and keep generic message

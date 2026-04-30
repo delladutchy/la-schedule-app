@@ -105,4 +105,89 @@ describe("/api/gigs/[eventId] auth", () => {
     expect(res.status).toBe(403);
     await expect(res.json()).resolves.toEqual({ error: "forbidden" });
   });
+
+  it("allows cookie-auth DELETE when Origin matches request origin", async () => {
+    const { DELETE } = await loadGigRoutes();
+    const cookie = buildEditorSessionCookieValue("dave", {
+      EDITOR_TOKEN: "legacy-editor-token-0123456789",
+      EDITOR_TOKENS_JSON: JSON.stringify({
+        jeff: "jeff-editor-token-0123456789",
+        dave: "dave-editor-token-0123456789",
+        milos: "milos-editor-token-0123456789",
+      }),
+    });
+    const req = new Request("http://localhost/api/gigs/evt-delete", {
+      method: "DELETE",
+      headers: {
+        origin: "http://localhost",
+        cookie: `${EDITOR_SESSION_COOKIE_NAME}=${cookie}`,
+      },
+    });
+
+    const res = await DELETE(req, { params: { eventId: "" } });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid_event_id" });
+  });
+
+  it("allows cookie-auth DELETE with Sec-Fetch-Site same-origin when Origin/Referer are missing", async () => {
+    const { DELETE } = await loadGigRoutes();
+    const cookie = buildEditorSessionCookieValue("dave", {
+      EDITOR_TOKEN: "legacy-editor-token-0123456789",
+      EDITOR_TOKENS_JSON: JSON.stringify({
+        jeff: "jeff-editor-token-0123456789",
+        dave: "dave-editor-token-0123456789",
+        milos: "milos-editor-token-0123456789",
+      }),
+    });
+    const req = new Request("http://localhost/api/gigs/evt-delete", {
+      method: "DELETE",
+      headers: {
+        "sec-fetch-site": "same-origin",
+        cookie: `${EDITOR_SESSION_COOKIE_NAME}=${cookie}`,
+      },
+    });
+
+    const res = await DELETE(req, { params: { eventId: "" } });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid_event_id" });
+  });
+
+  it("rejects cookie-auth DELETE with Sec-Fetch-Site cross-site", async () => {
+    const { DELETE } = await loadGigRoutes();
+    const cookie = buildEditorSessionCookieValue("dave", {
+      EDITOR_TOKEN: "legacy-editor-token-0123456789",
+      EDITOR_TOKENS_JSON: JSON.stringify({
+        jeff: "jeff-editor-token-0123456789",
+        dave: "dave-editor-token-0123456789",
+        milos: "milos-editor-token-0123456789",
+      }),
+    });
+    const req = new Request("http://localhost/api/gigs/evt-delete", {
+      method: "DELETE",
+      headers: {
+        "sec-fetch-site": "cross-site",
+        cookie: `${EDITOR_SESSION_COOKIE_NAME}=${cookie}`,
+      },
+    });
+
+    const res = await DELETE(req, { params: { eventId: "evt-delete" } });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "forbidden" });
+  });
+
+  it("keeps bearer-auth DELETE behavior unchanged even with cross-site metadata", async () => {
+    const { DELETE } = await loadGigRoutes();
+    const req = new Request("http://localhost/api/gigs/evt-delete", {
+      method: "DELETE",
+      headers: {
+        Authorization: "Bearer dave-editor-token-0123456789",
+        origin: "http://evil.example.com",
+        "sec-fetch-site": "cross-site",
+      },
+    });
+
+    const res = await DELETE(req, { params: { eventId: "" } });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid_event_id" });
+  });
 });

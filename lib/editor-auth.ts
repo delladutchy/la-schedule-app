@@ -231,14 +231,30 @@ export function authorizeEditorRequest(
 export function isSameOriginEditorMutation(req: Request): boolean {
   const requestOrigin = new URL(req.url).origin;
   const originHeader = req.headers.get("origin")?.trim();
-  if (originHeader) {
-    return originHeader === requestOrigin;
-  }
-  const refererHeader = req.headers.get("referer")?.trim();
-  if (!refererHeader) return false;
-  try {
-    return new URL(refererHeader).origin === requestOrigin;
-  } catch {
+  if (originHeader && originHeader !== requestOrigin) {
     return false;
   }
+  const refererHeader = req.headers.get("referer")?.trim();
+  if (refererHeader) {
+    try {
+      if (new URL(refererHeader).origin !== requestOrigin) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  // Primary trust path: explicit origin/referrer validation.
+  if (originHeader || refererHeader) {
+    return true;
+  }
+
+  // Safari/Home Screen fetches can omit Origin/Referer for same-origin requests.
+  // Fall back to Fetch Metadata when available.
+  const fetchSite = req.headers.get("sec-fetch-site")?.trim().toLowerCase();
+  if (!fetchSite) return false;
+  if (fetchSite === "cross-site") return false;
+  if (fetchSite === "same-origin" || fetchSite === "same-site") return true;
+  return false;
 }

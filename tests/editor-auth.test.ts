@@ -109,6 +109,22 @@ describe("editor token auth helper", () => {
       },
     });
     expect(isSameOriginEditorMutation(crossOriginRequest)).toBe(false);
+
+    const fetchMetadataSameOriginRequest = new Request("https://la-schedule-app.netlify.app/api/gigs/create", {
+      method: "POST",
+      headers: {
+        "sec-fetch-site": "same-origin",
+      },
+    });
+    expect(isSameOriginEditorMutation(fetchMetadataSameOriginRequest)).toBe(true);
+
+    const fetchMetadataCrossSiteRequest = new Request("https://la-schedule-app.netlify.app/api/gigs/create", {
+      method: "POST",
+      headers: {
+        "sec-fetch-site": "cross-site",
+      },
+    });
+    expect(isSameOriginEditorMutation(fetchMetadataCrossSiteRequest)).toBe(false);
   });
 
   it("throws on malformed EDITOR_TOKENS_JSON", () => {
