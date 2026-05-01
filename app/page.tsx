@@ -43,13 +43,9 @@ import { cookies } from "next/headers";
 export const dynamic = "force-dynamic";
 const TODAY_TIMEZONE = "America/New_York";
 const AUTO_BOOTSTRAP_BACKOFF_MS = 2 * 60 * 1000;
-const AUTO_REFRESH_BACKOFF_MS = 60 * 1000;
-const AUTO_REFRESH_MIN_AGE_MINUTES = 3;
 
 let autoBootstrapInFlight: Promise<void> | null = null;
 let autoBootstrapBlockedUntilMs = 0;
-let autoRefreshInFlight: Promise<void> | null = null;
-let autoRefreshBlockedUntilMs = 0;
 
 interface SearchParams {
   start?: string | string[]; // YYYY-MM-DD
@@ -122,43 +118,6 @@ async function autoBootstrapSnapshotIfNeeded(enabled: boolean): Promise<void> {
   await autoBootstrapInFlight;
 }
 
-async function autoRefreshSnapshotIfNeeded(enabled: boolean, reason: string): Promise<void> {
-  if (!enabled) return;
-  const now = Date.now();
-  if (now < autoRefreshBlockedUntilMs) return;
-
-  if (!autoRefreshInFlight) {
-    autoRefreshInFlight = (async () => {
-      const started = Date.now();
-      try {
-        const result = await buildAndPersistSnapshot();
-        const durationMs = Date.now() - started;
-        if (result.status === "ok") {
-          autoRefreshBlockedUntilMs = 0;
-          console.log(`[refresh] snapshot refreshed in ${durationMs}ms (${reason})`);
-          return;
-        }
-
-        autoRefreshBlockedUntilMs = Date.now() + AUTO_REFRESH_BACKOFF_MS;
-        console.error(
-          `[refresh] snapshot refresh failed in ${durationMs}ms (${reason}): ${result.error ?? "unknown error"}`,
-          result.erroredCalendarIds?.length
-            ? { erroredCalendarIds: result.erroredCalendarIds }
-            : undefined,
-        );
-      } catch (err) {
-        autoRefreshBlockedUntilMs = Date.now() + AUTO_REFRESH_BACKOFF_MS;
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[refresh] exception (${reason}): ${msg}`);
-      }
-    })().finally(() => {
-      autoRefreshInFlight = null;
-    });
-  }
-
-  await autoRefreshInFlight;
-}
-
 export default async function AvailabilityPage({
   searchParams = {},
 }: {
@@ -181,19 +140,6 @@ export default async function AvailabilityPage({
       freshTtlMinutes: file.freshTtlMinutes,
       hardTtlMinutes: file.hardTtlMinutes,
     });
-  }
-
-  const shouldAutoRefresh = !!state.snapshot && (
-    state.status === "stale"
-    || (state.ageMinutes ?? 0) >= AUTO_REFRESH_MIN_AGE_MINUTES
-  );
-  if (shouldAutoRefresh) {
-    void autoRefreshSnapshotIfNeeded(
-      true,
-      state.status === "stale"
-        ? "snapshot-stale"
-        : `${viewMode}-view-age-${Math.floor(state.ageMinutes ?? 0)}m`,
-    );
   }
 
   // Fail-closed render
