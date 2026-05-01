@@ -123,6 +123,17 @@ function isOvertureDetail(
   return matchesSummary || matchesCalendar;
 }
 
+function canViewDetailNotes(
+  detail: BookedLabel["details"][number],
+  resolvedEditorId: string | null,
+  overtureCalendarId?: string,
+): boolean {
+  const editorId = normalizeEditorId(resolvedEditorId);
+  if (editorId === "jeff" || editorId === "legacy") return true;
+  if (editorId === "mike") return isOvertureDetail(detail, overtureCalendarId);
+  return false;
+}
+
 function canManageDetailForEditor(
   detail: BookedLabel["details"][number],
   resolvedEditorId: string | null,
@@ -916,34 +927,48 @@ export function DayBoard({
 
             {activeDetailPanel.details.length > 0 ? (
               <ul className="board-day-modal-events">
-                {activeDetailPanel.details.map((detail, index) => (
-                  <li
-                    key={`${detail.summary}-${detail.dateRangeLabel ?? ""}-${detail.timeRangeLabel ?? ""}-${index}`}
-                  >
-                    {(() => {
-                      const detailTitle = stripJobPrefix(detail.summary, activeDetailPanel.headerJobNumber);
-                      const hideTitle = !activeDetailPanel.headerJobNumber
-                        && (
-                          detail.summary === "Unavailable"
-                          || (activeDetailPanel.details.length === 1
-                            && detail.summary === activeDetailPanel.header)
-                        );
+                {activeDetailPanel.details.map((detail, index) => {
+                  const detailTitle = stripJobPrefix(detail.summary, activeDetailPanel.headerJobNumber);
+                  const hideTitle = !activeDetailPanel.headerJobNumber
+                    && (
+                      detail.summary === "Unavailable"
+                      || (activeDetailPanel.details.length === 1
+                        && detail.summary === activeDetailPanel.header)
+                    );
+                  const detailParsedDescription = parseGigDescription(detail.description);
+                  const showDetailNotes = canViewDetailNotes(detail, normalizedEditorId, overtureCalendarId);
 
-                      return !hideTitle ? (
+                  return (
+                    <li
+                      key={`${detail.summary}-${detail.dateRangeLabel ?? ""}-${detail.timeRangeLabel ?? ""}-${index}`}
+                    >
+                      {!hideTitle ? (
                         <p className="board-day-modal-event-title">{detailTitle}</p>
-                      ) : null;
-                    })()}
-                    {detail.dateRangeLabel ? (
-                      <p className="board-day-modal-event-date">{detail.dateRangeLabel}</p>
-                    ) : null}
-                    {detail.timeRangeLabel ? (
-                      <p className="board-day-modal-event-meta">
-                        <span className="board-day-modal-event-label">Time</span>{" "}
-                        {detail.timeRangeLabel}
-                      </p>
-                    ) : null}
-                  </li>
-                ))}
+                      ) : null}
+                      {detail.dateRangeLabel ? (
+                        <p className="board-day-modal-event-date">{detail.dateRangeLabel}</p>
+                      ) : null}
+                      {detail.timeRangeLabel ? (
+                        <p className="board-day-modal-event-meta">
+                          <span className="board-day-modal-event-label">Time</span>{" "}
+                          {detail.timeRangeLabel}
+                        </p>
+                      ) : null}
+                      {showDetailNotes && detailParsedDescription.callTime ? (
+                        <p className="board-day-modal-event-meta">
+                          <span className="board-day-modal-event-label">Call</span>{" "}
+                          {detailParsedDescription.callTime}
+                        </p>
+                      ) : null}
+                      {showDetailNotes && detailParsedDescription.jobNotes ? (
+                        <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
+                          <span className="board-day-modal-event-label">Notes</span>{" "}
+                          {detailParsedDescription.jobNotes}
+                        </p>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <p className="board-day-modal-empty">No event details available.</p>

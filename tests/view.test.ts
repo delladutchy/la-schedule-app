@@ -203,6 +203,27 @@ describe("buildDayBoard — employer-facing day board", () => {
     expect(details?.[0]?.displayMode).toBe("details");
   });
 
+  it("preserves event descriptions in day detail rows", () => {
+    const snap = makeSnapshot({
+      busy: [{ startUtc: "2026-04-21T13:30:00.000Z", endUtc: "2026-04-21T17:15:00.000Z" }],
+      namedEvents: [
+        {
+          startUtc: "2026-04-21T13:30:00.000Z",
+          endUtc: "2026-04-21T17:15:00.000Z",
+          summary: "Overture",
+          description: "Call Time: 9:00 AM\nJob Notes: Bring wardrobe options",
+          calendarId: "overture@group.calendar.google.com",
+          displayMode: "details",
+        },
+      ],
+    });
+
+    const weeks = buildDayBoard({ ...defaultOpts, snapshot: snap });
+    const details = weeks[0]?.days[1]?.eventDetails;
+    expect(details?.[0]?.description).toBe("Call Time: 9:00 AM\nJob Notes: Bring wardrobe options");
+    expect(details?.[0]?.calendarId).toBe("overture@group.calendar.google.com");
+  });
+
   it("marks private-calendar days as private and hides private summaries", () => {
     const snap = makeSnapshot({
       busy: [{ startUtc: "2026-04-21T13:00:00.000Z", endUtc: "2026-04-21T17:00:00.000Z" }],

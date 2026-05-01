@@ -174,6 +174,18 @@ function isOvertureDetail(
   return matchesSummary || matchesCalendar;
 }
 
+function canViewDetailNotes(
+  detail: BookedLabel["details"][number],
+  resolvedEditorId: string | null,
+  overtureCalendarId?: string,
+): boolean {
+  const editorId = normalizeEditorId(resolvedEditorId);
+  if (editorId === "jeff" || editorId === "legacy") return true;
+  if (editorId === "mike") return isOvertureDetail(detail, overtureCalendarId);
+  if (!isOvertureDetail(detail, overtureCalendarId)) return true;
+  return false;
+}
+
 function canManageDetailForEditor(
   detail: BookedLabel["details"][number],
   resolvedEditorId: string | null,
@@ -971,6 +983,7 @@ export function MonthBoard({
                         && detail.summary === activeDetailPanel.header)
                     );
                   const detailParsedDescription = parseGigDescription(detail.description);
+                  const showDetailNotes = canViewDetailNotes(detail, normalizedEditorId, overtureCalendarId);
 
                   return (
                     <li
@@ -988,13 +1001,13 @@ export function MonthBoard({
                           {detail.timeRangeLabel}
                         </p>
                       ) : null}
-                      {detailParsedDescription.callTime ? (
+                      {showDetailNotes && detailParsedDescription.callTime ? (
                         <p className="board-day-modal-event-meta">
                           <span className="board-day-modal-event-label">Call</span>{" "}
                           {detailParsedDescription.callTime}
                         </p>
                       ) : null}
-                      {detailParsedDescription.jobNotes ? (
+                      {showDetailNotes && detailParsedDescription.jobNotes ? (
                         <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
                           <span className="board-day-modal-event-label">Notes</span>{" "}
                           {detailParsedDescription.jobNotes}
