@@ -808,9 +808,6 @@ export function MonthBoard({
       onTouchEnd={onTouchEnd}
       onTouchCancel={onTouchCancel}
     >
-      <div className="month-label-row">
-        <h2 className="month-label period-label-animate">{month.label}</h2>
-      </div>
       {isMikeEditor ? (
         <div className="weekend-visibility-row weekend-visibility-row--month">
           <label className="weekend-visibility-toggle">
@@ -819,10 +816,13 @@ export function MonthBoard({
               checked={showWeekends}
               onChange={(event) => setShowWeekends(event.target.checked)}
             />
-            <span>Show weekends</span>
+            <span>Weekends</span>
           </label>
         </div>
       ) : null}
+      <div className="month-label-row">
+        <h2 className="month-label period-label-animate">{month.label}</h2>
+      </div>
       {weekendToday ? (
         <div className="month-weekend-today" aria-label={`Today: ${weekendToday.date}`}>
           <span className="month-day-num month-day-num--today">{weekendToday.dayOfMonth}</span>

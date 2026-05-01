@@ -844,7 +844,7 @@ export function DayBoard({
               checked={showWeekends}
               onChange={(event) => setShowWeekends(event.target.checked)}
             />
-            <span>Show weekends</span>
+            <span>Weekends</span>
           </label>
         </div>
       ) : null}

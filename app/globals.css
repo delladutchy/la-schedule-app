@@ -615,21 +615,26 @@ body {
 
 .weekend-visibility-row {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  margin: 0 0 8px;
+  margin: 0 2px 6px;
 }
 
 .weekend-visibility-row--month {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
 }
 
 .weekend-visibility-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  color: var(--text-muted);
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+  color: var(--text-subtle);
+  padding: 2px 0;
   user-select: none;
+  touch-action: manipulation;
 }
 
 .weekend-visibility-toggle input[type="checkbox"] {
