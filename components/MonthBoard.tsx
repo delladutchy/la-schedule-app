@@ -24,6 +24,8 @@ interface Props {
   canGoPrev?: boolean;
   canGoNext?: boolean;
   showWeekends?: boolean;
+  onNavigate?: (href: string) => void;
+  onMutationSuccess?: () => void;
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -301,6 +303,8 @@ export function MonthBoard({
   canGoPrev = false,
   canGoNext = false,
   showWeekends = true,
+  onNavigate,
+  onMutationSuccess,
 }: Props) {
   const router = useRouter();
   const swipeRef = useRef<{
@@ -529,6 +533,7 @@ export function MonthBoard({
 
       if (response.ok) {
         closeBookingPanel();
+        onMutationSuccess?.();
         router.refresh();
         return;
       }
@@ -577,6 +582,7 @@ export function MonthBoard({
       if (response.ok) {
         setConfirmDeleteEventId(null);
         setActiveDetailPanel(null);
+        onMutationSuccess?.();
         router.refresh();
         return;
       }
@@ -740,11 +746,19 @@ export function MonthBoard({
     state.moved = true;
     state.tracking = false;
     if (dx < 0 && canGoNext && nextHref) {
-      router.push(nextHref);
+      if (onNavigate) {
+        onNavigate(nextHref);
+      } else {
+        router.push(nextHref);
+      }
       return;
     }
     if (dx > 0 && canGoPrev && prevHref) {
-      router.push(prevHref);
+      if (onNavigate) {
+        onNavigate(prevHref);
+      } else {
+        router.push(prevHref);
+      }
     }
   };
 

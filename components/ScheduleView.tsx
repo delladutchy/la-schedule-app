@@ -1,15 +1,80 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { MonthBoardData, WeekGroup } from "@/lib/view";
+import type { BoardWindowPayload } from "@/lib/board-window";
 import { DayBoard } from "@/components/DayBoard";
 import { MonthBoard } from "@/components/MonthBoard";
 import { sanitizeEditorToken } from "@/lib/editor-session";
 
 const MIKE_SHOW_WEEKENDS_STORAGE_KEY = "la_schedule_mike_show_weekends";
 const MIKE_SHOW_WEEKENDS_COOKIE_KEY = "la_schedule_mike_show_weekends";
+
+type BoardWindowCache = Record<string, BoardWindowPayload>;
+
+interface BoardWindowFetchParams {
+  viewMode: "list" | "month";
+  start?: string;
+  month?: string;
+  signal?: AbortSignal;
+  editorToken?: string | null;
+}
+
+function buildBoardWindowCacheKey(payload: BoardWindowPayload): string {
+  return `${payload.selected.view}:${payload.selected.weekStart}:${payload.selected.monthKey}`;
+}
+
+function isBoardWindowPayload(value: unknown): value is BoardWindowPayload {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.status !== "ok") return false;
+  const selected = record.selected;
+  if (!selected || typeof selected !== "object") return false;
+  const selectedRecord = selected as Record<string, unknown>;
+  return typeof selectedRecord.weekStart === "string"
+    && typeof selectedRecord.monthKey === "string"
+    && (selectedRecord.view === "list" || selectedRecord.view === "month");
+}
+
+export async function fetchBoardWindowPayload({
+  viewMode,
+  start,
+  month,
+  signal,
+  editorToken,
+}: BoardWindowFetchParams): Promise<BoardWindowPayload | null> {
+  if (typeof window === "undefined") return null;
+
+  const url = new URL("/api/board/window", window.location.origin);
+  url.searchParams.set("view", viewMode);
+  if (start) {
+    url.searchParams.set("start", start);
+  }
+  if (month) {
+    url.searchParams.set("month", month);
+  }
+
+  const headers = new Headers({
+    accept: "application/json",
+  });
+  const normalizedToken = sanitizeEditorToken(editorToken ?? null);
+  if (normalizedToken) {
+    headers.set("authorization", `Bearer ${normalizedToken}`);
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers,
+    cache: "no-store",
+    credentials: "same-origin",
+    signal,
+  });
+  if (!response.ok) return null;
+  const payload = await response.json();
+  return isBoardWindowPayload(payload) ? payload : null;
+}
 
 function withEditorToken(href: string, editorToken: string | null): string {
   if (!editorToken) return href;
@@ -22,6 +87,42 @@ function withEditorToken(href: string, editorToken: string | null): string {
   } catch {
     return href;
   }
+}
+
+interface BoardNavigationTarget {
+  viewMode: "list" | "month";
+  weekStart: string;
+  monthKey: string;
+}
+
+function resolveTargetFromHref(
+  href: string,
+  fallback: BoardNavigationTarget,
+): BoardNavigationTarget | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const url = new URL(href, window.location.origin);
+    const viewParam = url.searchParams.get("view");
+    const viewMode: "list" | "month" = viewParam === "month" ? "month" : "list";
+    const startParam = url.searchParams.get("start");
+    const monthParam = url.searchParams.get("month");
+    const weekStart = /^\d{4}-\d{2}-\d{2}$/.test(startParam ?? "")
+      ? (startParam as string)
+      : fallback.weekStart;
+    const monthKey = /^\d{4}-\d{2}$/.test(monthParam ?? "")
+      ? (monthParam as string)
+      : fallback.monthKey;
+    return { viewMode, weekStart, monthKey };
+  } catch {
+    return null;
+  }
+}
+
+function isClientInterceptClick(event: MouseEvent<HTMLAnchorElement>): boolean {
+  if (event.defaultPrevented) return false;
+  if (event.button !== 0) return false;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+  return true;
 }
 
 interface Props {
@@ -45,6 +146,7 @@ interface Props {
   monthCanGoPrev: boolean;
   monthCanGoNext: boolean;
   initialShowWeekends: boolean;
+  initialBoardWindowPayload: BoardWindowPayload;
 }
 
 export function ScheduleView({
@@ -68,12 +170,17 @@ export function ScheduleView({
   monthCanGoPrev,
   monthCanGoNext,
   initialShowWeekends,
+  initialBoardWindowPayload,
 }: Props) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const navigationEditorToken = sanitizeEditorToken(searchParams.get("editor"));
   const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
   const isMikeEditor = normalizedEditorId === "mike";
   const [showWeekends, setShowWeekends] = useState(initialShowWeekends);
+  const [boardWindowCache, setBoardWindowCache] = useState<BoardWindowCache>(() => ({
+    [buildBoardWindowCacheKey(initialBoardWindowPayload)]: initialBoardWindowPayload,
+  }));
   const listToggleHref = withEditorToken(`/?view=list&start=${listToggleStart}`, navigationEditorToken);
   const monthToggleHref = withEditorToken(`/?view=month&month=${monthToggleKey}`, navigationEditorToken);
   const weekPrevNavHref = withEditorToken(weekPrevHref, navigationEditorToken);
@@ -107,6 +214,20 @@ export function ScheduleView({
     }
     document.cookie = `${MIKE_SHOW_WEEKENDS_COOKIE_KEY}=${nextValue}; path=/; max-age=31536000; samesite=lax`;
   }, [isMikeEditor, showWeekends]);
+
+  useEffect(() => {
+    const cacheKey = buildBoardWindowCacheKey(initialBoardWindowPayload);
+    setBoardWindowCache((prev) => (
+      prev[cacheKey] === initialBoardWindowPayload
+        ? prev
+        : { ...prev, [cacheKey]: initialBoardWindowPayload }
+    ));
+  }, [initialBoardWindowPayload]);
+
+  void boardWindowCache;
+  const handleBoardNavigate = useCallback((href: string) => {
+    router.push(href);
+  }, [router]);
 
   const renderWeekendToggle = (className?: string) => {
     if (!isMikeEditor) return null;
@@ -188,6 +309,7 @@ export function ScheduleView({
             canGoPrev={weekCanGoPrev}
             canGoNext={weekCanGoNext}
             showWeekends={showWeekends}
+            onNavigate={handleBoardNavigate}
           />
         </>
       ) : (
@@ -244,6 +366,7 @@ export function ScheduleView({
             canGoPrev={monthCanGoPrev}
             canGoNext={monthCanGoNext}
             showWeekends={showWeekends}
+            onNavigate={handleBoardNavigate}
           />
         </>
       )}
