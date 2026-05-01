@@ -101,26 +101,29 @@ export function ScheduleView({
 
   return (
     <>
-      {renderWeekendToggle("weekend-visibility-row--mobile-top")}
-
-      <nav className="view-toggle" aria-label="View mode">
-        <Link
-          className={`view-toggle-button${viewMode === "list" ? " active" : ""}`}
-          href={`/?view=list&start=${listToggleStart}`}
-          aria-label="Week view"
-          prefetch={false}
-        >
-          Week
-        </Link>
-        <Link
-          className={`view-toggle-button${viewMode === "month" ? " active" : ""}`}
-          href={`/?view=month&month=${monthToggleKey}`}
-          aria-label="Month view"
-          prefetch={false}
-        >
-          Month
-        </Link>
-      </nav>
+      <div className="view-controls-row">
+        <nav className="view-toggle" aria-label="View mode">
+          <Link
+            className={`view-toggle-button${viewMode === "list" ? " active" : ""}`}
+            href={`/?view=list&start=${listToggleStart}`}
+            aria-label="Week view"
+            prefetch={true}
+            scroll={false}
+          >
+            Week
+          </Link>
+          <Link
+            className={`view-toggle-button${viewMode === "month" ? " active" : ""}`}
+            href={`/?view=month&month=${monthToggleKey}`}
+            aria-label="Month view"
+            prefetch={true}
+            scroll={false}
+          >
+            Month
+          </Link>
+        </nav>
+        {renderWeekendToggle("weekend-visibility-row--view-controls")}
+      </div>
 
       {viewMode === "list" ? (
         <>
@@ -164,8 +167,8 @@ export function ScheduleView({
         </>
       ) : (
         <>
+          {renderWeekendToggle("weekend-visibility-row--month-landscape-top")}
           <div className="month-landscape-toolbar" aria-label="Month compact navigation">
-            {renderWeekendToggle("weekend-visibility-row--month-landscape")}
             <span className="month-landscape-label">{month.label}</span>
             <div className="month-landscape-nav">
               {monthCanGoPrev ? (

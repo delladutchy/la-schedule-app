@@ -216,13 +216,18 @@ function isLaDetail(
 function canViewDetailNotes(
   detail: BookedLabel["details"][number],
   resolvedEditorId: string | null,
+  laCalendarId?: string,
   overtureCalendarId?: string,
 ): boolean {
   const editorId = normalizeEditorId(resolvedEditorId);
+  if (!editorId) return false;
   if (editorId === "jeff" || editorId === "legacy") return true;
-  if (editorId === "mike") return isOvertureDetail(detail, overtureCalendarId);
-  if (!isOvertureDetail(detail, overtureCalendarId)) return true;
-  return false;
+  return canManageDetailForEditor(
+    detail,
+    editorId,
+    laCalendarId,
+    overtureCalendarId,
+  );
 }
 
 function canManageDetailForEditor(
@@ -991,6 +996,8 @@ export function MonthBoard({
                 <img
                   src="/brand/overture-logo.png"
                   alt="Overture"
+                  width={166}
+                  height={43}
                   className="board-day-modal-overture-logo board-day-modal-overture-logo--title"
                 />
               ) : activeDetailIsLa ? (
@@ -998,6 +1005,8 @@ export function MonthBoard({
                   <img
                     src="/brand/la-logo.png"
                     alt="LA"
+                    width={136}
+                    height={40}
                     className="board-day-modal-la-logo"
                   />
                   <span className="board-day-modal-title-text">{activeDetailPanel.header}</span>
@@ -1018,7 +1027,12 @@ export function MonthBoard({
                         && detail.summary === activeDetailPanel.header)
                     );
                   const detailParsedDescription = parseGigDescription(detail.description);
-                  const showDetailNotes = canViewDetailNotes(detail, normalizedEditorId, overtureCalendarId);
+                  const showDetailNotes = canViewDetailNotes(
+                    detail,
+                    normalizedEditorId,
+                    editorCalendarId,
+                    overtureCalendarId,
+                  );
 
                   return (
                     <li
@@ -1193,6 +1207,8 @@ export function MonthBoard({
                   <img
                     src="/brand/overture-logo.png"
                     alt="Overture"
+                    width={150}
+                    height={44}
                     className="board-day-modal-overture-logo board-day-modal-overture-logo--booking"
                   />
                 </p>
@@ -1205,6 +1221,8 @@ export function MonthBoard({
                     <img
                       src="/brand/la-logo.png"
                       alt="LA"
+                      width={132}
+                      height={40}
                       className="board-day-modal-la-logo board-day-modal-la-logo--booking"
                     />
                   </label>
