@@ -164,6 +164,16 @@ function resolveBookingModeFromDetail(
   return "la";
 }
 
+function isOvertureDetail(
+  detail: BookedLabel["details"][number],
+  overtureCalendarId?: string,
+): boolean {
+  const summary = detail.summary.trim().toLowerCase();
+  const matchesSummary = summary === "overture";
+  const matchesCalendar = !!overtureCalendarId && detail.calendarId === overtureCalendarId;
+  return matchesSummary || matchesCalendar;
+}
+
 function canManageDetailForEditor(
   detail: BookedLabel["details"][number],
   resolvedEditorId: string | null,
@@ -627,6 +637,10 @@ export function MonthBoard({
   const activeEditableDescription = activeEditableDetail
     ? parseGigDescription(activeEditableDetail.description)
     : null;
+  const activeDetailIsOverture = !!(
+    activeDetailPanel
+    && activeDetailPanel.details.some((detail) => isOvertureDetail(detail, overtureCalendarId))
+  );
   const canManageActiveDetail = editorModeActive
     && !!activeEditableDetail;
   const showDeleteConfirm = !!confirmDeleteEventId
@@ -935,7 +949,15 @@ export function MonthBoard({
             </button>
 
             <h3 id="month-job-detail-title" className="board-day-modal-title">
-              {activeDetailPanel.header}
+              {activeDetailIsOverture ? (
+                <img
+                  src="/brand/overture-logo.png"
+                  alt="Overture"
+                  className="board-day-modal-overture-logo board-day-modal-overture-logo--title"
+                />
+              ) : (
+                activeDetailPanel.header
+              )}
             </h3>
 
             {activeDetailPanel.details.length > 0 ? (
@@ -1119,7 +1141,13 @@ export function MonthBoard({
                 </div>
               ) : null}
               {isOvertureBookingMode ? (
-                <p className="board-day-modal-event-meta">Overture</p>
+                <p className="board-day-modal-event-meta board-day-modal-overture-brand">
+                  <img
+                    src="/brand/overture-logo.png"
+                    alt="Overture"
+                    className="board-day-modal-overture-logo"
+                  />
+                </p>
               ) : (
                 <>
                   <label className="month-booking-label" htmlFor="booking-la-number">

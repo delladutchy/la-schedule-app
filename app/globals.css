@@ -817,6 +817,25 @@ body {
   color: var(--text-muted);
 }
 
+.board-day-modal-overture-brand {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.board-day-modal-overture-logo {
+  display: block;
+  width: auto;
+  height: clamp(28px, 5vw, 32px);
+  max-width: min(146px, 100%);
+  object-fit: contain;
+}
+
+.board-day-modal-overture-logo--title {
+  height: clamp(30px, 5.2vw, 34px);
+  max-width: min(150px, 100%);
+}
+
 .board-day-modal-event-label {
   color: var(--text-subtle);
   text-transform: none;
