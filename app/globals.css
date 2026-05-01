@@ -511,6 +511,11 @@ body {
   touch-action: manipulation;
   transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
 }
+.view-toggle-button,
+.nav-button,
+.month-landscape-nav-button {
+  -webkit-tap-highlight-color: color-mix(in srgb, var(--today-accent) 26%, transparent);
+}
 .view-toggle-button:hover {
   color: var(--text);
   background: var(--bg);
@@ -573,6 +578,23 @@ body {
   cursor: default;
   pointer-events: none;
   opacity: 0.7;
+}
+
+@media (hover: none) {
+  .view-toggle-button:active {
+    background: color-mix(in srgb, var(--bg) 80%, var(--today-accent) 20%);
+    color: var(--text);
+  }
+
+  .nav-button:active:not(.is-disabled) {
+    background: color-mix(in srgb, var(--bg) 78%, var(--today-accent) 22%);
+    border-color: color-mix(in srgb, var(--today-accent) 42%, var(--border));
+  }
+
+  .month-landscape-nav-button:active:not(.is-disabled) {
+    background: color-mix(in srgb, var(--bg) 78%, var(--today-accent) 22%);
+    border-color: color-mix(in srgb, var(--today-accent) 42%, var(--border));
+  }
 }
 
 .month-landscape-toolbar {
@@ -1290,6 +1312,42 @@ body {
 .month-day-placeholder {
   margin-top: auto;
   height: 14px;
+}
+
+/* ---------- Route Loading ---------- */
+
+.route-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: var(--shadow-sm);
+}
+
+.route-loading-spinner {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--border-strong) 62%, transparent);
+  border-top-color: var(--today-accent);
+  animation: route-loading-spin 760ms linear infinite;
+}
+
+@keyframes route-loading-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-loading-spinner {
+    animation: none;
+  }
 }
 
 /* ---------- Fail-closed ---------- */
