@@ -10,13 +10,13 @@ import {
 } from "@/lib/view";
 import { todayInZone } from "@/lib/time";
 import { getConfig } from "@/lib/config";
-import { DayBoard } from "@/components/DayBoard";
-import { MonthBoard } from "@/components/MonthBoard";
+import { authorizeEditorRequest } from "@/lib/editor-auth";
+import { ScheduleView } from "@/components/ScheduleView";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { EditorSyncButton } from "@/components/EditorSyncButton";
 import { EditorHistoryButton } from "@/components/EditorHistoryButton";
 import { EditorTokenBridge } from "@/components/EditorTokenBridge";
-import Link from "next/link";
+import { cookies } from "next/headers";
 
 /**
  * The public availability page.
@@ -64,6 +64,25 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 
 function resolveViewMode(value: string | undefined): "list" | "month" {
   return value?.toLowerCase() === "month" ? "month" : "list";
+}
+
+function resolveInitialEditorId(
+  initialEditorToken: string | undefined,
+  env: ReturnType<typeof getConfig>["env"],
+): string | null {
+  const reqHeaders = new Headers();
+  const cookieHeader = cookies().toString();
+  if (cookieHeader) {
+    reqHeaders.set("cookie", cookieHeader);
+  }
+  if (initialEditorToken) {
+    reqHeaders.set("authorization", `Bearer ${initialEditorToken}`);
+  }
+  const request = new Request("https://la-schedule-app.local/editor-resolve", {
+    headers: reqHeaders,
+  });
+  const auth = authorizeEditorRequest(request, env);
+  return auth.ok ? auth.editorId : null;
 }
 
 async function autoBootstrapSnapshotIfNeeded(enabled: boolean): Promise<void> {
@@ -287,6 +306,11 @@ export default async function AvailabilityPage({
   const weekNextHref = `/?view=list&start=${weekNav.nextStart}`;
   const monthPrevHref = `/?view=month&month=${monthNav.prevMonth}`;
   const monthNextHref = `/?view=month&month=${monthNav.nextMonth}`;
+  const resolvedEditorId = resolveInitialEditorId(initialEditorToken, env);
+  const mikeShowWeekendsCookie = cookies().get("la_schedule_mike_show_weekends")?.value;
+  const initialShowWeekends = resolvedEditorId === "mike"
+    ? mikeShowWeekendsCookie === "1"
+    : true;
 
   return (
     <div className={`page${viewMode === "month" ? " page--month" : ""}`}>
@@ -309,146 +333,28 @@ export default async function AvailabilityPage({
         </div>
       </header>
 
-      <nav className="view-toggle" aria-label="View mode">
-        <Link
-          className={`view-toggle-button${viewMode === "list" ? " active" : ""}`}
-          href={`/?view=list&start=${listToggleStart}`}
-          aria-label="Week view"
-          prefetch={false}
-        >
-          Week
-        </Link>
-        <Link
-          className={`view-toggle-button${viewMode === "month" ? " active" : ""}`}
-          href={`/?view=month&month=${monthToggleKey}`}
-          aria-label="Month view"
-          prefetch={false}
-        >
-          Month
-        </Link>
-      </nav>
-
-      {viewMode === "list" ? (
-        <>
-          <nav className="nav" aria-label="Week navigation">
-            {weekCanGoPrev ? (
-              <Link className="nav-button" href={weekPrevHref} aria-label="Previous week" prefetch={true} scroll={false}>
-                ← Previous
-              </Link>
-            ) : (
-              <a className="nav-button is-disabled" aria-label="Previous week" aria-disabled tabIndex={-1}>
-                ← Previous
-              </a>
-            )}
-            <Link className="nav-button" href={`/?view=list&start=${todayKey}`} aria-label="Today" prefetch={true} scroll={false}>
-              Today
-            </Link>
-            {weekCanGoNext ? (
-              <Link className="nav-button" href={weekNextHref} aria-label="Next week" prefetch={true} scroll={false}>
-                Next →
-              </Link>
-            ) : (
-              <a className="nav-button is-disabled" aria-label="Next week" aria-disabled tabIndex={-1}>
-                Next →
-              </a>
-            )}
-          </nav>
-
-          <DayBoard
-            weeks={weekRows}
-            initialEditorToken={initialEditorToken}
-            editorCalendarId={env.GOOGLE_CALENDAR_ID}
-            overtureCalendarId={env.OVERTURE_CALENDAR_ID}
-            prevHref={weekPrevHref}
-            nextHref={weekNextHref}
-            canGoPrev={weekCanGoPrev}
-            canGoNext={weekCanGoNext}
-          />
-        </>
-      ) : (
-        <>
-          <div className="month-landscape-toolbar" aria-label="Month compact navigation">
-            <span className="month-landscape-label">{month.label}</span>
-            <div className="month-landscape-nav">
-              {monthCanGoPrev ? (
-                <Link
-                  className="month-landscape-nav-button"
-                  href={monthPrevHref}
-                  aria-label="Previous month"
-                  prefetch={true}
-                  scroll={false}
-                >
-                  ←
-                </Link>
-              ) : (
-                <span className="month-landscape-nav-button is-disabled" aria-hidden>
-                  ←
-                </span>
-              )}
-              <Link
-                className="month-landscape-nav-button"
-                href={`/?view=month&month=${todayMonthKey}`}
-                aria-label="Today"
-                prefetch={true}
-                scroll={false}
-              >
-                Today
-              </Link>
-              {monthNav.hasNext ? (
-                <Link
-                  className="month-landscape-nav-button"
-                  href={monthNextHref}
-                  aria-label="Next month"
-                  prefetch={true}
-                  scroll={false}
-                >
-                  →
-                </Link>
-              ) : (
-                <span className="month-landscape-nav-button is-disabled" aria-hidden>
-                  →
-                </span>
-              )}
-            </div>
-          </div>
-
-          <nav className="nav" aria-label="Month navigation">
-            {monthCanGoPrev ? (
-              <Link className="nav-button" href={monthPrevHref} aria-label="Previous month" prefetch={true} scroll={false}>
-                ← Previous
-              </Link>
-            ) : (
-              <a className="nav-button is-disabled" aria-label="Previous month" aria-disabled tabIndex={-1}>
-                ← Previous
-              </a>
-            )}
-            <Link className="nav-button" href={`/?view=month&month=${todayMonthKey}`} aria-label="Today" prefetch={true} scroll={false}>
-              Today
-            </Link>
-            {monthNav.hasNext ? (
-              <Link className="nav-button" href={monthNextHref} aria-label="Next month" prefetch={true} scroll={false}>
-                Next →
-              </Link>
-            ) : (
-              <a className="nav-button is-disabled" aria-label="Next month" aria-disabled tabIndex={-1}>
-                Next →
-              </a>
-            )}
-          </nav>
-
-          <MonthBoard
-            month={month}
-            todayKey={todayKey}
-            initialEditorToken={initialEditorToken}
-            editorCalendarId={env.GOOGLE_CALENDAR_ID}
-            overtureCalendarId={env.OVERTURE_CALENDAR_ID}
-            prevHref={monthPrevHref}
-            nextHref={monthNextHref}
-            canGoPrev={monthCanGoPrev}
-            canGoNext={monthNav.hasNext}
-          />
-        </>
-      )}
+      <ScheduleView
+        viewMode={viewMode}
+        listToggleStart={listToggleStart}
+        monthToggleKey={monthToggleKey}
+        initialEditorToken={initialEditorToken}
+        resolvedEditorId={resolvedEditorId}
+        editorCalendarId={env.GOOGLE_CALENDAR_ID}
+        overtureCalendarId={env.OVERTURE_CALENDAR_ID}
+        todayKey={todayKey}
+        todayMonthKey={todayMonthKey}
+        weekRows={weekRows}
+        weekPrevHref={weekPrevHref}
+        weekNextHref={weekNextHref}
+        weekCanGoPrev={weekCanGoPrev}
+        weekCanGoNext={weekCanGoNext}
+        month={month}
+        monthPrevHref={monthPrevHref}
+        monthNextHref={monthNextHref}
+        monthCanGoPrev={monthCanGoPrev}
+        monthCanGoNext={monthNav.hasNext}
+        initialShowWeekends={initialShowWeekends}
+      />
 
     </div>
   );

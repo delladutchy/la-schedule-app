@@ -22,15 +22,15 @@ interface Props {
   weeks: WeekGroup[];
   weekendTodayLabel?: string;
   initialEditorToken?: string;
+  initialResolvedEditorId?: string | null;
   editorCalendarId?: string;
   overtureCalendarId?: string;
   prevHref?: string;
   nextHref?: string;
   canGoPrev?: boolean;
   canGoNext?: boolean;
+  showWeekends?: boolean;
 }
-
-const MIKE_SHOW_WEEKENDS_STORAGE_KEY = "la_schedule_mike_show_weekends";
 
 const STAGED_LOADING_COPY: ReadonlyArray<{ delay: number; text: string }> = [
   { delay: 0, text: "Updating calendar…" },
@@ -260,12 +260,14 @@ export function DayBoard({
   weeks,
   weekendTodayLabel,
   initialEditorToken,
+  initialResolvedEditorId = null,
   editorCalendarId,
   overtureCalendarId,
   prevHref,
   nextHref,
   canGoPrev = false,
   canGoNext = false,
+  showWeekends = true,
 }: Props) {
   const router = useRouter();
   const swipeRef = useRef<{
@@ -281,7 +283,7 @@ export function DayBoard({
   });
   const [activeDetailPanel, setActiveDetailPanel] = useState<ActiveDetailPanel | null>(null);
   const [editorToken, setEditorToken] = useState<string | null>(null);
-  const [resolvedEditorId, setResolvedEditorId] = useState<string | null>(null);
+  const [resolvedEditorId, setResolvedEditorId] = useState<string | null>(initialResolvedEditorId);
   const [activeBookingPanel, setActiveBookingPanel] = useState<ActiveBookingPanel | null>(null);
   const [bookingLaNumber, setBookingLaNumber] = useState("");
   const [bookingJobName, setBookingJobName] = useState("");
@@ -296,7 +298,6 @@ export function DayBoard({
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeletePending, setIsDeletePending] = useState(false);
-  const [showWeekends, setShowWeekends] = useState(true);
   const stagedLoadingCopy = useStagedLoadingCopy(isBookingSavePending || isDeletePending);
   const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
   const isMikeEditor = normalizedEditorId === "mike";
@@ -333,7 +334,6 @@ export function DayBoard({
       setEditorToken(resolved);
     } else {
       setEditorToken(null);
-      setResolvedEditorId(null);
     }
 
     const url = new URL(window.location.href);
@@ -344,66 +344,8 @@ export function DayBoard({
   }, [initialEditorToken]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadEditorId() {
-      try {
-        const headers: Record<string, string> = {};
-        if (editorToken) {
-          headers.Authorization = `Bearer ${editorToken}`;
-        }
-        const response = await fetch("/api/editor/history?limit=1", {
-          headers,
-          credentials: "same-origin",
-        });
-        if (cancelled) return;
-        if (response.status === 401) {
-          if (editorToken) {
-            window.localStorage.removeItem(EDITOR_TOKEN_SESSION_KEY);
-            setEditorToken(null);
-          }
-          setResolvedEditorId(null);
-          return;
-        }
-        if (!response.ok) return;
-        const payload = await response.json() as { editorId?: string };
-        const nextEditorId = typeof payload.editorId === "string"
-          ? payload.editorId.trim().toLowerCase()
-          : null;
-        setResolvedEditorId(nextEditorId || null);
-      } catch {
-        // Keep existing editor id state on transient network issues.
-      }
-    }
-
-    void loadEditorId();
-    return () => {
-      cancelled = true;
-    };
-  }, [editorToken]);
-
-  useEffect(() => {
-    if (!isMikeEditor) {
-      setShowWeekends(true);
-      return;
-    }
-
-    try {
-      const raw = window.localStorage.getItem(MIKE_SHOW_WEEKENDS_STORAGE_KEY);
-      setShowWeekends(raw === "1");
-    } catch {
-      setShowWeekends(false);
-    }
-  }, [isMikeEditor]);
-
-  useEffect(() => {
-    if (!isMikeEditor) return;
-    try {
-      window.localStorage.setItem(MIKE_SHOW_WEEKENDS_STORAGE_KEY, showWeekends ? "1" : "0");
-    } catch {
-      // ignore persistence errors
-    }
-  }, [isMikeEditor, showWeekends]);
+    setResolvedEditorId(initialResolvedEditorId);
+  }, [initialResolvedEditorId]);
 
   const closeDetailPanel = () => {
     setActiveDetailPanel(null);
@@ -836,18 +778,6 @@ export function DayBoard({
       onTouchEnd={onTouchEnd}
       onTouchCancel={onTouchCancel}
     >
-      {isMikeEditor ? (
-        <div className="weekend-visibility-row">
-          <label className="weekend-visibility-toggle">
-            <input
-              type="checkbox"
-              checked={showWeekends}
-              onChange={(event) => setShowWeekends(event.target.checked)}
-            />
-            <span>Weekends</span>
-          </label>
-        </div>
-      ) : null}
       {weekendMarker}
       {weekRows.map((week, weekIndex) => (
         <section

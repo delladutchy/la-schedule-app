@@ -620,8 +620,14 @@ body {
   margin: 0 2px 6px;
 }
 
-.weekend-visibility-row--month {
-  margin: 0 0 4px;
+.weekend-visibility-row--nav {
+  margin: 0 0 0 auto;
+  flex: 0 0 auto;
+}
+
+.weekend-visibility-row--mobile-top,
+.weekend-visibility-row--month-landscape {
+  display: none;
 }
 
 .weekend-visibility-toggle {
@@ -635,6 +641,10 @@ body {
   padding: 2px 0;
   user-select: none;
   touch-action: manipulation;
+}
+
+.weekend-visibility-row--nav .weekend-visibility-toggle {
+  padding: 0;
 }
 
 .weekend-visibility-toggle input[type="checkbox"] {
@@ -1504,6 +1514,15 @@ body {
     transform: translateY(-50%);
     color: var(--text-subtle);
     opacity: 0.9;
+  }
+
+  .weekend-visibility-row--mobile-top {
+    display: flex;
+    margin: -8px 2px 8px;
+  }
+
+  .nav--with-weekends .weekend-visibility-row--nav {
+    display: none;
   }
 }
 
@@ -2394,6 +2413,25 @@ body {
     flex-wrap: nowrap;
   }
 
+  .weekend-visibility-row--mobile-top {
+    display: none;
+  }
+
+  .nav--with-weekends .weekend-visibility-row--nav {
+    display: flex;
+    order: -1;
+    margin: 0 6px 0 0;
+  }
+
+  .nav--with-weekends .weekend-visibility-row--nav .weekend-visibility-toggle {
+    font-size: 11px;
+  }
+
+  .nav--with-weekends .weekend-visibility-row--nav input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+  }
+
   .nav-button {
     padding: 5px 9px;
     font-size: 12px;
@@ -2538,7 +2576,7 @@ body {
   .page.page--month .month-landscape-toolbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: 8px;
     min-height: 28px;
     padding: 4px max(2px, env(safe-area-inset-right, 0px));
@@ -2547,6 +2585,21 @@ body {
     z-index: 5;
     background: var(--bg);
     margin-bottom: 5px;
+  }
+
+  .page.page--month .weekend-visibility-row--month-landscape {
+    display: flex;
+    margin: 0;
+    flex: 0 0 auto;
+  }
+
+  .page.page--month .weekend-visibility-row--month-landscape .weekend-visibility-toggle {
+    font-size: 11px;
+  }
+
+  .page.page--month .weekend-visibility-row--month-landscape input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
   }
 
   .page.page--month .month-landscape-label {
@@ -2558,6 +2611,8 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    margin-left: 2px;
+    margin-right: auto;
   }
 
   .page.page--month .month-landscape-nav {
