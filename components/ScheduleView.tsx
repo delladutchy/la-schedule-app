@@ -112,14 +112,14 @@ export function ScheduleView({
     if (!isMikeEditor) return null;
     return (
       <div className={className ? `weekend-visibility-row ${className}` : "weekend-visibility-row"}>
-        <label className="weekend-visibility-toggle">
-          <input
-            type="checkbox"
-            checked={showWeekends}
-            onChange={(event) => setShowWeekends(event.target.checked)}
-          />
-          <span>Weekends</span>
-        </label>
+        <button
+          type="button"
+          className={`weekend-visibility-toggle${showWeekends ? " is-active" : ""}`}
+          aria-pressed={showWeekends}
+          onClick={() => setShowWeekends((prev) => !prev)}
+        >
+          Weekends
+        </button>
       </div>
     );
   };

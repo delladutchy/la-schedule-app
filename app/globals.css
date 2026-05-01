@@ -661,27 +661,46 @@ body {
 }
 
 .weekend-visibility-toggle {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 62%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border-radius: 999px;
+  padding: 4px 10px;
+  min-height: 28px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  font: inherit;
+  font-weight: 520;
   font-size: 11.5px;
   line-height: 1.1;
   letter-spacing: 0.01em;
   color: var(--text-subtle);
-  padding: 2px 0;
   user-select: none;
+  cursor: pointer;
   touch-action: manipulation;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.12s ease;
 }
 
-.weekend-visibility-row--nav .weekend-visibility-toggle {
-  padding: 0;
+.weekend-visibility-toggle:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
 }
 
-.weekend-visibility-toggle input[type="checkbox"] {
-  margin: 0;
-  width: 15px;
-  height: 15px;
-  accent-color: var(--today-accent);
+.weekend-visibility-toggle:active {
+  transform: translateY(1px) scale(0.985);
+}
+
+.weekend-visibility-toggle:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 2px;
+}
+
+.weekend-visibility-toggle.is-active,
+.weekend-visibility-toggle[aria-pressed="true"] {
+  color: color-mix(in srgb, var(--text) 88%, var(--today-accent));
+  border-color: color-mix(in srgb, var(--today-accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--today-accent) 16%, var(--surface));
 }
 
 .board-days {
@@ -2653,11 +2672,6 @@ body {
 
   .page.page--month .weekend-visibility-row--month-landscape-top .weekend-visibility-toggle {
     font-size: 11px;
-  }
-
-  .page.page--month .weekend-visibility-row--month-landscape-top input[type="checkbox"] {
-    width: 14px;
-    height: 14px;
   }
 
   .page.page--month .month-landscape-label {
