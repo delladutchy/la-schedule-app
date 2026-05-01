@@ -11,6 +11,7 @@ import {
 import { todayInZone } from "@/lib/time";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
+import { buildSanitizedBoardWindowPayload } from "@/lib/board-window";
 import { ScheduleView } from "@/components/ScheduleView";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { EditorSyncButton } from "@/components/EditorSyncButton";
@@ -257,6 +258,23 @@ export default async function AvailabilityPage({
   const initialShowWeekends = resolvedEditorId === "mike"
     ? mikeShowWeekendsCookie === "1"
     : true;
+  const initialBoardWindowPayload = buildSanitizedBoardWindowPayload({
+    snapshot: snapshotData,
+    snapshotStatus: state.status,
+    file,
+    env,
+    query: {
+      viewMode,
+      requestedWeek,
+      requestedMonth,
+      weeksBefore: 0,
+      weeksAfter: 8,
+      monthsBefore: 0,
+      monthsAfter: 4,
+    },
+    resolvedEditorId,
+    nowMs: now,
+  });
 
   return (
     <div className={`page${viewMode === "month" ? " page--month" : ""}`}>
@@ -300,6 +318,7 @@ export default async function AvailabilityPage({
         monthCanGoPrev={monthCanGoPrev}
         monthCanGoNext={monthNav.hasNext}
         initialShowWeekends={initialShowWeekends}
+        initialBoardWindowPayload={initialBoardWindowPayload}
       />
 
     </div>
