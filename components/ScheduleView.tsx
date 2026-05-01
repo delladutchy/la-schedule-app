@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { MonthBoardData, WeekGroup } from "@/lib/view";
+import { DateTime } from "luxon";
+import { trimWeekRowsForScheduleList, type MonthBoardData, type WeekGroup } from "@/lib/view";
 import type { BoardWindowPayload } from "@/lib/board-window";
 import { DayBoard } from "@/components/DayBoard";
 import { MonthBoard } from "@/components/MonthBoard";
@@ -125,6 +126,114 @@ function isClientInterceptClick(event: MouseEvent<HTMLAnchorElement>): boolean {
   return true;
 }
 
+function pushStateHref(href: string): void {
+  if (typeof window === "undefined") return;
+  const nextUrl = new URL(href, window.location.origin);
+  const nextPath = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+  const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextPath !== currentPath) {
+    window.history.pushState(null, "", nextPath);
+  }
+}
+
+function deriveAdjacentWeekPayload(
+  source: BoardWindowPayload,
+  direction: -1 | 1,
+): BoardWindowPayload | null {
+  const weeks = source.weekWindow.weeks;
+  const currentIndex = weeks.findIndex((week) => week.weekOf === source.selected.weekStart);
+  if (currentIndex < 0) return null;
+  const targetIndex = currentIndex + direction;
+  const targetWeek = weeks[targetIndex];
+  if (!targetWeek) return null;
+
+  const currentWeekStart = DateTime.fromISO(source.todayKey, { zone: source.timezone })
+    .startOf("week")
+    .toFormat("yyyy-LL-dd");
+  const twoWeekSlice = [targetWeek, weeks[targetIndex + 1]].filter(Boolean) as WeekGroup[];
+  const trimmedWeekRows = trimWeekRowsForScheduleList({
+    weeks: twoWeekSlice,
+    selectedWeekStart: targetWeek.weekOf,
+    currentWeekStart,
+    todayKey: source.todayKey,
+  });
+  const prevStart = DateTime.fromISO(targetWeek.weekOf, { zone: source.timezone })
+    .minus({ weeks: 1 })
+    .toFormat("yyyy-LL-dd");
+  const nextStart = DateTime.fromISO(targetWeek.weekOf, { zone: source.timezone })
+    .plus({ weeks: 1 })
+    .toFormat("yyyy-LL-dd");
+  const hasNextInWindow = targetIndex < weeks.length - 1;
+  const canGoPrev = targetWeek.weekOf > currentWeekStart;
+  const canGoNext = hasNextInWindow || source.selected.weekNav.canGoNext;
+
+  return {
+    ...source,
+    selected: {
+      ...source.selected,
+      view: "list",
+      weekStart: targetWeek.weekOf,
+      weekNav: {
+        weekStart: targetWeek.weekOf,
+        prevStart,
+        nextStart,
+        hasPrev: canGoPrev,
+        hasNext: canGoNext,
+        canGoPrev,
+        canGoNext,
+      },
+    },
+    selectedBoards: {
+      ...source.selectedBoards,
+      weekRows: trimmedWeekRows,
+    },
+  };
+}
+
+function deriveAdjacentMonthPayload(
+  source: BoardWindowPayload,
+  direction: -1 | 1,
+): BoardWindowPayload | null {
+  const months = source.monthWindow.months;
+  const currentIndex = months.findIndex((entry) => entry.monthKey === source.selected.monthKey);
+  if (currentIndex < 0) return null;
+  const targetIndex = currentIndex + direction;
+  const targetMonth = months[targetIndex];
+  if (!targetMonth) return null;
+
+  const prevMonth = DateTime.fromFormat(targetMonth.monthKey, "yyyy-LL", { zone: source.timezone })
+    .minus({ months: 1 })
+    .toFormat("yyyy-LL");
+  const nextMonth = DateTime.fromFormat(targetMonth.monthKey, "yyyy-LL", { zone: source.timezone })
+    .plus({ months: 1 })
+    .toFormat("yyyy-LL");
+  const hasNextInWindow = targetIndex < months.length - 1;
+  const canGoPrev = targetMonth.monthKey > source.todayMonthKey;
+  const canGoNext = hasNextInWindow || source.selected.monthNav.canGoNext;
+
+  return {
+    ...source,
+    selected: {
+      ...source.selected,
+      view: "month",
+      monthKey: targetMonth.monthKey,
+      monthNav: {
+        monthKey: targetMonth.monthKey,
+        prevMonth,
+        nextMonth,
+        hasPrev: canGoPrev,
+        hasNext: canGoNext,
+        canGoPrev,
+        canGoNext,
+      },
+    },
+    selectedBoards: {
+      ...source.selectedBoards,
+      month: targetMonth,
+    },
+  };
+}
+
 interface Props {
   viewMode: "list" | "month";
   listToggleStart: string;
@@ -181,14 +290,7 @@ export function ScheduleView({
   const [boardWindowCache, setBoardWindowCache] = useState<BoardWindowCache>(() => ({
     [buildBoardWindowCacheKey(initialBoardWindowPayload)]: initialBoardWindowPayload,
   }));
-  const listToggleHref = withEditorToken(`/?view=list&start=${listToggleStart}`, navigationEditorToken);
-  const monthToggleHref = withEditorToken(`/?view=month&month=${monthToggleKey}`, navigationEditorToken);
-  const weekPrevNavHref = withEditorToken(weekPrevHref, navigationEditorToken);
-  const weekTodayHref = withEditorToken(`/?view=list&start=${todayKey}`, navigationEditorToken);
-  const weekNextNavHref = withEditorToken(weekNextHref, navigationEditorToken);
-  const monthPrevNavHref = withEditorToken(monthPrevHref, navigationEditorToken);
-  const monthTodayHref = withEditorToken(`/?view=month&month=${todayMonthKey}`, navigationEditorToken);
-  const monthNextNavHref = withEditorToken(monthNextHref, navigationEditorToken);
+  const [derivedPayload, setDerivedPayload] = useState<BoardWindowPayload | null>(null);
 
   useEffect(() => {
     if (!isMikeEditor) {
@@ -222,12 +324,92 @@ export function ScheduleView({
         ? prev
         : { ...prev, [cacheKey]: initialBoardWindowPayload }
     ));
+    setDerivedPayload(null);
   }, [initialBoardWindowPayload]);
 
-  void boardWindowCache;
+  const effectiveViewMode = derivedPayload?.selected.view ?? viewMode;
+  const effectiveWeekRows = derivedPayload?.selectedBoards.weekRows ?? weekRows;
+  const effectiveMonth = derivedPayload?.selectedBoards.month ?? month;
+  const effectiveWeekCanGoPrev = derivedPayload?.selected.weekNav.canGoPrev ?? weekCanGoPrev;
+  const effectiveWeekCanGoNext = derivedPayload?.selected.weekNav.canGoNext ?? weekCanGoNext;
+  const effectiveMonthCanGoPrev = derivedPayload?.selected.monthNav.canGoPrev ?? monthCanGoPrev;
+  const effectiveMonthCanGoNext = derivedPayload?.selected.monthNav.canGoNext ?? monthCanGoNext;
+  const effectiveListToggleStart = effectiveViewMode === "month"
+    ? `${effectiveMonth.monthKey}-01`
+    : (derivedPayload?.selected.weekStart ?? listToggleStart);
+  const effectiveMonthToggleKey = effectiveViewMode === "list"
+    ? (derivedPayload?.selected.weekStart.slice(0, 7) ?? monthToggleKey)
+    : (derivedPayload?.selected.monthKey ?? monthToggleKey);
+  const effectiveWeekPrevHref = derivedPayload
+    ? `/?view=list&start=${derivedPayload.selected.weekNav.prevStart}`
+    : weekPrevHref;
+  const effectiveWeekNextHref = derivedPayload
+    ? `/?view=list&start=${derivedPayload.selected.weekNav.nextStart}`
+    : weekNextHref;
+  const effectiveMonthPrevHref = derivedPayload
+    ? `/?view=month&month=${derivedPayload.selected.monthNav.prevMonth}`
+    : monthPrevHref;
+  const effectiveMonthNextHref = derivedPayload
+    ? `/?view=month&month=${derivedPayload.selected.monthNav.nextMonth}`
+    : monthNextHref;
+  const effectiveTodayKey = derivedPayload?.todayKey ?? todayKey;
+  const effectiveTodayMonthKey = derivedPayload?.todayMonthKey ?? todayMonthKey;
+  const listToggleHref = withEditorToken(`/?view=list&start=${effectiveListToggleStart}`, navigationEditorToken);
+  const monthToggleHref = withEditorToken(`/?view=month&month=${effectiveMonthToggleKey}`, navigationEditorToken);
+  const weekPrevNavHref = withEditorToken(effectiveWeekPrevHref, navigationEditorToken);
+  const weekTodayHref = withEditorToken(`/?view=list&start=${effectiveTodayKey}`, navigationEditorToken);
+  const weekNextNavHref = withEditorToken(effectiveWeekNextHref, navigationEditorToken);
+  const monthPrevNavHref = withEditorToken(effectiveMonthPrevHref, navigationEditorToken);
+  const monthTodayHref = withEditorToken(`/?view=month&month=${effectiveTodayMonthKey}`, navigationEditorToken);
+  const monthNextNavHref = withEditorToken(effectiveMonthNextHref, navigationEditorToken);
+
   const handleBoardNavigate = useCallback((href: string) => {
-    router.push(href);
-  }, [router]);
+    const sourcePayload = derivedPayload ?? initialBoardWindowPayload;
+    const cachedSource = boardWindowCache[buildBoardWindowCacheKey(sourcePayload)] ?? sourcePayload;
+    const target = resolveTargetFromHref(href, {
+      viewMode: sourcePayload.selected.view,
+      weekStart: sourcePayload.selected.weekStart,
+      monthKey: sourcePayload.selected.monthKey,
+    });
+    if (!target) {
+      router.push(href);
+      return;
+    }
+
+    let nextPayload: BoardWindowPayload | null = null;
+    if (sourcePayload.selected.view === "list" && target.viewMode === "list") {
+      if (target.weekStart === sourcePayload.selected.weekNav.nextStart) {
+        nextPayload = deriveAdjacentWeekPayload(cachedSource, 1);
+      } else if (target.weekStart === sourcePayload.selected.weekNav.prevStart) {
+        nextPayload = deriveAdjacentWeekPayload(cachedSource, -1);
+      }
+    } else if (sourcePayload.selected.view === "month" && target.viewMode === "month") {
+      if (target.monthKey === sourcePayload.selected.monthNav.nextMonth) {
+        nextPayload = deriveAdjacentMonthPayload(cachedSource, 1);
+      } else if (target.monthKey === sourcePayload.selected.monthNav.prevMonth) {
+        nextPayload = deriveAdjacentMonthPayload(cachedSource, -1);
+      }
+    }
+
+    if (!nextPayload) {
+      router.push(href);
+      return;
+    }
+
+    setBoardWindowCache((prev) => ({
+      ...prev,
+      [buildBoardWindowCacheKey(nextPayload)]: nextPayload,
+    }));
+    setDerivedPayload(nextPayload);
+    pushStateHref(href);
+  }, [boardWindowCache, derivedPayload, initialBoardWindowPayload, router]);
+
+  const navLinkClickHandler = useCallback((href: string) =>
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      if (!isClientInterceptClick(event)) return;
+      event.preventDefault();
+      handleBoardNavigate(href);
+    }, [handleBoardNavigate]);
 
   const renderWeekendToggle = (className?: string) => {
     if (!isMikeEditor) return null;
@@ -250,7 +432,7 @@ export function ScheduleView({
       <div className="view-controls-row">
         <nav className="view-toggle" aria-label="View mode">
           <Link
-            className={`view-toggle-button${viewMode === "list" ? " active" : ""}`}
+            className={`view-toggle-button${effectiveViewMode === "list" ? " active" : ""}`}
             href={listToggleHref}
             aria-label="Week view"
             prefetch={true}
@@ -259,7 +441,7 @@ export function ScheduleView({
             Week
           </Link>
           <Link
-            className={`view-toggle-button${viewMode === "month" ? " active" : ""}`}
+            className={`view-toggle-button${effectiveViewMode === "month" ? " active" : ""}`}
             href={monthToggleHref}
             aria-label="Month view"
             prefetch={true}
@@ -271,11 +453,18 @@ export function ScheduleView({
         {renderWeekendToggle("weekend-visibility-row--view-controls")}
       </div>
 
-      {viewMode === "list" ? (
+      {effectiveViewMode === "list" ? (
         <>
           <nav className="nav nav--with-weekends" aria-label="Week navigation">
-            {weekCanGoPrev ? (
-              <Link className="nav-button" href={weekPrevNavHref} aria-label="Previous week" prefetch={true} scroll={false}>
+            {effectiveWeekCanGoPrev ? (
+              <Link
+                className="nav-button"
+                href={weekPrevNavHref}
+                aria-label="Previous week"
+                prefetch={true}
+                scroll={false}
+                onClick={navLinkClickHandler(weekPrevNavHref)}
+              >
                 ← Previous
               </Link>
             ) : (
@@ -286,8 +475,15 @@ export function ScheduleView({
             <Link className="nav-button" href={weekTodayHref} aria-label="Today" prefetch={true} scroll={false}>
               Today
             </Link>
-            {weekCanGoNext ? (
-              <Link className="nav-button" href={weekNextNavHref} aria-label="Next week" prefetch={true} scroll={false}>
+            {effectiveWeekCanGoNext ? (
+              <Link
+                className="nav-button"
+                href={weekNextNavHref}
+                aria-label="Next week"
+                prefetch={true}
+                scroll={false}
+                onClick={navLinkClickHandler(weekNextNavHref)}
+              >
                 Next →
               </Link>
             ) : (
@@ -299,15 +495,15 @@ export function ScheduleView({
           </nav>
 
           <DayBoard
-            weeks={weekRows}
+            weeks={effectiveWeekRows}
             initialEditorToken={initialEditorToken}
             initialResolvedEditorId={resolvedEditorId}
             editorCalendarId={editorCalendarId}
             overtureCalendarId={overtureCalendarId}
             prevHref={weekPrevNavHref}
             nextHref={weekNextNavHref}
-            canGoPrev={weekCanGoPrev}
-            canGoNext={weekCanGoNext}
+            canGoPrev={effectiveWeekCanGoPrev}
+            canGoNext={effectiveWeekCanGoNext}
             showWeekends={showWeekends}
             onNavigate={handleBoardNavigate}
           />
@@ -315,7 +511,7 @@ export function ScheduleView({
       ) : (
         <>
           <div className="month-landscape-toolbar" aria-label="Month compact navigation">
-            <span className="month-landscape-label">{month.label}</span>
+            <span className="month-landscape-label">{effectiveMonth.label}</span>
             <div className="month-landscape-nav">
               <Link
                 className="month-landscape-nav-button"
@@ -330,8 +526,15 @@ export function ScheduleView({
           </div>
 
           <nav className="nav nav--with-weekends" aria-label="Month navigation">
-            {monthCanGoPrev ? (
-              <Link className="nav-button" href={monthPrevNavHref} aria-label="Previous month" prefetch={true} scroll={false}>
+            {effectiveMonthCanGoPrev ? (
+              <Link
+                className="nav-button"
+                href={monthPrevNavHref}
+                aria-label="Previous month"
+                prefetch={true}
+                scroll={false}
+                onClick={navLinkClickHandler(monthPrevNavHref)}
+              >
                 ← Previous
               </Link>
             ) : (
@@ -342,8 +545,15 @@ export function ScheduleView({
             <Link className="nav-button" href={monthTodayHref} aria-label="Today" prefetch={true} scroll={false}>
               Today
             </Link>
-            {monthCanGoNext ? (
-              <Link className="nav-button" href={monthNextNavHref} aria-label="Next month" prefetch={true} scroll={false}>
+            {effectiveMonthCanGoNext ? (
+              <Link
+                className="nav-button"
+                href={monthNextNavHref}
+                aria-label="Next month"
+                prefetch={true}
+                scroll={false}
+                onClick={navLinkClickHandler(monthNextNavHref)}
+              >
                 Next →
               </Link>
             ) : (
@@ -355,16 +565,16 @@ export function ScheduleView({
           </nav>
 
           <MonthBoard
-            month={month}
-            todayKey={todayKey}
+            month={effectiveMonth}
+            todayKey={effectiveTodayKey}
             initialEditorToken={initialEditorToken}
             initialResolvedEditorId={resolvedEditorId}
             editorCalendarId={editorCalendarId}
             overtureCalendarId={overtureCalendarId}
             prevHref={monthPrevNavHref}
             nextHref={monthNextNavHref}
-            canGoPrev={monthCanGoPrev}
-            canGoNext={monthCanGoNext}
+            canGoPrev={effectiveMonthCanGoPrev}
+            canGoNext={effectiveMonthCanGoNext}
             showWeekends={showWeekends}
             onNavigate={handleBoardNavigate}
           />
