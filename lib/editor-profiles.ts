@@ -29,7 +29,7 @@ export function resolveEditorProfile(rawEditorId: string): EditorProfile {
     case "milos":
       return { editorId, scope: "la", ownership: "own", bookingMode: "la" };
     case "mike":
-      return { editorId, scope: "overture", ownership: "own", bookingMode: "overture" };
+      return { editorId, scope: "overture", ownership: "any", bookingMode: "overture" };
     default:
       // Backward-compatible default for any additional named editor tokens.
       return { editorId, scope: "all", ownership: "any", bookingMode: "la" };

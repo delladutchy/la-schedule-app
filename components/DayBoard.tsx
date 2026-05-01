@@ -142,8 +142,7 @@ function canManageDetailForEditor(
 
   if (editorId === "mike") {
     return !!overtureCalendarId
-      && calendarId === overtureCalendarId
-      && ownerEditor === editorId;
+      && calendarId === overtureCalendarId;
   }
 
   return true;

@@ -16,7 +16,7 @@ describe("editor profiles", () => {
     expect(resolveEditorProfile("jeff")).toMatchObject({ scope: "all", ownership: "any", bookingMode: "la" });
     expect(resolveEditorProfile("dave")).toMatchObject({ scope: "la", ownership: "any", bookingMode: "la" });
     expect(resolveEditorProfile("milos")).toMatchObject({ scope: "la", ownership: "own", bookingMode: "la" });
-    expect(resolveEditorProfile("mike")).toMatchObject({ scope: "overture", ownership: "own", bookingMode: "overture" });
+    expect(resolveEditorProfile("mike")).toMatchObject({ scope: "overture", ownership: "any", bookingMode: "overture" });
   });
 
   it("routes write calendar by profile and fails safely for missing Overture calendar", () => {
@@ -72,6 +72,16 @@ describe("editor profiles", () => {
     expect(canProfileManageEvent(resolveEditorProfile("mike"), {
       calendarId: env.OVERTURE_CALENDAR_ID,
       ownerEditor: "mike",
+    }, env)).toBe(true);
+
+    expect(canProfileManageEvent(resolveEditorProfile("mike"), {
+      calendarId: env.OVERTURE_CALENDAR_ID,
+      ownerEditor: "jeff",
+    }, env)).toBe(true);
+
+    expect(canProfileManageEvent(resolveEditorProfile("mike"), {
+      calendarId: env.OVERTURE_CALENDAR_ID,
+      ownerEditor: undefined,
     }, env)).toBe(true);
 
     expect(canProfileManageEvent(resolveEditorProfile("mike"), {
