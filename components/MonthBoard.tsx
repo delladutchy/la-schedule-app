@@ -1178,17 +1178,24 @@ export function MonthBoard({
                 </div>
               ) : null}
               {isOvertureBookingMode ? (
-                <p className="board-day-modal-event-meta board-day-modal-overture-brand">
+                <p className="board-day-modal-event-meta board-day-modal-overture-brand board-day-modal-overture-brand--booking">
                   <img
                     src="/brand/overture-logo.png"
                     alt="Overture"
-                    className="board-day-modal-overture-logo"
+                    className="board-day-modal-overture-logo board-day-modal-overture-logo--booking"
                   />
                 </p>
               ) : (
                 <>
-                  <label className="month-booking-label" htmlFor="booking-la-number">
-                    LA #
+                  <label
+                    className="month-booking-label board-day-modal-la-brand-label"
+                    htmlFor="booking-la-number"
+                  >
+                    <img
+                      src="/brand/la-logo.png"
+                      alt="LA"
+                      className="board-day-modal-la-logo board-day-modal-la-logo--booking"
+                    />
                   </label>
                   <div className="month-booking-la-field">
                     <span className="month-booking-la-prefix" aria-hidden="true">LA#</span>

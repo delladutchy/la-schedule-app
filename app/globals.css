@@ -786,6 +786,19 @@ body {
   margin-top: 1px;
 }
 
+.board-day-modal-la-brand-label {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  line-height: 1;
+}
+
+.board-day-modal-la-logo--booking {
+  height: clamp(36px, 6vw, 40px);
+  max-width: min(132px, 100%);
+  margin-top: 2px;
+}
+
 .board-day-modal-title-with-la-brand {
   display: grid;
   justify-items: start;
@@ -849,6 +862,15 @@ body {
   height: clamp(34px, 5.8vw, 38px);
   max-width: min(156px, 100%);
   object-fit: contain;
+}
+
+.board-day-modal-overture-brand--booking {
+  margin-top: 8px;
+}
+
+.board-day-modal-overture-logo--booking {
+  height: clamp(40px, 6.4vw, 44px);
+  max-width: min(150px, 100%);
 }
 
 .board-day-modal-overture-logo--title {
@@ -2426,13 +2448,18 @@ body {
     max-height: 28vh;
   }
 
-  .board-day-modal--booking .board-day-modal-overture-brand {
-    margin-top: 4px;
+  .board-day-modal--booking .board-day-modal-overture-brand--booking {
+    margin-top: 6px;
   }
 
-  .board-day-modal--booking .board-day-modal-overture-logo {
-    height: 32px;
-    max-width: min(140px, 100%);
+  .board-day-modal--booking .board-day-modal-overture-logo--booking {
+    height: 40px;
+    max-width: min(146px, 100%);
+  }
+
+  .board-day-modal--booking .board-day-modal-la-logo--booking {
+    height: 36px;
+    max-width: min(126px, 100%);
   }
 
   .month-booking-calendar {
