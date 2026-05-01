@@ -2,6 +2,7 @@ import type { EnvConfig } from "./config";
 
 interface CreateJobNotificationInput {
   editorId: string;
+  bookingMode?: "la" | "overture";
   jobNumber?: string;
   jobTitle?: string;
   startDate?: string;
@@ -32,13 +33,17 @@ export async function sendCreateJobNotification(
   }
 
   const editorName = titleCaseEditorId(input.editorId);
-  const subject = `New LA job booked by ${editorName}`;
-  const jobLine = input.jobNumber
+  const bookingMode = input.bookingMode === "overture" ? "overture" : "la";
+  const subject = bookingMode === "overture"
+    ? `New Overture booking by ${editorName}`
+    : `New LA job booked by ${editorName}`;
+  const bookingLine = input.jobNumber
     ? `${input.jobNumber}${input.jobTitle ? ` — ${input.jobTitle}` : ""}`
-    : (input.jobTitle || "N/A");
+    : (input.jobTitle || (bookingMode === "overture" ? "Overture" : "N/A"));
+  const bookingLabel = bookingMode === "overture" ? "Booking" : "Job";
   const text = [
     `Editor: ${editorName}`,
-    `Job: ${jobLine}`,
+    `${bookingLabel}: ${bookingLine}`,
     `Dates: ${dateRangeLabel(input.startDate, input.endDate)}`,
     `Call Time: ${input.callTime ?? "N/A"}`,
   ].join("\n");

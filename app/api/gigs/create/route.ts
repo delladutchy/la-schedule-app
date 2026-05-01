@@ -225,6 +225,7 @@ export async function POST(req: Request) {
         try {
           await sendCreateJobNotification(env, {
             editorId,
+            bookingMode: effectiveBookingMode,
             jobNumber: auditFields.jobNumber,
             jobTitle: auditFields.jobTitle,
             startDate: auditFields.startDate,
@@ -323,6 +324,7 @@ export async function POST(req: Request) {
             try {
               await sendCreateJobNotification(env, {
                 editorId,
+                bookingMode: effectiveBookingMode,
                 jobNumber: auditFields.jobNumber,
                 jobTitle: auditFields.jobTitle,
                 startDate: auditFields.startDate,

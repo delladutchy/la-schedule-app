@@ -133,6 +133,13 @@ describe("/api/gigs/create audit logging", () => {
     expect(payload.action).toBe("create");
     expect(payload.status).toBe("success");
     expect(sendCreateJobNotification).toHaveBeenCalledTimes(1);
+    expect(sendCreateJobNotification).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        editorId: "jeff",
+        bookingMode: "la",
+      }),
+    );
   });
 
   it("stores owner metadata for limited editor create", async () => {
@@ -185,6 +192,13 @@ describe("/api/gigs/create audit logging", () => {
         calendarId: "overture@group.calendar.google.com",
         ownerEditor: "mike",
         summary: "Overture",
+      }),
+    );
+    expect(sendCreateJobNotification).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        editorId: "mike",
+        bookingMode: "overture",
       }),
     );
   });
