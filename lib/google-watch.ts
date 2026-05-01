@@ -1,9 +1,10 @@
 import type { EnvConfig } from "./config";
 import { registerCalendarWatch } from "./google";
 import {
-  readGoogleCalendarWatchMetadata,
-  writeGoogleCalendarWatchMetadata,
+  readGoogleCalendarWatchMetadataMap,
+  writeGoogleCalendarWatchMetadataMap,
   type GoogleCalendarWatchMetadata,
+  type GoogleCalendarWatchMetadataMap,
 } from "./google-watch-store";
 
 export const WATCH_RENEWAL_THRESHOLD_MS = 24 * 60 * 60 * 1000;
@@ -21,6 +22,18 @@ export interface WatchHealthStatus {
   renewalReason: WatchRenewalReason;
 }
 
+export interface CalendarWatchStatus {
+  calendarId: string;
+  expiresInMs: number | null;
+  needsRenewal: boolean;
+  renewalReason: WatchRenewalReason;
+  channelId?: string;
+  resourceId?: string;
+  expiration?: string;
+  createdAtUtc?: string;
+  webhookUrl?: string;
+}
+
 export interface GoogleWatchStatusResult {
   status: "ok";
   expiresInMs: number | null;
@@ -31,6 +44,7 @@ export interface GoogleWatchStatusResult {
   expiration?: string;
   createdAtUtc?: string;
   webhookUrl?: string;
+  watches?: CalendarWatchStatus[];
 }
 
 export interface EnsureGoogleWatchResult extends GoogleWatchStatusResult {
@@ -42,6 +56,14 @@ export interface EnsureGoogleWatchResult extends GoogleWatchStatusResult {
     resourceId: string;
     expiration?: string;
   };
+  previousWatches?: Array<{
+    calendarId: string;
+    channelId: string;
+    resourceId: string;
+    expiration?: string;
+  }>;
+  registeredCalendarIds?: string[];
+  skippedCalendarIds?: string[];
 }
 
 type WatchEnv = Pick<EnvConfig,
@@ -49,6 +71,7 @@ type WatchEnv = Pick<EnvConfig,
   | "GOOGLE_CLIENT_SECRET"
   | "GOOGLE_REFRESH_TOKEN"
   | "GOOGLE_CALENDAR_ID"
+  | "OVERTURE_CALENDAR_ID"
   | "GOOGLE_WEBHOOK_TOKEN"
   | "BLOBS_STORE_NAME"
   | "PUBLIC_SITE_URL"
@@ -67,6 +90,21 @@ export class WatchConfigError extends Error {
 
 function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, "");
+}
+
+function normalizeCalendarId(calendarId: string): string {
+  return calendarId.trim();
+}
+
+export function resolveWatchCalendarIds(
+  env: Pick<WatchEnv, "GOOGLE_CALENDAR_ID" | "OVERTURE_CALENDAR_ID">,
+): string[] {
+  const primary = normalizeCalendarId(env.GOOGLE_CALENDAR_ID);
+  const overture = env.OVERTURE_CALENDAR_ID?.trim();
+  if (overture && overture !== primary) {
+    return [primary, overture];
+  }
+  return [primary];
 }
 
 export function resolveWebhookUrl(opts: {
@@ -117,6 +155,76 @@ export function evaluateWatchHealth(
   return { expiresInMs, needsRenewal: false, renewalReason: "healthy" };
 }
 
+function buildCalendarWatchStatus(
+  calendarId: string,
+  metadata: GoogleCalendarWatchMetadata | null,
+  nowMs: number,
+): CalendarWatchStatus {
+  const health = evaluateWatchHealth(metadata, nowMs);
+  return {
+    calendarId,
+    ...(metadata
+      ? {
+          channelId: metadata.channelId,
+          resourceId: metadata.resourceId,
+          ...(metadata.expiration ? { expiration: metadata.expiration } : {}),
+          createdAtUtc: metadata.createdAtUtc,
+          webhookUrl: metadata.webhookUrl,
+        }
+      : {}),
+    expiresInMs: health.expiresInMs,
+    needsRenewal: health.needsRenewal,
+    renewalReason: health.renewalReason,
+  };
+}
+
+function resolveOverallExpiresInMs(watches: CalendarWatchStatus[]): number | null {
+  const finite = watches
+    .map((watch) => watch.expiresInMs)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (finite.length === 0) return null;
+  return Math.min(...finite);
+}
+
+const RENEWAL_REASON_PRIORITY: Record<WatchRenewalReason, number> = {
+  missing: 0,
+  missing_expiration: 1,
+  invalid_expiration: 2,
+  expiring_soon: 3,
+  healthy: 4,
+};
+
+function pickMostUrgentRenewalReason(reasons: WatchRenewalReason[]): WatchRenewalReason {
+  if (reasons.length === 0) return "healthy";
+  return [...reasons].sort((a, b) => RENEWAL_REASON_PRIORITY[a] - RENEWAL_REASON_PRIORITY[b])[0] ?? "healthy";
+}
+
+function buildStatusFromMap(
+  metadataMap: GoogleCalendarWatchMetadataMap,
+  calendarIds: string[],
+  nowMs: number,
+): GoogleWatchStatusResult {
+  const watches = calendarIds.map((calendarId) =>
+    buildCalendarWatchStatus(calendarId, metadataMap[calendarId] ?? null, nowMs));
+  const primary = watches[0];
+  return {
+    status: "ok",
+    ...(primary
+      ? {
+          calendarId: primary.calendarId,
+          ...(primary.channelId ? { channelId: primary.channelId } : {}),
+          ...(primary.resourceId ? { resourceId: primary.resourceId } : {}),
+          ...(primary.expiration ? { expiration: primary.expiration } : {}),
+          ...(primary.createdAtUtc ? { createdAtUtc: primary.createdAtUtc } : {}),
+          ...(primary.webhookUrl ? { webhookUrl: primary.webhookUrl } : {}),
+        }
+      : {}),
+    expiresInMs: resolveOverallExpiresInMs(watches),
+    needsRenewal: watches.some((watch) => watch.needsRenewal),
+    watches,
+  };
+}
+
 export function buildWatchStatus(
   metadata: GoogleCalendarWatchMetadata | null,
   nowMs: number,
@@ -136,6 +244,13 @@ export function buildWatchStatus(
       : {}),
     expiresInMs: health.expiresInMs,
     needsRenewal: health.needsRenewal,
+    ...(metadata
+      ? {
+          watches: [
+            buildCalendarWatchStatus(metadata.calendarId, metadata, nowMs),
+          ],
+        }
+      : {}),
   };
 }
 
@@ -151,11 +266,12 @@ function generateChannelId(calendarId: string): string {
 }
 
 export async function getGoogleCalendarWatchStatus(
-  env: Pick<WatchEnv, "BLOBS_STORE_NAME">,
+  env: Pick<WatchEnv, "BLOBS_STORE_NAME" | "GOOGLE_CALENDAR_ID" | "OVERTURE_CALENDAR_ID">,
   nowMs: number = Date.now(),
 ): Promise<GoogleWatchStatusResult> {
-  const metadata = await readGoogleCalendarWatchMetadata(env.BLOBS_STORE_NAME);
-  return buildWatchStatus(metadata, nowMs);
+  const metadataMap = await readGoogleCalendarWatchMetadataMap(env.BLOBS_STORE_NAME);
+  const calendarIds = resolveWatchCalendarIds(env);
+  return buildStatusFromMap(metadataMap, calendarIds, nowMs);
 }
 
 export async function ensureGoogleCalendarWatch(
@@ -169,18 +285,8 @@ export async function ensureGoogleCalendarWatch(
 ): Promise<EnsureGoogleWatchResult> {
   const nowMs = opts.nowMs ?? Date.now();
   const force = !!opts.force;
-  const existing = await readGoogleCalendarWatchMetadata(env.BLOBS_STORE_NAME);
-  const existingHealth = evaluateWatchHealth(existing, nowMs);
-  const existingStatus = buildWatchStatus(existing, nowMs);
-
-  if (!force && existing && !existingHealth.needsRenewal) {
-    return {
-      action: "skipped",
-      force,
-      renewalReason: existingHealth.renewalReason,
-      ...existingStatus,
-    };
-  }
+  const metadataMap = await readGoogleCalendarWatchMetadataMap(env.BLOBS_STORE_NAME);
+  const calendarIds = resolveWatchCalendarIds(env);
 
   const channelToken = env.GOOGLE_WEBHOOK_TOKEN?.trim();
   if (!channelToken) {
@@ -192,43 +298,87 @@ export async function ensureGoogleCalendarWatch(
     requestUrl: opts.requestUrl,
     runtimeSiteUrl: opts.runtimeSiteUrl,
   });
-  const channelId = generateChannelId(env.GOOGLE_CALENDAR_ID);
 
-  const watch = await registerCalendarWatch({
-    clientId: env.GOOGLE_CLIENT_ID,
-    clientSecret: env.GOOGLE_CLIENT_SECRET,
-    refreshToken: env.GOOGLE_REFRESH_TOKEN,
-    calendarId: env.GOOGLE_CALENDAR_ID,
-    webhookUrl,
-    channelId,
-    channelToken,
-  });
+  const registeredCalendarIds: string[] = [];
+  const skippedCalendarIds: string[] = [];
+  const renewalReasons: WatchRenewalReason[] = [];
+  const previousWatches: Array<{
+    calendarId: string;
+    channelId: string;
+    resourceId: string;
+    expiration?: string;
+  }> = [];
+  let didRegister = false;
 
-  const metadata = await writeGoogleCalendarWatchMetadata(env.BLOBS_STORE_NAME, {
-    channelId: watch.channelId,
-    resourceId: watch.resourceId,
-    ...(watch.resourceUri ? { resourceUri: watch.resourceUri } : {}),
-    ...(watch.expiration ? { expiration: watch.expiration } : {}),
-    calendarId: env.GOOGLE_CALENDAR_ID,
-    webhookUrl,
-    createdAtUtc: new Date(nowMs).toISOString(),
-  });
+  for (const calendarId of calendarIds) {
+    const existing = metadataMap[calendarId] ?? null;
+    const existingHealth = evaluateWatchHealth(existing, nowMs);
 
-  const metadataHealth = evaluateWatchHealth(metadata, nowMs);
+    if (!force && existing && !existingHealth.needsRenewal) {
+      skippedCalendarIds.push(calendarId);
+      renewalReasons.push(existingHealth.renewalReason);
+      continue;
+    }
+
+    const watch = await registerCalendarWatch({
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+      refreshToken: env.GOOGLE_REFRESH_TOKEN,
+      calendarId,
+      webhookUrl,
+      channelId: generateChannelId(calendarId),
+      channelToken,
+    });
+
+    if (existing) {
+      previousWatches.push({
+        calendarId,
+        channelId: existing.channelId,
+        resourceId: existing.resourceId,
+        ...(existing.expiration ? { expiration: existing.expiration } : {}),
+      });
+    }
+
+    metadataMap[calendarId] = {
+      version: 1,
+      channelId: watch.channelId,
+      resourceId: watch.resourceId,
+      ...(watch.resourceUri ? { resourceUri: watch.resourceUri } : {}),
+      ...(watch.expiration ? { expiration: watch.expiration } : {}),
+      calendarId,
+      webhookUrl,
+      createdAtUtc: new Date(nowMs).toISOString(),
+    };
+
+    registeredCalendarIds.push(calendarId);
+    renewalReasons.push(existingHealth.renewalReason);
+    didRegister = true;
+  }
+
+  if (didRegister) {
+    await writeGoogleCalendarWatchMetadataMap(env.BLOBS_STORE_NAME, metadataMap);
+  }
+
+  const status = buildStatusFromMap(metadataMap, calendarIds, nowMs);
+  const primaryCalendarId = normalizeCalendarId(env.GOOGLE_CALENDAR_ID);
+  const primaryPrevious = previousWatches.find((watch) => watch.calendarId === primaryCalendarId);
 
   return {
-    action: "registered",
+    action: registeredCalendarIds.length > 0 ? "registered" : "skipped",
     force,
-    renewalReason: metadataHealth.renewalReason,
-    ...buildWatchStatus(metadata, nowMs),
-    ...(existing
+    renewalReason: pickMostUrgentRenewalReason(renewalReasons),
+    registeredCalendarIds,
+    skippedCalendarIds,
+    ...(primaryPrevious
       ? {
           previous: {
-            channelId: existing.channelId,
-            resourceId: existing.resourceId,
-            ...(existing.expiration ? { expiration: existing.expiration } : {}),
+            channelId: primaryPrevious.channelId,
+            resourceId: primaryPrevious.resourceId,
+            ...(primaryPrevious.expiration ? { expiration: primaryPrevious.expiration } : {}),
           },
         }
       : {}),
+    ...(previousWatches.length > 0 ? { previousWatches } : {}),
+    ...status,
   };
 }

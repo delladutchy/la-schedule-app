@@ -299,9 +299,10 @@ curl -X POST "https://la-schedule-app.netlify.app/api/admin/google-calendar/watc
 Behavior:
 - requires `ADMIN_TOKEN`
 - `GET` returns safe metadata plus `expiresInMs` and `needsRenewal`
-- `POST` registers if no watch exists
-- `POST` registers if the watch expires within 24 hours
-- `POST` skips if the watch is healthy unless `force=true`
+- `GET` reports watches for `GOOGLE_CALENDAR_ID` and `OVERTURE_CALENDAR_ID` (when configured)
+- `POST` registers missing watches for `GOOGLE_CALENDAR_ID` and optional `OVERTURE_CALENDAR_ID`
+- `POST` renews watches expiring within 24 hours
+- `POST` skips healthy watches unless `force=true`
 - uses `/api/google/calendar/webhook` on the canonical `PUBLIC_SITE_URL` when configured (falls back to request origin otherwise)
 - passes `GOOGLE_WEBHOOK_TOKEN` as channel token
 - stores safe metadata only

@@ -17,6 +17,12 @@ const WatchMetadataSchema = z.object({
 });
 
 export type GoogleCalendarWatchMetadata = z.infer<typeof WatchMetadataSchema>;
+export type GoogleCalendarWatchMetadataMap = Record<string, GoogleCalendarWatchMetadata>;
+
+const WatchCollectionSchema = z.object({
+  version: z.literal(2),
+  watches: z.array(WatchMetadataSchema),
+});
 
 function isLocalDev(): boolean {
   if (process.env.NODE_ENV === "production") return false;
@@ -44,20 +50,89 @@ async function ensureLocalStoreDir(storeName: string): Promise<void> {
   await mkdir(localStoreDir(storeName), { recursive: true });
 }
 
-export async function readGoogleCalendarWatchMetadata(
+function normalizeCalendarId(calendarId: string): string {
+  return calendarId.trim();
+}
+
+function mapFromWatches(
+  watches: GoogleCalendarWatchMetadata[],
+): GoogleCalendarWatchMetadataMap {
+  const map: GoogleCalendarWatchMetadataMap = {};
+  for (const watch of watches) {
+    map[normalizeCalendarId(watch.calendarId)] = watch;
+  }
+  return map;
+}
+
+function parseWatchPayload(raw: unknown): GoogleCalendarWatchMetadataMap {
+  const legacy = WatchMetadataSchema.safeParse(raw);
+  if (legacy.success) {
+    const calendarId = normalizeCalendarId(legacy.data.calendarId);
+    return { [calendarId]: legacy.data };
+  }
+
+  const collection = WatchCollectionSchema.safeParse(raw);
+  if (collection.success) {
+    return mapFromWatches(collection.data.watches);
+  }
+
+  return {};
+}
+
+function sortedWatchValues(
+  map: GoogleCalendarWatchMetadataMap,
+): GoogleCalendarWatchMetadata[] {
+  return Object.values(map).sort((a, b) =>
+    Date.parse(b.createdAtUtc) - Date.parse(a.createdAtUtc));
+}
+
+export async function readGoogleCalendarWatchMetadataMap(
   storeName: string,
-): Promise<GoogleCalendarWatchMetadata | null> {
+): Promise<GoogleCalendarWatchMetadataMap> {
   try {
     if (isLocalDev()) {
       const raw = await readFile(localWatchPath(storeName), "utf8");
-      return WatchMetadataSchema.parse(JSON.parse(raw));
+      return parseWatchPayload(JSON.parse(raw));
     }
     const raw = await store(storeName).get(WATCH_KEY, { type: "json" });
-    if (!raw) return null;
-    return WatchMetadataSchema.parse(raw);
+    if (!raw) return {};
+    return parseWatchPayload(raw);
   } catch {
-    return null;
+    return {};
   }
+}
+
+export async function writeGoogleCalendarWatchMetadataMap(
+  storeName: string,
+  metadataMap: GoogleCalendarWatchMetadataMap,
+): Promise<GoogleCalendarWatchMetadataMap> {
+  const watches = Object.values(metadataMap).map((metadata) =>
+    WatchMetadataSchema.parse(metadata));
+  const payload = WatchCollectionSchema.parse({
+    version: 2,
+    watches,
+  });
+
+  if (isLocalDev()) {
+    await ensureLocalStoreDir(storeName);
+    await writeFile(localWatchPath(storeName), JSON.stringify(payload, null, 2), "utf8");
+    return mapFromWatches(payload.watches);
+  }
+
+  await store(storeName).setJSON(WATCH_KEY, payload);
+  return mapFromWatches(payload.watches);
+}
+
+export async function readGoogleCalendarWatchMetadata(
+  storeName: string,
+  calendarId?: string,
+): Promise<GoogleCalendarWatchMetadata | null> {
+  const metadataMap = await readGoogleCalendarWatchMetadataMap(storeName);
+  if (calendarId) {
+    return metadataMap[normalizeCalendarId(calendarId)] ?? null;
+  }
+  const sorted = sortedWatchValues(metadataMap);
+  return sorted[0] ?? null;
 }
 
 export async function writeGoogleCalendarWatchMetadata(
@@ -68,13 +143,8 @@ export async function writeGoogleCalendarWatchMetadata(
     version: 1,
     ...metadata,
   });
-
-  if (isLocalDev()) {
-    await ensureLocalStoreDir(storeName);
-    await writeFile(localWatchPath(storeName), JSON.stringify(payload, null, 2), "utf8");
-    return payload;
-  }
-
-  await store(storeName).setJSON(WATCH_KEY, payload);
-  return payload;
+  const existingMap = await readGoogleCalendarWatchMetadataMap(storeName);
+  existingMap[normalizeCalendarId(payload.calendarId)] = payload;
+  const written = await writeGoogleCalendarWatchMetadataMap(storeName, existingMap);
+  return written[normalizeCalendarId(payload.calendarId)] ?? payload;
 }
