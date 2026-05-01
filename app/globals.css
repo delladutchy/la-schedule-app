@@ -601,6 +601,14 @@ body {
   display: none;
 }
 
+.month-landscape-board-shell {
+  position: relative;
+}
+
+.month-landscape-side-arrow {
+  display: none;
+}
+
 /* ---------- Board ---------- */
 
 .board {
@@ -2651,7 +2659,7 @@ body {
     align-items: center;
     justify-content: flex-start;
     gap: 8px;
-    min-height: 28px;
+    min-height: 30px;
     padding: 4px max(2px, env(safe-area-inset-right, 0px));
     position: sticky;
     top: 0;
@@ -2665,21 +2673,15 @@ body {
   }
 
   .page.page--month .weekend-visibility-row--month-landscape-top {
-    display: flex;
-    justify-content: center;
-    margin: 0 0 4px;
-  }
-
-  .page.page--month .weekend-visibility-row--month-landscape-top .weekend-visibility-toggle {
-    font-size: 11px;
+    display: none;
   }
 
   .page.page--month .month-landscape-label {
-    font-size: 11.5px;
-    font-weight: 550;
+    font-size: 13px;
+    font-weight: 620;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-subtle);
+    letter-spacing: 0.06em;
+    color: color-mix(in srgb, var(--text) 90%, var(--today-accent));
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2690,7 +2692,7 @@ body {
   .page.page--month .month-landscape-nav {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 0;
     flex: 0 0 auto;
   }
 
@@ -2701,12 +2703,12 @@ body {
     background: var(--surface);
     color: var(--text);
     border-radius: 999px;
-    padding: 4px 8px;
-    font-size: 11px;
+    padding: 4px 10px;
+    font-size: 11.5px;
     font-weight: 520;
     line-height: 1.1;
     min-height: 25px;
-    min-width: 26px;
+    min-width: 48px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2727,6 +2729,54 @@ body {
 
   .page.page--month .month-board {
     gap: 5px;
+  }
+
+  .page.page--month .month-landscape-board-shell {
+    position: relative;
+    padding-left: 30px;
+    padding-right: 30px;
+  }
+
+  .page.page--month .month-landscape-side-arrow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 4;
+    width: 24px;
+    min-width: 24px;
+    height: 48px;
+    text-decoration: none;
+    color: color-mix(in srgb, var(--text-subtle) 84%, transparent);
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
+    border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+    border-radius: 999px;
+    font-size: 16px;
+    line-height: 1;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: color-mix(in srgb, var(--today-accent) 24%, transparent);
+    transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.12s ease;
+  }
+
+  .page.page--month .month-landscape-side-arrow--prev {
+    left: 2px;
+  }
+
+  .page.page--month .month-landscape-side-arrow--next {
+    right: 2px;
+  }
+
+  .page.page--month .month-landscape-side-arrow:active:not(.is-disabled) {
+    transform: translateY(-50%) scale(0.97);
+    color: color-mix(in srgb, var(--text) 82%, var(--today-accent));
+    border-color: color-mix(in srgb, var(--today-accent) 35%, var(--border));
+  }
+
+  .page.page--month .month-landscape-side-arrow.is-disabled {
+    opacity: 0.38;
+    pointer-events: none;
   }
 
   .page.page--month .month-label-row {

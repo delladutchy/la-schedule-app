@@ -192,25 +192,9 @@ export function ScheduleView({
         </>
       ) : (
         <>
-          {renderWeekendToggle("weekend-visibility-row--month-landscape-top")}
           <div className="month-landscape-toolbar" aria-label="Month compact navigation">
             <span className="month-landscape-label">{month.label}</span>
             <div className="month-landscape-nav">
-              {monthCanGoPrev ? (
-                <Link
-                  className="month-landscape-nav-button"
-                  href={monthPrevNavHref}
-                  aria-label="Previous month"
-                  prefetch={true}
-                  scroll={false}
-                >
-                  ←
-                </Link>
-              ) : (
-                <span className="month-landscape-nav-button is-disabled" aria-hidden>
-                  ←
-                </span>
-              )}
               <Link
                 className="month-landscape-nav-button"
                 href={monthTodayHref}
@@ -220,21 +204,6 @@ export function ScheduleView({
               >
                 Today
               </Link>
-              {monthCanGoNext ? (
-                <Link
-                  className="month-landscape-nav-button"
-                  href={monthNextNavHref}
-                  aria-label="Next month"
-                  prefetch={true}
-                  scroll={false}
-                >
-                  →
-                </Link>
-              ) : (
-                <span className="month-landscape-nav-button is-disabled" aria-hidden>
-                  →
-                </span>
-              )}
             </div>
           </div>
 
@@ -263,19 +232,59 @@ export function ScheduleView({
             {renderWeekendToggle("weekend-visibility-row--nav")}
           </nav>
 
-          <MonthBoard
-            month={month}
-            todayKey={todayKey}
-            initialEditorToken={initialEditorToken}
-            initialResolvedEditorId={resolvedEditorId}
-            editorCalendarId={editorCalendarId}
-            overtureCalendarId={overtureCalendarId}
-            prevHref={monthPrevNavHref}
-            nextHref={monthNextNavHref}
-            canGoPrev={monthCanGoPrev}
-            canGoNext={monthCanGoNext}
-            showWeekends={showWeekends}
-          />
+          <div className="month-landscape-board-shell">
+            {monthCanGoPrev ? (
+              <Link
+                className="month-landscape-side-arrow month-landscape-side-arrow--prev"
+                href={monthPrevNavHref}
+                aria-label="Previous month"
+                prefetch={true}
+                scroll={false}
+              >
+                ←
+              </Link>
+            ) : (
+              <span
+                className="month-landscape-side-arrow month-landscape-side-arrow--prev is-disabled"
+                aria-hidden
+              >
+                ←
+              </span>
+            )}
+
+            <MonthBoard
+              month={month}
+              todayKey={todayKey}
+              initialEditorToken={initialEditorToken}
+              initialResolvedEditorId={resolvedEditorId}
+              editorCalendarId={editorCalendarId}
+              overtureCalendarId={overtureCalendarId}
+              prevHref={monthPrevNavHref}
+              nextHref={monthNextNavHref}
+              canGoPrev={monthCanGoPrev}
+              canGoNext={monthCanGoNext}
+              showWeekends={showWeekends}
+            />
+
+            {monthCanGoNext ? (
+              <Link
+                className="month-landscape-side-arrow month-landscape-side-arrow--next"
+                href={monthNextNavHref}
+                aria-label="Next month"
+                prefetch={true}
+                scroll={false}
+              >
+                →
+              </Link>
+            ) : (
+              <span
+                className="month-landscape-side-arrow month-landscape-side-arrow--next is-disabled"
+                aria-hidden
+              >
+                →
+              </span>
+            )}
+          </div>
         </>
       )}
     </>
