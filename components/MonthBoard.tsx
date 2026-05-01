@@ -174,6 +174,17 @@ function isOvertureDetail(
   return matchesSummary || matchesCalendar;
 }
 
+function isLaDetail(
+  detail: BookedLabel["details"][number],
+  laCalendarId?: string,
+  overtureCalendarId?: string,
+): boolean {
+  if ((detail.displayMode ?? "details") !== "details") return false;
+  if (isOvertureDetail(detail, overtureCalendarId)) return false;
+  if (laCalendarId && detail.calendarId === laCalendarId) return true;
+  return /^LA#\d+/i.test(detail.summary.trim());
+}
+
 function canViewDetailNotes(
   detail: BookedLabel["details"][number],
   resolvedEditorId: string | null,
@@ -653,6 +664,10 @@ export function MonthBoard({
     activeDetailPanel
     && activeDetailPanel.details.some((detail) => isOvertureDetail(detail, overtureCalendarId))
   );
+  const activeDetailIsLa = !!(
+    activeDetailPanel
+    && activeDetailPanel.details.some((detail) => isLaDetail(detail, editorCalendarId, overtureCalendarId))
+  );
   const canManageActiveDetail = editorModeActive
     && !!activeEditableDetail;
   const showDeleteConfirm = !!confirmDeleteEventId
@@ -967,6 +982,15 @@ export function MonthBoard({
                   alt="Overture"
                   className="board-day-modal-overture-logo board-day-modal-overture-logo--title"
                 />
+              ) : activeDetailIsLa ? (
+                <span className="board-day-modal-title-with-brand">
+                  <img
+                    src="/brand/la-logo.png"
+                    alt="LA"
+                    className="board-day-modal-la-logo"
+                  />
+                  <span>{activeDetailPanel.header}</span>
+                </span>
               ) : (
                 activeDetailPanel.header
               )}

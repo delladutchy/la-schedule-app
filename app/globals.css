@@ -777,6 +777,22 @@ body {
   line-height: 1.35;
 }
 
+.board-day-modal-title-with-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.board-day-modal-la-logo {
+  display: block;
+  width: auto;
+  height: clamp(21px, 4.6vw, 24px);
+  max-width: min(74px, 100%);
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
 .board-day-modal-events {
   margin: 0;
   padding: 0;
