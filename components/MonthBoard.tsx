@@ -358,12 +358,6 @@ export function MonthBoard({
     } else {
       setEditorToken(null);
     }
-
-    const url = new URL(window.location.href);
-    if (!url.searchParams.has("editor")) return;
-    url.searchParams.delete("editor");
-    const next = `${url.pathname}${url.search}${url.hash}`;
-    window.history.replaceState(window.history.state, "", next);
   }, [initialEditorToken]);
 
   useEffect(() => {

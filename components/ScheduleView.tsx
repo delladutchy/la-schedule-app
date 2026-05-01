@@ -2,12 +2,27 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type { MonthBoardData, WeekGroup } from "@/lib/view";
 import { DayBoard } from "@/components/DayBoard";
 import { MonthBoard } from "@/components/MonthBoard";
+import { sanitizeEditorToken } from "@/lib/editor-session";
 
 const MIKE_SHOW_WEEKENDS_STORAGE_KEY = "la_schedule_mike_show_weekends";
 const MIKE_SHOW_WEEKENDS_COOKIE_KEY = "la_schedule_mike_show_weekends";
+
+function withEditorToken(href: string, editorToken: string | null): string {
+  if (!editorToken) return href;
+  try {
+    const url = new URL(href, "https://la-schedule-app.local");
+    if (!url.searchParams.has("editor")) {
+      url.searchParams.set("editor", editorToken);
+    }
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return href;
+  }
+}
 
 interface Props {
   viewMode: "list" | "month";
@@ -54,9 +69,19 @@ export function ScheduleView({
   monthCanGoNext,
   initialShowWeekends,
 }: Props) {
+  const searchParams = useSearchParams();
+  const navigationEditorToken = sanitizeEditorToken(searchParams.get("editor"));
   const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
   const isMikeEditor = normalizedEditorId === "mike";
   const [showWeekends, setShowWeekends] = useState(initialShowWeekends);
+  const listToggleHref = withEditorToken(`/?view=list&start=${listToggleStart}`, navigationEditorToken);
+  const monthToggleHref = withEditorToken(`/?view=month&month=${monthToggleKey}`, navigationEditorToken);
+  const weekPrevNavHref = withEditorToken(weekPrevHref, navigationEditorToken);
+  const weekTodayHref = withEditorToken(`/?view=list&start=${todayKey}`, navigationEditorToken);
+  const weekNextNavHref = withEditorToken(weekNextHref, navigationEditorToken);
+  const monthPrevNavHref = withEditorToken(monthPrevHref, navigationEditorToken);
+  const monthTodayHref = withEditorToken(`/?view=month&month=${todayMonthKey}`, navigationEditorToken);
+  const monthNextNavHref = withEditorToken(monthNextHref, navigationEditorToken);
 
   useEffect(() => {
     if (!isMikeEditor) {
@@ -105,7 +130,7 @@ export function ScheduleView({
         <nav className="view-toggle" aria-label="View mode">
           <Link
             className={`view-toggle-button${viewMode === "list" ? " active" : ""}`}
-            href={`/?view=list&start=${listToggleStart}`}
+            href={listToggleHref}
             aria-label="Week view"
             prefetch={true}
             scroll={false}
@@ -114,7 +139,7 @@ export function ScheduleView({
           </Link>
           <Link
             className={`view-toggle-button${viewMode === "month" ? " active" : ""}`}
-            href={`/?view=month&month=${monthToggleKey}`}
+            href={monthToggleHref}
             aria-label="Month view"
             prefetch={true}
             scroll={false}
@@ -129,7 +154,7 @@ export function ScheduleView({
         <>
           <nav className="nav nav--with-weekends" aria-label="Week navigation">
             {weekCanGoPrev ? (
-              <Link className="nav-button" href={weekPrevHref} aria-label="Previous week" prefetch={true} scroll={false}>
+              <Link className="nav-button" href={weekPrevNavHref} aria-label="Previous week" prefetch={true} scroll={false}>
                 ← Previous
               </Link>
             ) : (
@@ -137,11 +162,11 @@ export function ScheduleView({
                 ← Previous
               </a>
             )}
-            <Link className="nav-button" href={`/?view=list&start=${todayKey}`} aria-label="Today" prefetch={true} scroll={false}>
+            <Link className="nav-button" href={weekTodayHref} aria-label="Today" prefetch={true} scroll={false}>
               Today
             </Link>
             {weekCanGoNext ? (
-              <Link className="nav-button" href={weekNextHref} aria-label="Next week" prefetch={true} scroll={false}>
+              <Link className="nav-button" href={weekNextNavHref} aria-label="Next week" prefetch={true} scroll={false}>
                 Next →
               </Link>
             ) : (
@@ -158,8 +183,8 @@ export function ScheduleView({
             initialResolvedEditorId={resolvedEditorId}
             editorCalendarId={editorCalendarId}
             overtureCalendarId={overtureCalendarId}
-            prevHref={weekPrevHref}
-            nextHref={weekNextHref}
+            prevHref={weekPrevNavHref}
+            nextHref={weekNextNavHref}
             canGoPrev={weekCanGoPrev}
             canGoNext={weekCanGoNext}
             showWeekends={showWeekends}
@@ -174,7 +199,7 @@ export function ScheduleView({
               {monthCanGoPrev ? (
                 <Link
                   className="month-landscape-nav-button"
-                  href={monthPrevHref}
+                  href={monthPrevNavHref}
                   aria-label="Previous month"
                   prefetch={true}
                   scroll={false}
@@ -188,7 +213,7 @@ export function ScheduleView({
               )}
               <Link
                 className="month-landscape-nav-button"
-                href={`/?view=month&month=${todayMonthKey}`}
+                href={monthTodayHref}
                 aria-label="Today"
                 prefetch={true}
                 scroll={false}
@@ -198,7 +223,7 @@ export function ScheduleView({
               {monthCanGoNext ? (
                 <Link
                   className="month-landscape-nav-button"
-                  href={monthNextHref}
+                  href={monthNextNavHref}
                   aria-label="Next month"
                   prefetch={true}
                   scroll={false}
@@ -215,7 +240,7 @@ export function ScheduleView({
 
           <nav className="nav nav--with-weekends" aria-label="Month navigation">
             {monthCanGoPrev ? (
-              <Link className="nav-button" href={monthPrevHref} aria-label="Previous month" prefetch={true} scroll={false}>
+              <Link className="nav-button" href={monthPrevNavHref} aria-label="Previous month" prefetch={true} scroll={false}>
                 ← Previous
               </Link>
             ) : (
@@ -223,11 +248,11 @@ export function ScheduleView({
                 ← Previous
               </a>
             )}
-            <Link className="nav-button" href={`/?view=month&month=${todayMonthKey}`} aria-label="Today" prefetch={true} scroll={false}>
+            <Link className="nav-button" href={monthTodayHref} aria-label="Today" prefetch={true} scroll={false}>
               Today
             </Link>
             {monthCanGoNext ? (
-              <Link className="nav-button" href={monthNextHref} aria-label="Next month" prefetch={true} scroll={false}>
+              <Link className="nav-button" href={monthNextNavHref} aria-label="Next month" prefetch={true} scroll={false}>
                 Next →
               </Link>
             ) : (
@@ -245,8 +270,8 @@ export function ScheduleView({
             initialResolvedEditorId={resolvedEditorId}
             editorCalendarId={editorCalendarId}
             overtureCalendarId={overtureCalendarId}
-            prevHref={monthPrevHref}
-            nextHref={monthNextHref}
+            prevHref={monthPrevNavHref}
+            nextHref={monthNextNavHref}
             canGoPrev={monthCanGoPrev}
             canGoNext={monthCanGoNext}
             showWeekends={showWeekends}

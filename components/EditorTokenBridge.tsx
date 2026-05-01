@@ -12,22 +12,31 @@ export function EditorTokenBridge() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    const token = sanitizeEditorToken(searchParams.get("editor"));
+    const tokenFromUrl = sanitizeEditorToken(searchParams.get("editor"));
+    const tokenFromStorage = sanitizeEditorToken(
+      window.localStorage.getItem(EDITOR_TOKEN_SESSION_KEY),
+    );
+    const token = tokenFromUrl ?? tokenFromStorage;
     if (!token) return;
 
     window.localStorage.setItem(EDITOR_TOKEN_SESSION_KEY, token);
     void (async () => {
+      let bootstrapOk = false;
       try {
-        await fetch("/api/editor/session", {
+        const response = await fetch("/api/editor/session", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
           },
           credentials: "same-origin",
         });
+        bootstrapOk = response.ok;
       } catch {
         // Keep localStorage token fallback when session bootstrap is unavailable.
       } finally {
+        // Only clean editor query after session bootstrap succeeds, so we
+        // don't lose server-side editor identity during in-app navigation.
+        if (!tokenFromUrl || !bootstrapOk) return;
         const url = new URL(window.location.href);
         if (!url.searchParams.has("editor")) return;
         url.searchParams.delete("editor");
