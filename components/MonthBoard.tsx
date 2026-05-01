@@ -983,13 +983,13 @@ export function MonthBoard({
                   className="board-day-modal-overture-logo board-day-modal-overture-logo--title"
                 />
               ) : activeDetailIsLa ? (
-                <span className="board-day-modal-title-with-brand">
+                <span className="board-day-modal-title-with-la-brand">
                   <img
                     src="/brand/la-logo.png"
                     alt="LA"
                     className="board-day-modal-la-logo"
                   />
-                  <span>{activeDetailPanel.header}</span>
+                  <span className="board-day-modal-title-text">{activeDetailPanel.header}</span>
                 </span>
               ) : (
                 activeDetailPanel.header
