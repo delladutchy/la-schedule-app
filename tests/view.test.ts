@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { DayStatus, Snapshot } from "@/lib/types";
-import { monthBarGridStyle } from "@/components/MonthBoard";
+import { filterWeekRowsByWeekendVisibility } from "@/components/DayBoard";
+import {
+  clipBarToVisibleDayIndexes,
+  monthBarGridStyle,
+  resolveVisibleDayIndexes,
+} from "@/components/MonthBoard";
 import {
   classifySnapshot,
   buildDayBoard,
@@ -79,6 +84,55 @@ describe("month row-span rendering geometry", () => {
     expect(monthBarGridStyle(2, 2, 1)).toEqual({
       gridColumn: "3 / 4",
       gridRow: "2",
+    });
+  });
+});
+
+describe("weekend visibility helpers", () => {
+  it("filters weekend days from week rows and drops empty weeks when hidden", () => {
+    const weeks = [
+      {
+        weekOf: "2026-05-04",
+        label: "Week of May 4",
+        days: [
+          { date: "2026-05-09", label: "Saturday, May 9", isToday: false, isWeekend: true, status: "available" as const },
+          { date: "2026-05-10", label: "Sunday, May 10", isToday: true, isWeekend: true, status: "available" as const },
+        ],
+      },
+      {
+        weekOf: "2026-05-11",
+        label: "Week of May 11",
+        days: [
+          { date: "2026-05-11", label: "Monday, May 11", isToday: false, isWeekend: false, status: "available" as const },
+          { date: "2026-05-12", label: "Tuesday, May 12", isToday: false, isWeekend: false, status: "available" as const },
+        ],
+      },
+    ];
+
+    const hidden = filterWeekRowsByWeekendVisibility(weeks, true);
+    expect(hidden).toHaveLength(1);
+    expect(hidden[0]?.days.map((d) => d.date)).toEqual(["2026-05-11", "2026-05-12"]);
+
+    const shown = filterWeekRowsByWeekendVisibility(weeks, false);
+    expect(shown).toHaveLength(2);
+    expect(shown[0]?.days).toHaveLength(2);
+  });
+
+  it("uses 5 visible day indexes when weekends are hidden", () => {
+    expect(resolveVisibleDayIndexes(true)).toEqual([0, 1, 2, 3, 4]);
+    expect(resolveVisibleDayIndexes(false)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+
+  it("clips month bars against visible day indexes", () => {
+    const weekdayIndexes = resolveVisibleDayIndexes(true);
+    expect(clipBarToVisibleDayIndexes(4, 6, weekdayIndexes)).toEqual({
+      startDayIndex: 4,
+      endDayIndex: 4,
+    });
+    expect(clipBarToVisibleDayIndexes(5, 6, weekdayIndexes)).toBeNull();
+    expect(clipBarToVisibleDayIndexes(1, 3, weekdayIndexes)).toEqual({
+      startDayIndex: 1,
+      endDayIndex: 3,
     });
   });
 });

@@ -30,6 +30,8 @@ interface Props {
   canGoNext?: boolean;
 }
 
+const MIKE_SHOW_WEEKENDS_STORAGE_KEY = "la_schedule_mike_show_weekends";
+
 const STAGED_LOADING_COPY: ReadonlyArray<{ delay: number; text: string }> = [
   { delay: 0, text: "Updating calendar…" },
   { delay: 700, text: "Confirming with Google…" },
@@ -235,6 +237,19 @@ function buildBookingCalendarDays(startIsoDate: string, monthKey: string): {
   };
 }
 
+export function filterWeekRowsByWeekendVisibility(
+  weeks: WeekGroup[],
+  hideWeekends: boolean,
+): WeekGroup[] {
+  if (!hideWeekends) return weeks;
+  return weeks
+    .map((week) => ({
+      ...week,
+      days: week.days.filter((day) => !day.isWeekend),
+    }))
+    .filter((week) => week.days.length > 0);
+}
+
 /**
  * Employer-facing day board.
  *
@@ -281,6 +296,7 @@ export function DayBoard({
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeletePending, setIsDeletePending] = useState(false);
+  const [showWeekends, setShowWeekends] = useState(true);
   const stagedLoadingCopy = useStagedLoadingCopy(isBookingSavePending || isDeletePending);
   const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
   const isMikeEditor = normalizedEditorId === "mike";
@@ -365,6 +381,29 @@ export function DayBoard({
       cancelled = true;
     };
   }, [editorToken]);
+
+  useEffect(() => {
+    if (!isMikeEditor) {
+      setShowWeekends(true);
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(MIKE_SHOW_WEEKENDS_STORAGE_KEY);
+      setShowWeekends(raw === "1");
+    } catch {
+      setShowWeekends(false);
+    }
+  }, [isMikeEditor]);
+
+  useEffect(() => {
+    if (!isMikeEditor) return;
+    try {
+      window.localStorage.setItem(MIKE_SHOW_WEEKENDS_STORAGE_KEY, showWeekends ? "1" : "0");
+    } catch {
+      // ignore persistence errors
+    }
+  }, [isMikeEditor, showWeekends]);
 
   const closeDetailPanel = () => {
     setActiveDetailPanel(null);
@@ -605,12 +644,14 @@ export function DayBoard({
     }
   }
 
+  const hideWeekends = isMikeEditor && !showWeekends;
+  const visibleWeeks = filterWeekRowsByWeekendVisibility(weeks, hideWeekends);
   const weekendMarkerDayNumber = weekendTodayLabel?.match(/(\d{1,2})$/)?.[1] ?? null;
   const weekendMarkerLabelPrefix =
     weekendTodayLabel && weekendMarkerDayNumber
       ? weekendTodayLabel.slice(0, -weekendMarkerDayNumber.length)
       : weekendTodayLabel;
-  const weekendMarker = weekendTodayLabel ? (
+  const weekendMarker = !hideWeekends && weekendTodayLabel ? (
     <div className="board-weekend-marker" aria-label={`Today: ${weekendTodayLabel}`}>
       {weekendMarkerDayNumber && weekendMarkerLabelPrefix ? (
         <span className="board-day-label-today">
@@ -624,8 +665,8 @@ export function DayBoard({
       )}
     </div>
   ) : null;
-  const hasRows = weeks.some((wk) => wk.days.length > 0);
-  const weekRows = weeks.map((wk) => {
+  const hasRows = visibleWeeks.some((wk) => wk.days.length > 0);
+  const weekRows = visibleWeeks.map((wk) => {
     const dayRows = wk.days.map((d) => {
       const bookedLabel = d.status === "booked"
         ? summarizeBookedDayLabel(d.eventNames, d.eventDetails, d.bookedDisplay)
@@ -795,6 +836,18 @@ export function DayBoard({
       onTouchEnd={onTouchEnd}
       onTouchCancel={onTouchCancel}
     >
+      {isMikeEditor ? (
+        <div className="weekend-visibility-row">
+          <label className="weekend-visibility-toggle">
+            <input
+              type="checkbox"
+              checked={showWeekends}
+              onChange={(event) => setShowWeekends(event.target.checked)}
+            />
+            <span>Show weekends</span>
+          </label>
+        </div>
+      ) : null}
       {weekendMarker}
       {weekRows.map((week, weekIndex) => (
         <section

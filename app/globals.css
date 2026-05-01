@@ -613,6 +613,32 @@ body {
 }
 .board-weekend-marker .board-day-label-today { gap: 6px; }
 
+.weekend-visibility-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 8px;
+}
+
+.weekend-visibility-row--month {
+  margin: 0 0 6px;
+}
+
+.weekend-visibility-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.weekend-visibility-toggle input[type="checkbox"] {
+  margin: 0;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--today-accent);
+}
+
 .board-days {
   list-style: none;
   padding: 0;
@@ -1014,7 +1040,7 @@ body {
 }
 .month-weekdays {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--month-visible-days, 7), minmax(0, 1fr));
   gap: 8px;
   margin: 0;
 }
@@ -1045,7 +1071,7 @@ body {
   left: 0;
   right: 0;
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--month-visible-days, 7), minmax(0, 1fr));
   grid-template-rows: repeat(var(--month-week-bar-rows, 0), minmax(20px, auto));
   gap: 4px 0;
   z-index: 2;
@@ -1094,7 +1120,7 @@ body {
 }
 .month-week-days {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--month-visible-days, 7), minmax(0, 1fr));
   gap: 0;
 }
 .month-day {
@@ -1115,12 +1141,12 @@ body {
 .month-week-days > .month-day {
   border-left-width: 0;
 }
-.month-week-days > .month-day:nth-child(7n + 1) {
+.month-week-days > .month-day:first-child {
   border-left-width: 1px;
   border-top-left-radius: var(--radius-sm);
   border-bottom-left-radius: var(--radius-sm);
 }
-.month-week-days > .month-day:nth-child(7n) {
+.month-week-days > .month-day:last-child {
   border-top-right-radius: var(--radius-sm);
   border-bottom-right-radius: var(--radius-sm);
 }

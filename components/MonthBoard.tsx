@@ -40,6 +40,9 @@ const CALL_TIME_OPTIONS = [
   "4:00 PM",
   "5:00 PM",
 ] as const;
+const MIKE_SHOW_WEEKENDS_STORAGE_KEY = "la_schedule_mike_show_weekends";
+const FULL_WEEK_DAY_INDEXES = [0, 1, 2, 3, 4, 5, 6] as const;
+const WEEKDAY_ONLY_INDEXES = [0, 1, 2, 3, 4] as const;
 
 const STAGED_LOADING_COPY: ReadonlyArray<{ delay: number; text: string }> = [
   { delay: 0, text: "Updating calendar…" },
@@ -92,6 +95,30 @@ export function monthBarGridStyle(startDayIndex: number, endDayIndex: number, la
     gridColumn: `${startDayIndex + 1} / ${endDayIndex + 2}`,
     gridRow: String(laneIndex + 1),
   };
+}
+
+export function resolveVisibleDayIndexes(hideWeekends: boolean): number[] {
+  return hideWeekends ? [...WEEKDAY_ONLY_INDEXES] : [...FULL_WEEK_DAY_INDEXES];
+}
+
+export function clipBarToVisibleDayIndexes(
+  startDayIndex: number,
+  endDayIndex: number,
+  visibleDayIndexes: number[],
+): { startDayIndex: number; endDayIndex: number } | null {
+  const visibleSet = new Set(visibleDayIndexes);
+  let clippedStart = startDayIndex;
+  let clippedEnd = endDayIndex;
+
+  while (clippedStart <= clippedEnd && !visibleSet.has(clippedStart)) {
+    clippedStart += 1;
+  }
+  while (clippedEnd >= clippedStart && !visibleSet.has(clippedEnd)) {
+    clippedEnd -= 1;
+  }
+
+  if (clippedStart > clippedEnd) return null;
+  return { startDayIndex: clippedStart, endDayIndex: clippedEnd };
 }
 
 function stripJobPrefix(summary: string, jobNumber?: string): string {
@@ -285,7 +312,13 @@ export function MonthBoard({
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeletePending, setIsDeletePending] = useState(false);
+  const [showWeekends, setShowWeekends] = useState(true);
   const stagedLoadingCopy = useStagedLoadingCopy(isBookingSavePending || isDeletePending);
+  const editorModeActive = !!(editorToken || resolvedEditorId);
+  const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
+  const isMikeEditor = normalizedEditorId === "mike";
+  const isJeffCreateModeSelectable = normalizedEditorId === "jeff" || normalizedEditorId === "legacy";
+  const defaultBookingMode: "la" | "overture" = isMikeEditor ? "overture" : "la";
 
   useEffect(() => {
     if (!activeDetailPanel && !activeBookingPanel) return undefined;
@@ -366,6 +399,29 @@ export function MonthBoard({
     };
   }, [editorToken]);
 
+  useEffect(() => {
+    if (!isMikeEditor) {
+      setShowWeekends(true);
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(MIKE_SHOW_WEEKENDS_STORAGE_KEY);
+      setShowWeekends(raw === "1");
+    } catch {
+      setShowWeekends(false);
+    }
+  }, [isMikeEditor]);
+
+  useEffect(() => {
+    if (!isMikeEditor) return;
+    try {
+      window.localStorage.setItem(MIKE_SHOW_WEEKENDS_STORAGE_KEY, showWeekends ? "1" : "0");
+    } catch {
+      // ignore persistence errors
+    }
+  }, [isMikeEditor, showWeekends]);
+
   const closeDetailPanel = () => setActiveDetailPanel(null);
   const closeBookingPanel = () => {
     setActiveBookingPanel(null);
@@ -384,11 +440,6 @@ export function MonthBoard({
     setIsDeletePending(false);
   };
 
-  const editorModeActive = !!(editorToken || resolvedEditorId);
-  const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
-  const isMikeEditor = normalizedEditorId === "mike";
-  const isJeffCreateModeSelectable = normalizedEditorId === "jeff" || normalizedEditorId === "legacy";
-  const defaultBookingMode: "la" | "overture" = isMikeEditor ? "overture" : "la";
   const openBookingPanel = (date: string) => {
     const startMonthKey = DateTime.fromISO(date, { zone: "utc" }).toFormat("yyyy-LL");
     setActiveDetailPanel(null);
@@ -605,8 +656,14 @@ export function MonthBoard({
   }
   const todayMonthKey = todayKey.slice(0, 7);
   const monthIsPast = month.monthKey < todayMonthKey;
+  const hideWeekends = isMikeEditor && !showWeekends;
+  const visibleDayIndexes = resolveVisibleDayIndexes(hideWeekends);
+  const visibleDayCount = visibleDayIndexes.length;
+  const weekdayLabels = visibleDayIndexes.map((index) => WEEKDAY_LABELS[index] ?? "");
   const allDays = month.weeks.flatMap((w) => w.days);
-  const weekendToday = allDays.find((d) => d.date === todayKey && d.isWeekend);
+  const weekendToday = !hideWeekends
+    ? allDays.find((d) => d.date === todayKey && d.isWeekend)
+    : undefined;
   const bookingDateLabel = activeBookingPanel
     ? formatShortDate(activeBookingPanel.date)
     : null;
@@ -745,6 +802,7 @@ export function MonthBoard({
     <section
       className="month-board"
       aria-label={month.label}
+      style={{ ["--month-visible-days" as string]: String(visibleDayCount) }}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -753,6 +811,18 @@ export function MonthBoard({
       <div className="month-label-row">
         <h2 className="month-label period-label-animate">{month.label}</h2>
       </div>
+      {isMikeEditor ? (
+        <div className="weekend-visibility-row weekend-visibility-row--month">
+          <label className="weekend-visibility-toggle">
+            <input
+              type="checkbox"
+              checked={showWeekends}
+              onChange={(event) => setShowWeekends(event.target.checked)}
+            />
+            <span>Show weekends</span>
+          </label>
+        </div>
+      ) : null}
       {weekendToday ? (
         <div className="month-weekend-today" aria-label={`Today: ${weekendToday.date}`}>
           <span className="month-day-num month-day-num--today">{weekendToday.dayOfMonth}</span>
@@ -761,7 +831,7 @@ export function MonthBoard({
       ) : null}
 
       <div className="month-weekdays" aria-hidden="true">
-        {WEEKDAY_LABELS.map((label) => (
+        {weekdayLabels.map((label) => (
           <div key={label} className="month-weekday">
             {label}
           </div>
@@ -775,9 +845,10 @@ export function MonthBoard({
         style={{ ["--month-week-count" as string]: String(month.weeks.length) }}
       >
         {month.weeks.map((week, weekIndex) => {
-          const currentMonthIndexes = week.days
-            .map((day, index) => (day.isCurrentMonth ? index : -1))
-            .filter((index) => index >= 0);
+          const dayIndexToVisibleColumn = new Map(
+            visibleDayIndexes.map((dayIndex, visibleColumnIndex) => [dayIndex, visibleColumnIndex]),
+          );
+          const currentMonthIndexes = visibleDayIndexes.filter((index) => week.days[index]?.isCurrentMonth);
           const currentMonthStartIndex = currentMonthIndexes[0] ?? -1;
           const currentMonthEndIndex = currentMonthIndexes[currentMonthIndexes.length - 1] ?? -1;
           const visibleBars = week.bars
@@ -787,16 +858,22 @@ export function MonthBoard({
                 return [];
               }
 
-              const clippedStartDayIndex = Math.max(bar.startDayIndex, currentMonthStartIndex);
-              const clippedEndDayIndex = Math.min(bar.endDayIndex, currentMonthEndIndex);
-              if (clippedStartDayIndex > clippedEndDayIndex) {
+              const clippedRange = clipBarToVisibleDayIndexes(
+                Math.max(bar.startDayIndex, currentMonthStartIndex),
+                Math.min(bar.endDayIndex, currentMonthEndIndex),
+                visibleDayIndexes,
+              );
+              if (!clippedRange) {
                 return [];
               }
+              const mappedStartDayIndex = dayIndexToVisibleColumn.get(clippedRange.startDayIndex);
+              const mappedEndDayIndex = dayIndexToVisibleColumn.get(clippedRange.endDayIndex);
+              if (mappedStartDayIndex == null || mappedEndDayIndex == null) return [];
 
               return [{
                 ...bar,
-                startDayIndex: clippedStartDayIndex,
-                endDayIndex: clippedEndDayIndex,
+                startDayIndex: mappedStartDayIndex,
+                endDayIndex: mappedEndDayIndex,
               }];
             });
 
@@ -863,7 +940,10 @@ export function MonthBoard({
                 ) : null}
 
                 <div className="month-week-days">
-                  {week.days.map((d, dayIndex) => {
+                  {visibleDayIndexes.map((sourceDayIndex) => {
+                    const d = week.days[sourceDayIndex];
+                    if (!d) return null;
+                    const dayIndex = dayIndexToVisibleColumn.get(sourceDayIndex) ?? 0;
                     const isPastCurrentMonthDay = d.isCurrentMonth && (monthIsPast || d.date < todayKey);
                     const bookedLabel = d.status === "booked"
                       ? summarizeBookedDayLabel(d.eventNames, d.eventDetails, d.bookedDisplay)
