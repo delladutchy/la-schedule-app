@@ -189,6 +189,121 @@ describe("/api/gigs/create audit logging", () => {
     );
   });
 
+  it("routes Jeff create to Overture when bookingMode=overture", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    createAllDayEvent.mockResolvedValue({ id: "evt-jeff-overture", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#77777 — Should Be Ignored",
+        bookingMode: "overture",
+        startDate: "2026-05-13",
+        endDate: "2026-05-13",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(createAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: "overture@group.calendar.google.com",
+        ownerEditor: "jeff",
+        summary: "Overture",
+      }),
+    );
+  });
+
+  it("keeps Jeff default create on LA calendar when no bookingMode override is provided", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    createAllDayEvent.mockResolvedValue({ id: "evt-jeff-la", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#77888 — Jeff LA Job",
+        startDate: "2026-05-14",
+        endDate: "2026-05-14",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(createAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: "la-jobs@group.calendar.google.com",
+        ownerEditor: "jeff",
+        summary: "LA#77888 — Jeff LA Job",
+      }),
+    );
+  });
+
+  it("ignores Dave bookingMode=overture spoof and keeps LA calendar", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    createAllDayEvent.mockResolvedValue({ id: "evt-dave-la", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#70001 — Dave LA Job",
+        bookingMode: "overture",
+        startDate: "2026-05-15",
+        endDate: "2026-05-15",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(createAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: "la-jobs@group.calendar.google.com",
+        ownerEditor: "dave",
+        summary: "LA#70001 — Dave LA Job",
+      }),
+    );
+  });
+
+  it("ignores Milos bookingMode=overture spoof and keeps LA calendar", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    createAllDayEvent.mockResolvedValue({ id: "evt-milos-la", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#70002 — Milos LA Job",
+        bookingMode: "overture",
+        startDate: "2026-05-16",
+        endDate: "2026-05-16",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(createAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarId: "la-jobs@group.calendar.google.com",
+        ownerEditor: "milos",
+        summary: "LA#70002 — Milos LA Job",
+      }),
+    );
+  });
+
   it("fails Mike create safely when Overture calendar is not configured", async () => {
     mockEnv.OVERTURE_CALENDAR_ID = "";
     authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "mike" });
@@ -200,6 +315,30 @@ describe("/api/gigs/create audit logging", () => {
       body: JSON.stringify({
         summary: "Ignored by server",
         date: "2026-05-12",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({
+      error: "overture_calendar_not_configured",
+      message: "Overture calendar is not configured.",
+    });
+    expect(createAllDayEvent).not.toHaveBeenCalled();
+  });
+
+  it("fails Jeff overture create safely when Overture calendar is not configured", async () => {
+    mockEnv.OVERTURE_CALENDAR_ID = "";
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#70003 — Ignored for Overture mode",
+        bookingMode: "overture",
+        date: "2026-05-17",
       }),
     });
 

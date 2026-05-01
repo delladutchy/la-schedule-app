@@ -1497,6 +1497,46 @@ body {
   color: var(--text-muted);
 }
 
+.month-booking-mode {
+  display: grid;
+  gap: 6px;
+}
+
+.month-booking-mode-options {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--bg));
+  padding: 2px;
+}
+
+.month-booking-mode-button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.1;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.month-booking-mode-button.is-active {
+  background: color-mix(in srgb, var(--available-bg) 72%, var(--surface));
+  color: color-mix(in srgb, var(--available-text) 92%, var(--text));
+}
+
+.month-booking-mode-button:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
+
 .month-booking-la-field {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -2167,6 +2207,7 @@ body {
   .board-day-modal .month-booking-input--small,
   .board-day-modal .month-booking-textarea,
   .board-day-modal .month-booking-range-toggle,
+  .board-day-modal .month-booking-mode-button,
   .board-day-modal .month-booking-button,
   .board-day-modal .month-booking-same-day-button,
   .board-day-modal .month-booking-calendar-day,

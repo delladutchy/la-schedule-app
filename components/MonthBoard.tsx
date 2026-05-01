@@ -355,6 +355,7 @@ export function MonthBoard({
   const editorModeActive = !!(editorToken || resolvedEditorId);
   const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
   const isMikeEditor = normalizedEditorId === "mike";
+  const isJeffCreateModeSelectable = normalizedEditorId === "jeff" || normalizedEditorId === "legacy";
   const defaultBookingMode: "la" | "overture" = isMikeEditor ? "overture" : "la";
   const openBookingPanel = (date: string) => {
     const startMonthKey = DateTime.fromISO(date, { zone: "utc" }).toFormat("yyyy-LL");
@@ -484,6 +485,7 @@ export function MonthBoard({
         body: JSON.stringify({
           summary,
           ...(description ? { description } : {}),
+          ...(activeBookingPanel.mode === "create" ? { bookingMode: activeBookingPanel.bookingMode } : {}),
           startDate,
           endDate,
         }),
@@ -577,6 +579,11 @@ export function MonthBoard({
     ? formatShortDate(activeBookingPanel.date)
     : null;
   const isOvertureBookingMode = activeBookingPanel?.bookingMode === "overture";
+  const showBookingModeSelector = !!(
+    activeBookingPanel
+    && activeBookingPanel.mode === "create"
+    && isJeffCreateModeSelectable
+  );
   const bookingStartDate = activeBookingPanel?.date ?? "";
   const bookingStartMonth = bookingStartDate
     ? DateTime.fromISO(bookingStartDate, { zone: "utc" }).startOf("month")
@@ -1077,6 +1084,41 @@ export function MonthBoard({
             <p className="board-day-modal-event-date">{bookingDateLabel}</p>
 
             <div className="month-booking-form">
+              {showBookingModeSelector ? (
+                <div className="month-booking-mode">
+                  <p className="month-booking-label">Booking Type</p>
+                  <div className="month-booking-mode-options" role="group" aria-label="Booking type">
+                    <button
+                      type="button"
+                      className={`month-booking-mode-button${activeBookingPanel?.bookingMode === "la" ? " is-active" : ""}`}
+                      onClick={() => {
+                        setActiveBookingPanel((current) => {
+                          if (!current || current.mode !== "create") return current;
+                          return { ...current, bookingMode: "la" };
+                        });
+                        if (bookingError) setBookingError(null);
+                      }}
+                      disabled={bookingModalIsLocked}
+                    >
+                      LA Job
+                    </button>
+                    <button
+                      type="button"
+                      className={`month-booking-mode-button${activeBookingPanel?.bookingMode === "overture" ? " is-active" : ""}`}
+                      onClick={() => {
+                        setActiveBookingPanel((current) => {
+                          if (!current || current.mode !== "create") return current;
+                          return { ...current, bookingMode: "overture" };
+                        });
+                        if (bookingError) setBookingError(null);
+                      }}
+                      disabled={bookingModalIsLocked}
+                    >
+                      Overture
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {isOvertureBookingMode ? (
                 <p className="board-day-modal-event-meta">Overture</p>
               ) : (

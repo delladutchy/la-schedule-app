@@ -11,6 +11,7 @@ const IsoDaySchema = z.string().regex(ISO_DAY_RE, "Expected YYYY-MM-DD");
 export const GigCreateBodySchema = z.object({
   summary: z.string().trim().min(1).max(240),
   description: z.string().trim().max(4000).optional(),
+  bookingMode: z.enum(["la", "overture"]).optional(),
   date: IsoDaySchema.optional(),
   startDate: IsoDaySchema.optional(),
   endDate: IsoDaySchema.optional(),

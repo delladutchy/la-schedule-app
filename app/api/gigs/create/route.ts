@@ -17,8 +17,9 @@ import { appendAuditEvent, buildGigAuditFields } from "@/lib/audit-log";
 import { sendCreateJobNotification } from "@/lib/notifications";
 import {
   isMikeProfile,
+  resolveProfileCreateMode,
   resolveEditorProfile,
-  resolveProfileWriteCalendar,
+  resolveWriteCalendarForMode,
 } from "@/lib/editor-profiles";
 
 export const dynamic = "force-dynamic";
@@ -72,6 +73,7 @@ function parsePayload(body: unknown) {
       ok: true as const,
       summary: parsed.data.summary.trim(),
       description: parsed.data.description?.trim(),
+      bookingMode: parsed.data.bookingMode,
       ...resolveAllDayRange(parsed.data),
     };
   } catch (error) {
@@ -100,18 +102,6 @@ export async function POST(req: Request) {
   }
 
   const editorProfile = resolveEditorProfile(editorId);
-  const writeCalendar = resolveProfileWriteCalendar(editorProfile, env);
-  if (!writeCalendar.ok) {
-    logCreateRouteTiming(writeCalendar.error, editorId, routeStartedAt, timings);
-    return NextResponse.json(
-      {
-        error: writeCalendar.error,
-        message: writeCalendar.message,
-      },
-      { status: 503 },
-    );
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -129,7 +119,22 @@ export async function POST(req: Request) {
     );
   }
 
-  const summary = isMikeProfile(editorProfile) ? "Overture" : payload.summary;
+  const effectiveBookingMode = resolveProfileCreateMode(editorProfile, payload.bookingMode);
+  const writeCalendar = resolveWriteCalendarForMode(effectiveBookingMode, env);
+  if (!writeCalendar.ok) {
+    logCreateRouteTiming(writeCalendar.error, editorId, routeStartedAt, timings);
+    return NextResponse.json(
+      {
+        error: writeCalendar.error,
+        message: writeCalendar.message,
+      },
+      { status: 503 },
+    );
+  }
+
+  const summary = isMikeProfile(editorProfile) || effectiveBookingMode === "overture"
+    ? "Overture"
+    : payload.summary;
 
   // Pre-write check against the same snapshot model used by the app.
   const snapshotReadStartedAt = Date.now();

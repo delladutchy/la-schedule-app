@@ -36,11 +36,28 @@ export function resolveEditorProfile(rawEditorId: string): EditorProfile {
   }
 }
 
-export function resolveProfileWriteCalendar(
+function isJeffLikeProfile(profile: EditorProfile): boolean {
+  return profile.editorId === "jeff" || profile.editorId === "legacy";
+}
+
+export function resolveProfileCreateMode(
   profile: EditorProfile,
+  requestedMode?: EditorBookingMode,
+): EditorBookingMode {
+  if (profile.bookingMode === "overture") {
+    return "overture";
+  }
+  if (profile.scope !== "all" || !isJeffLikeProfile(profile)) {
+    return "la";
+  }
+  return requestedMode === "overture" ? "overture" : "la";
+}
+
+export function resolveWriteCalendarForMode(
+  bookingMode: EditorBookingMode,
   env: ProfileCalendarEnv,
 ): { ok: true; calendarId: string } | { ok: false; error: "overture_calendar_not_configured"; message: string } {
-  if (profile.bookingMode === "overture") {
+  if (bookingMode === "overture") {
     const overtureCalendarId = env.OVERTURE_CALENDAR_ID?.trim();
     if (!overtureCalendarId) {
       return {
@@ -52,6 +69,13 @@ export function resolveProfileWriteCalendar(
     return { ok: true, calendarId: overtureCalendarId };
   }
   return { ok: true, calendarId: env.GOOGLE_CALENDAR_ID };
+}
+
+export function resolveProfileWriteCalendar(
+  profile: EditorProfile,
+  env: ProfileCalendarEnv,
+): { ok: true; calendarId: string } | { ok: false; error: "overture_calendar_not_configured"; message: string } {
+  return resolveWriteCalendarForMode(profile.bookingMode, env);
 }
 
 export function isCalendarInProfileScope(

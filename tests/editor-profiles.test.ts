@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canProfileManageEvent,
+  resolveProfileCreateMode,
   resolveEditorProfile,
   resolveProfileWriteCalendar,
 } from "@/lib/editor-profiles";
@@ -35,6 +36,16 @@ describe("editor profiles", () => {
       error: "overture_calendar_not_configured",
       message: "Overture calendar is not configured.",
     });
+  });
+
+  it("resolves create booking mode with Jeff-only overture override", () => {
+    expect(resolveProfileCreateMode(resolveEditorProfile("jeff"))).toBe("la");
+    expect(resolveProfileCreateMode(resolveEditorProfile("jeff"), "overture")).toBe("overture");
+    expect(resolveProfileCreateMode(resolveEditorProfile("legacy"), "overture")).toBe("overture");
+
+    expect(resolveProfileCreateMode(resolveEditorProfile("dave"), "overture")).toBe("la");
+    expect(resolveProfileCreateMode(resolveEditorProfile("milos"), "overture")).toBe("la");
+    expect(resolveProfileCreateMode(resolveEditorProfile("mike"), "la")).toBe("overture");
   });
 
   it("enforces calendar and owner scope", () => {
