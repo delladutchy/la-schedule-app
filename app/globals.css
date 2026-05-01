@@ -832,8 +832,10 @@ body {
 }
 
 .board-day-modal-overture-logo--title {
-  height: clamp(34px, 5.6vw, 37px);
-  max-width: min(154px, 100%);
+  height: clamp(40px, 6.4vw, 43px);
+  max-width: min(166px, 100%);
+  margin-top: 5px;
+  margin-bottom: 4px;
 }
 
 .board-day-modal-event-label {
