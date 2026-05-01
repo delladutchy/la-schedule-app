@@ -601,14 +601,6 @@ body {
   display: none;
 }
 
-.month-landscape-board-shell {
-  position: relative;
-}
-
-.month-landscape-side-arrow {
-  display: none;
-}
-
 /* ---------- Board ---------- */
 
 .board {
@@ -2729,54 +2721,6 @@ body {
 
   .page.page--month .month-board {
     gap: 5px;
-  }
-
-  .page.page--month .month-landscape-board-shell {
-    position: relative;
-    padding-left: 30px;
-    padding-right: 30px;
-  }
-
-  .page.page--month .month-landscape-side-arrow {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 4;
-    width: 24px;
-    min-width: 24px;
-    height: 48px;
-    text-decoration: none;
-    color: color-mix(in srgb, var(--text-subtle) 84%, transparent);
-    background: color-mix(in srgb, var(--surface) 70%, transparent);
-    border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-    border-radius: 999px;
-    font-size: 16px;
-    line-height: 1;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: color-mix(in srgb, var(--today-accent) 24%, transparent);
-    transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.12s ease;
-  }
-
-  .page.page--month .month-landscape-side-arrow--prev {
-    left: 2px;
-  }
-
-  .page.page--month .month-landscape-side-arrow--next {
-    right: 2px;
-  }
-
-  .page.page--month .month-landscape-side-arrow:active:not(.is-disabled) {
-    transform: translateY(-50%) scale(0.97);
-    color: color-mix(in srgb, var(--text) 82%, var(--today-accent));
-    border-color: color-mix(in srgb, var(--today-accent) 35%, var(--border));
-  }
-
-  .page.page--month .month-landscape-side-arrow.is-disabled {
-    opacity: 0.38;
-    pointer-events: none;
   }
 
   .page.page--month .month-label-row {

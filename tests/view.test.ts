@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { DayStatus, Snapshot } from "@/lib/types";
 import { filterWeekRowsByWeekendVisibility } from "@/components/DayBoard";
 import {
+  filterMonthWeeksForVisibleCurrentMonthDays,
   clipBarToVisibleDayIndexes,
   monthBarGridStyle,
   resolveVisibleDayIndexes,
@@ -134,6 +135,43 @@ describe("weekend visibility helpers", () => {
       startDayIndex: 1,
       endDayIndex: 3,
     });
+  });
+
+  it("drops month week rows that have zero current-month visible weekdays when weekends are hidden", () => {
+    const weeks = [
+      {
+        days: [
+          { isCurrentMonth: false },
+          { isCurrentMonth: false },
+          { isCurrentMonth: false },
+          { isCurrentMonth: false },
+          { isCurrentMonth: false },
+          { isCurrentMonth: true },
+          { isCurrentMonth: true },
+        ],
+        bars: [],
+      },
+      {
+        days: [
+          { isCurrentMonth: false },
+          { isCurrentMonth: false },
+          { isCurrentMonth: true },
+          { isCurrentMonth: true },
+          { isCurrentMonth: true },
+          { isCurrentMonth: true },
+          { isCurrentMonth: true },
+        ],
+        bars: [],
+      },
+    ] as unknown as Parameters<typeof filterMonthWeeksForVisibleCurrentMonthDays>[0];
+
+    const weekdayIndexes = resolveVisibleDayIndexes(true);
+    const filtered = filterMonthWeeksForVisibleCurrentMonthDays(weeks, weekdayIndexes, true);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]).toBe(weeks[1]);
+
+    const unchanged = filterMonthWeeksForVisibleCurrentMonthDays(weeks, weekdayIndexes, false);
+    expect(unchanged).toHaveLength(2);
   });
 });
 

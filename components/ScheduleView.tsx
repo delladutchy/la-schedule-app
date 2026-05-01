@@ -232,59 +232,19 @@ export function ScheduleView({
             {renderWeekendToggle("weekend-visibility-row--nav")}
           </nav>
 
-          <div className="month-landscape-board-shell">
-            {monthCanGoPrev ? (
-              <Link
-                className="month-landscape-side-arrow month-landscape-side-arrow--prev"
-                href={monthPrevNavHref}
-                aria-label="Previous month"
-                prefetch={true}
-                scroll={false}
-              >
-                ←
-              </Link>
-            ) : (
-              <span
-                className="month-landscape-side-arrow month-landscape-side-arrow--prev is-disabled"
-                aria-hidden
-              >
-                ←
-              </span>
-            )}
-
-            <MonthBoard
-              month={month}
-              todayKey={todayKey}
-              initialEditorToken={initialEditorToken}
-              initialResolvedEditorId={resolvedEditorId}
-              editorCalendarId={editorCalendarId}
-              overtureCalendarId={overtureCalendarId}
-              prevHref={monthPrevNavHref}
-              nextHref={monthNextNavHref}
-              canGoPrev={monthCanGoPrev}
-              canGoNext={monthCanGoNext}
-              showWeekends={showWeekends}
-            />
-
-            {monthCanGoNext ? (
-              <Link
-                className="month-landscape-side-arrow month-landscape-side-arrow--next"
-                href={monthNextNavHref}
-                aria-label="Next month"
-                prefetch={true}
-                scroll={false}
-              >
-                →
-              </Link>
-            ) : (
-              <span
-                className="month-landscape-side-arrow month-landscape-side-arrow--next is-disabled"
-                aria-hidden
-              >
-                →
-              </span>
-            )}
-          </div>
+          <MonthBoard
+            month={month}
+            todayKey={todayKey}
+            initialEditorToken={initialEditorToken}
+            initialResolvedEditorId={resolvedEditorId}
+            editorCalendarId={editorCalendarId}
+            overtureCalendarId={overtureCalendarId}
+            prevHref={monthPrevNavHref}
+            nextHref={monthNextNavHref}
+            canGoPrev={monthCanGoPrev}
+            canGoNext={monthCanGoNext}
+            showWeekends={showWeekends}
+          />
         </>
       )}
     </>

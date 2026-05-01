@@ -44,6 +44,7 @@ const CALL_TIME_OPTIONS = [
 ] as const;
 const FULL_WEEK_DAY_INDEXES = [0, 1, 2, 3, 4, 5, 6] as const;
 const WEEKDAY_ONLY_INDEXES = [0, 1, 2, 3, 4] as const;
+type MonthWeek = MonthBoardData["weeks"][number];
 
 const STAGED_LOADING_COPY: ReadonlyArray<{ delay: number; text: string }> = [
   { delay: 0, text: "Updating calendar…" },
@@ -120,6 +121,16 @@ export function clipBarToVisibleDayIndexes(
 
   if (clippedStart > clippedEnd) return null;
   return { startDayIndex: clippedStart, endDayIndex: clippedEnd };
+}
+
+export function filterMonthWeeksForVisibleCurrentMonthDays(
+  weeks: MonthWeek[],
+  visibleDayIndexes: number[],
+  hideWeekends: boolean,
+): MonthWeek[] {
+  if (!hideWeekends) return weeks;
+  return weeks.filter((week) =>
+    visibleDayIndexes.some((dayIndex) => week.days[dayIndex]?.isCurrentMonth));
 }
 
 function stripJobPrefix(summary: string, jobNumber?: string): string {
@@ -600,6 +611,11 @@ export function MonthBoard({
   const monthIsPast = month.monthKey < todayMonthKey;
   const hideWeekends = isMikeEditor && !showWeekends;
   const visibleDayIndexes = resolveVisibleDayIndexes(hideWeekends);
+  const visibleWeeks = filterMonthWeeksForVisibleCurrentMonthDays(
+    month.weeks,
+    visibleDayIndexes,
+    hideWeekends,
+  );
   const visibleDayCount = visibleDayIndexes.length;
   const weekdayLabels = visibleDayIndexes.map((index) => WEEKDAY_LABELS[index] ?? "");
   const allDays = month.weeks.flatMap((w) => w.days);
@@ -772,9 +788,9 @@ export function MonthBoard({
         className="month-grid"
         role="grid"
         aria-label={`${month.label} schedule`}
-        style={{ ["--month-week-count" as string]: String(month.weeks.length) }}
+        style={{ ["--month-week-count" as string]: String(visibleWeeks.length) }}
       >
-        {month.weeks.map((week, weekIndex) => {
+        {visibleWeeks.map((week, weekIndex) => {
           const dayIndexToVisibleColumn = new Map(
             visibleDayIndexes.map((dayIndex, visibleColumnIndex) => [dayIndex, visibleColumnIndex]),
           );
