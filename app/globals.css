@@ -2379,6 +2379,9 @@ body {
       - max(4px, env(safe-area-inset-top, 0px))
       - max(4px, env(safe-area-inset-bottom, 0px))
     );
+    display: flex;
+    flex-direction: column;
+    scroll-padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
   }
 
   .month-booking-input,
@@ -2390,6 +2393,26 @@ body {
 
   .month-booking-input--small {
     font-size: 16px;
+  }
+
+  .board-day-modal--booking .month-booking-form {
+    gap: 8px;
+    min-height: 0;
+    padding-bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .board-day-modal--booking .month-booking-textarea {
+    min-height: 60px;
+    max-height: 28vh;
+  }
+
+  .board-day-modal--booking .board-day-modal-overture-brand {
+    margin-top: 4px;
+  }
+
+  .board-day-modal--booking .board-day-modal-overture-logo {
+    height: 32px;
+    max-width: min(140px, 100%);
   }
 
   .month-booking-calendar {
@@ -2410,8 +2433,9 @@ body {
   .month-booking-actions {
     position: sticky;
     bottom: 0;
+    z-index: 1;
     padding-top: 6px;
-    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
     background: linear-gradient(
       to top,
       color-mix(in srgb, var(--surface) 96%, transparent),
