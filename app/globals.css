@@ -256,7 +256,14 @@ body {
   display: inline-block;
   white-space: pre;
   opacity: 0;
-  animation: title-char-reveal 280ms ease-out both;
+  /*
+   * step-start is `steps(1, jump-start)`: state snaps to the end
+   * keyframe at the very start of the animation. Combined with
+   * `animation-fill-mode: both`, the char is held at opacity:0 during
+   * its inline `animation-delay`, then pops to opacity:1 the instant
+   * its turn arrives — no fade, no interpolation.
+   */
+  animation: title-char-reveal 90ms step-start both;
   will-change: opacity;
 }
 @keyframes title-char-reveal {
