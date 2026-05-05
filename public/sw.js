@@ -55,7 +55,8 @@ self.addEventListener("activate", function (event) {
 
 self.addEventListener("fetch", function (event) {
   const req = event.request;
-  if (shouldHandleNavigationRequest(req.url, req.method)) {
+  const signals = navigationSignalsFromRequest(req);
+  if (shouldHandleNavigationRequest(req.url, req.method, signals)) {
     event.respondWith(handleNavigationRequest(event, req));
     return;
   }
@@ -64,6 +65,29 @@ self.addEventListener("fetch", function (event) {
     return;
   }
 });
+
+function navigationSignalsFromRequest(req) {
+  let acceptHeader = null;
+  let rscHeader = null;
+  let prefetchHeader = null;
+  try {
+    if (req.headers) {
+      acceptHeader = req.headers.get("accept");
+      rscHeader = req.headers.get("rsc");
+      prefetchHeader = req.headers.get("next-router-prefetch");
+    }
+  } catch (e) {
+    // Some pre-Safari-16.4 contexts can throw on header access; treat as
+    // unknown — the URL/_rsc check below still rejects most RSC URLs.
+  }
+  return {
+    mode: req.mode || null,
+    destination: req.destination || null,
+    rscHeader: rscHeader,
+    prefetchHeader: prefetchHeader,
+    acceptHeader: acceptHeader,
+  };
+}
 
 async function handleNavigationRequest(event, req) {
   try {
@@ -177,10 +201,17 @@ async function notifyClients(message) {
 
 // --- Mirrored from lib/sw-cache-key.ts (keep in sync) ---
 
-function shouldHandleNavigationRequest(rawUrl, method) {
+function shouldHandleNavigationRequest(rawUrl, method, signals) {
   if (method !== "GET") return false;
+  signals = signals || {};
+  if (signals.rscHeader) return false;
+  if (signals.prefetchHeader) return false;
+  if (signals.mode != null && signals.mode !== "navigate") return false;
+  if (signals.destination != null && signals.destination !== "document") return false;
+  if (signals.acceptHeader != null && signals.acceptHeader.indexOf("text/html") === -1) return false;
   let url;
   try { url = new URL(rawUrl); } catch (e) { return false; }
+  if (url.searchParams.has("_rsc")) return false;
   return url.pathname === "/" || url.pathname === "";
 }
 

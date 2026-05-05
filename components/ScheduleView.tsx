@@ -477,14 +477,12 @@ export function ScheduleView({
       return;
     }
 
-    // Today is a guaranteed hard reset. We bypass BOTH the cached-derive
-    // path AND Next's router. router.push triggers an RSC fetch that
-    // the Stage 2 service worker intercepts as a navigation request
-    // (it matches by pathname only, not by Accept/RSC header) and
-    // returns cached HTML — which router.push can't parse. This was
-    // observed on mobile PWA where SW is active. A full browser
-    // navigation is the only path that reliably converges URL, router
-    // state, RSC, and UI.
+    // Today is a guaranteed reset. Now that the SW correctly distinguishes
+    // RSC fetches from document navigations, router.push works in PWA
+    // mode and we can use a soft navigation. URL, router state, RSC
+    // payload, derivedPayload, and UI all converge in one Next.js soft
+    // nav. The pulse token is bumped synchronously and survives the
+    // soft nav because ScheduleView's component instance persists.
     const isTodayNavigation = isTodayClickTarget(
       target,
       sourcePayload.todayKey,
@@ -492,11 +490,7 @@ export function ScheduleView({
     );
     if (isTodayNavigation) {
       setDerivedPayload(null);
-      if (typeof window !== "undefined" && typeof window.location?.assign === "function") {
-        window.location.assign(href);
-        return;
-      }
-      // SSR / unsupported environment fallback.
+      setTodayPulseToken((t) => t + 1);
       router.push(href);
       return;
     }

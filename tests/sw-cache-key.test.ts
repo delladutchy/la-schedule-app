@@ -165,6 +165,63 @@ describe("shouldHandleNavigationRequest", () => {
   it("returns false for unparseable URLs", () => {
     expect(shouldHandleNavigationRequest("not-a-url", "GET")).toBe(false);
   });
+
+  describe("RSC / router-data filtering", () => {
+    const url = "https://example.com/?view=list";
+    const docSignals = {
+      mode: "navigate",
+      destination: "document",
+      acceptHeader: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    };
+
+    it("accepts a real top-level document navigation", () => {
+      expect(shouldHandleNavigationRequest(url, "GET", docSignals)).toBe(true);
+    });
+
+    it("rejects requests carrying the RSC header (Next.js router data)", () => {
+      expect(shouldHandleNavigationRequest(url, "GET", { ...docSignals, rscHeader: "1" })).toBe(false);
+    });
+
+    it("rejects RSC prefetches", () => {
+      expect(shouldHandleNavigationRequest(url, "GET", { ...docSignals, prefetchHeader: "1" })).toBe(false);
+    });
+
+    it("rejects requests with the legacy _rsc query param", () => {
+      expect(shouldHandleNavigationRequest("https://example.com/?_rsc=abc", "GET", docSignals)).toBe(false);
+      expect(shouldHandleNavigationRequest("https://example.com/?view=list&_rsc=abc", "GET", docSignals)).toBe(false);
+    });
+
+    it("rejects requests whose mode is not navigate", () => {
+      expect(shouldHandleNavigationRequest(url, "GET", { ...docSignals, mode: "cors" })).toBe(false);
+      expect(shouldHandleNavigationRequest(url, "GET", { ...docSignals, mode: "same-origin" })).toBe(false);
+      expect(shouldHandleNavigationRequest(url, "GET", { ...docSignals, mode: "no-cors" })).toBe(false);
+    });
+
+    it("rejects requests whose destination is not document", () => {
+      expect(shouldHandleNavigationRequest(url, "GET", { ...docSignals, destination: "empty" })).toBe(false);
+      expect(shouldHandleNavigationRequest(url, "GET", { ...docSignals, destination: "image" })).toBe(false);
+    });
+
+    it("rejects requests whose Accept header lacks text/html", () => {
+      expect(shouldHandleNavigationRequest(url, "GET", { ...docSignals, acceptHeader: "*/*" })).toBe(false);
+      expect(shouldHandleNavigationRequest(url, "GET", { ...docSignals, acceptHeader: "application/json" })).toBe(false);
+    });
+
+    it("does not require any signal to be present (back-compat with old call sites)", () => {
+      expect(shouldHandleNavigationRequest(url, "GET")).toBe(true);
+      expect(shouldHandleNavigationRequest(url, "GET", {})).toBe(true);
+    });
+
+    it("treats null/undefined signal values as unknown and stays permissive", () => {
+      expect(shouldHandleNavigationRequest(url, "GET", {
+        mode: null,
+        destination: null,
+        acceptHeader: null,
+        rscHeader: null,
+        prefetchHeader: null,
+      })).toBe(true);
+    });
+  });
 });
 
 describe("shouldPersistResponseForRequest", () => {
