@@ -251,25 +251,25 @@ body {
  */
 .title--premium {
   letter-spacing: -0.025em;
-  animation: title-reveal 1100ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
-  will-change: filter, opacity;
+  animation: title-type 900ms steps(9, end) both;
+  will-change: clip-path;
 }
-@keyframes title-reveal {
+@keyframes title-type {
   0% {
-    filter: blur(8px);
-    opacity: 0.45;
+    -webkit-clip-path: inset(0 100% 0 0);
+    clip-path: inset(0 100% 0 0);
   }
   100% {
-    filter: blur(0);
-    opacity: 1;
+    -webkit-clip-path: inset(0 0 0 0);
+    clip-path: inset(0 0 0 0);
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .title--premium {
     animation: none;
     will-change: auto;
-    filter: none;
-    opacity: 1;
+    -webkit-clip-path: none;
+    clip-path: none;
   }
 }
 .theme-toggle-button {
