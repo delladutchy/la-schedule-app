@@ -7,6 +7,7 @@ import {
   parseBoardWindowQuery,
   resolveBoardRequestEditorId,
 } from "@/lib/board-window";
+import type { Snapshot } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -15,12 +16,27 @@ export async function GET(req: Request) {
   const nowMs = Date.now();
 
   const snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
-  const state = classifySnapshot(snapshot, nowMs, {
+  let state = classifySnapshot(snapshot, nowMs, {
     freshTtlMinutes: file.freshTtlMinutes,
     hardTtlMinutes: file.hardTtlMinutes,
   });
 
+  // Mirror page render: prefer last-known-good stale snapshot over 503 when
+  // the snapshot is parseable and its window still covers the present.
+  if (state.status === "unavailable" && snapshot) {
+    const rescued = rescueStaleSnapshot(snapshot, nowMs);
+    if (rescued) {
+      console.warn(
+        `[board-window] last-known-good fallback age=${rescued.ageMinutes !== null ? Math.round(rescued.ageMinutes) : "?"}m generatedAt=${snapshot.generatedAtUtc}`,
+      );
+      state = rescued;
+    }
+  }
+
   if (!state.snapshot || state.status === "unavailable") {
+    console.warn(
+      `[board-window] unavailable hadParseableSnapshot=${snapshot != null} reason=${state.reason ?? "snapshot_unavailable"}`,
+    );
     return NextResponse.json(
       {
         status: "unavailable",
@@ -43,4 +59,19 @@ export async function GET(req: Request) {
   });
 
   return NextResponse.json(payload);
+}
+
+function rescueStaleSnapshot(
+  snapshot: Snapshot,
+  nowMs: number,
+): ReturnType<typeof classifySnapshot> | null {
+  const generatedMs = Date.parse(snapshot.generatedAtUtc);
+  const windowEndMs = Date.parse(snapshot.windowEndUtc);
+  if (!Number.isFinite(generatedMs) || !Number.isFinite(windowEndMs)) return null;
+  if (windowEndMs <= nowMs) return null;
+  return {
+    status: "stale",
+    snapshot,
+    ageMinutes: Math.max(0, (nowMs - generatedMs) / 60000),
+  };
 }

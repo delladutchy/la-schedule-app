@@ -82,6 +82,34 @@ function resolveInitialEditorId(
   return auth.ok ? auth.editorId : null;
 }
 
+function describeUnavailableReason(
+  snapshot: Awaited<ReturnType<typeof readCurrentSnapshot>>,
+  state: ReturnType<typeof classifySnapshot>,
+): string {
+  if (!snapshot) return "no_snapshot_in_store";
+  const generatedMs = Date.parse(snapshot.generatedAtUtc);
+  if (!Number.isFinite(generatedMs)) return "snapshot_timestamp_invalid";
+  const ageMinutes = state.ageMinutes !== null
+    ? Math.round(state.ageMinutes)
+    : Math.round(Math.max(0, (Date.now() - generatedMs) / 60000));
+  return `hard_stale_age=${ageMinutes}m`;
+}
+
+function rescueStaleSnapshot(
+  snapshot: NonNullable<Awaited<ReturnType<typeof readCurrentSnapshot>>>,
+  nowMs: number,
+): ReturnType<typeof classifySnapshot> | null {
+  const generatedMs = Date.parse(snapshot.generatedAtUtc);
+  const windowEndMs = Date.parse(snapshot.windowEndUtc);
+  if (!Number.isFinite(generatedMs) || !Number.isFinite(windowEndMs)) return null;
+  if (windowEndMs <= nowMs) return null;
+  return {
+    status: "stale",
+    snapshot,
+    ageMinutes: Math.max(0, (nowMs - generatedMs) / 60000),
+  };
+}
+
 async function autoBootstrapSnapshotIfNeeded(enabled: boolean): Promise<void> {
   if (!enabled) return;
   const now = Date.now();
@@ -135,6 +163,9 @@ export default async function AvailabilityPage({
   });
 
   if (state.status === "unavailable" || !state.snapshot) {
+    console.warn(
+      `[page] snapshot unavailable preBootstrap reason=${describeUnavailableReason(snapshot, state)} hard=${file.hardTtlMinutes}m`,
+    );
     await autoBootstrapSnapshotIfNeeded(env.AUTO_BOOTSTRAP_ON_UNAVAILABLE);
     snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
     state = classifySnapshot(snapshot, now, {
@@ -143,8 +174,25 @@ export default async function AvailabilityPage({
     });
   }
 
-  // Fail-closed render
+  // Last-known-good rescue: if we still classify as unavailable but the
+  // persisted snapshot is parseable and its projection window still covers
+  // the present moment, render it as "stale" rather than failing closed.
+  // Better to show slightly old but real availability than nothing.
+  if (state.status === "unavailable" && snapshot) {
+    const rescued = rescueStaleSnapshot(snapshot, now);
+    if (rescued) {
+      console.warn(
+        `[page] last-known-good fallback render age=${rescued.ageMinutes !== null ? Math.round(rescued.ageMinutes) : "?"}m hard=${file.hardTtlMinutes}m generatedAt=${snapshot.generatedAtUtc} windowEnd=${snapshot.windowEndUtc}`,
+      );
+      state = rescued;
+    }
+  }
+
+  // Fail-closed render — only when we truly cannot serve any usable data.
   if (state.status === "unavailable" || !state.snapshot) {
+    console.error(
+      `[page] fail-closed reason=${describeUnavailableReason(snapshot, state)} hadParseableSnapshot=${snapshot != null}`,
+    );
     return (
       <div className="page">
         <div className="fail-closed">

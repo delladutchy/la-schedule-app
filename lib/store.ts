@@ -117,9 +117,13 @@ export async function readCurrentSnapshot(
 
   const cachedSnapshot = lastKnownGoodSnapshots.get(storeName);
   if (cachedSnapshot) {
+    console.warn(
+      `[snapshot] remote read failed twice; serving in-memory last-known-good generatedAt=${cachedSnapshot.generatedAtUtc}`,
+    );
     return cachedSnapshot;
   }
 
+  console.warn(`[snapshot] remote read returned no snapshot store=${storeName}`);
   return null;
 }
 
