@@ -284,7 +284,6 @@ export default async function AvailabilityPage({
     timezone: tz,
   });
   const monthCanGoPrev = monthNav.hasPrev && monthNav.monthKey > todayMonthKey;
-  const titleMain = file.pageTitle.replace(/\s*[—-]\s*Jeff(?:\s+Ulsh)?\s*$/i, "").trim() || "Availability";
 
   // Month view: full month grid with one status per day.
   const month = buildMonthBoard({
@@ -328,10 +327,7 @@ export default async function AvailabilityPage({
     <div className={`page${viewMode === "month" ? " page--month" : ""}`}>
       <EditorTokenBridge />
       <header className="header">
-        <h1 className="title">
-          <span>{titleMain}</span>
-          <span className="title-muted"> · Jeff Ulsh</span>
-        </h1>
+        <h1 className="title">Jeff Ulsh</h1>
         <div className="header-actions">
           <div className="header-editor-tools">
             <EditorSyncButton initialEditorToken={initialEditorToken} />
