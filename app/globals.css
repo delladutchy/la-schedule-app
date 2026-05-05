@@ -238,39 +238,18 @@ body {
 }
 
 /*
- * Premium variant of .title. Tighter tracking + a vertical gradient
- * text fill that blends toward --today-accent, plus a low-alpha
- * two-stop text-shadow halo for a restrained "lit-from-within" glow.
- * Paint-only, no motion, no layout shift, no JS. Light mode tones the
- * glow down so the saturated accent doesn't smudge against #f7f6f4.
+ * Premium variant of .title. Pairs with the Space Grotesk font set
+ * via next/font (applied as an additional className on the h1 in
+ * app/page.tsx) and the one-shot scramble in HeaderTitle.tsx.
+ * The previous gradient + glow have been removed in favor of a
+ * cleaner, sharper render that lets the new geometric face do the
+ * visual work.
  *
  * Rollback: remove the `title--premium` className in app/page.tsx,
- * OR delete this entire block (everything between this comment and
- * the next non-related selector). One file, one change.
+ * OR delete this block. One file, one change.
  */
 .title--premium {
-  letter-spacing: -0.04em;
-  background-image: linear-gradient(
-    180deg,
-    var(--text) 0%,
-    color-mix(in srgb, var(--text) 76%, var(--today-accent)) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  text-shadow:
-    0 0 16px color-mix(in srgb, var(--today-accent) 30%, transparent),
-    0 0 3px color-mix(in srgb, var(--today-accent) 18%, transparent);
-}
-@supports ((-webkit-background-clip: text) or (background-clip: text)) {
-  .title--premium {
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-  }
-}
-:root[data-theme="light"] .title--premium {
-  text-shadow:
-    0 0 14px color-mix(in srgb, var(--today-accent) 16%, transparent),
-    0 0 2px color-mix(in srgb, var(--today-accent) 10%, transparent);
+  letter-spacing: -0.025em;
 }
 .theme-toggle-button {
   appearance: none;

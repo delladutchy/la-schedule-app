@@ -30,6 +30,10 @@ vi.mock("next/headers", () => ({
   cookies: (...args: unknown[]) => cookiesMock(...args),
 }));
 
+vi.mock("next/font/google", () => ({
+  Space_Grotesk: () => ({ className: "mock-space-grotesk", style: {}, variable: "--mock" }),
+}));
+
 vi.mock("@/lib/store", () => ({
   readCurrentSnapshot: (...args: unknown[]) => readCurrentSnapshot(...args),
 }));
@@ -109,6 +113,10 @@ vi.mock("@/components/EditorHistoryButton", () => ({
 
 vi.mock("@/components/EditorTokenBridge", () => ({
   EditorTokenBridge: () => null,
+}));
+
+vi.mock("@/components/HeaderTitle", () => ({
+  HeaderTitle: () => null,
 }));
 
 describe("Availability page render sync behavior", () => {

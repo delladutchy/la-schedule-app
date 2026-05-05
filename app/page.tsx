@@ -17,7 +17,19 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { EditorSyncButton } from "@/components/EditorSyncButton";
 import { EditorHistoryButton } from "@/components/EditorHistoryButton";
 import { EditorTokenBridge } from "@/components/EditorTokenBridge";
+import { HeaderTitle } from "@/components/HeaderTitle";
 import { cookies } from "next/headers";
+import { Space_Grotesk } from "next/font/google";
+
+// Header-only font. Subset to latin and a single weight so the
+// payload stays small (~25–35 KB woff2). `display: swap` so the
+// fallback paints first and the geometric face replaces it the
+// moment it's available — no FOIT.
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["600"],
+  display: "swap",
+});
 
 /**
  * The public availability page.
@@ -327,7 +339,7 @@ export default async function AvailabilityPage({
     <div className={`page${viewMode === "month" ? " page--month" : ""}`}>
       <EditorTokenBridge />
       <header className="header">
-        <h1 className="title title--premium">Jeff Ulsh</h1>
+        <HeaderTitle className={`title title--premium ${spaceGrotesk.className}`} />
         <div className="header-actions">
           <div className="header-editor-tools">
             <EditorSyncButton initialEditorToken={initialEditorToken} />
