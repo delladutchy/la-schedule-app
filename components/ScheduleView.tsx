@@ -17,6 +17,7 @@ import {
   readCache as readPersistedCache,
   writeCache as writePersistedCache,
 } from "@/lib/board-window-cache";
+import { isTodayClickTarget } from "@/lib/today-navigation";
 
 const BACKGROUND_REFRESH_DEBOUNCE_MS = 200;
 const BACKGROUND_REFRESH_MIN_INTERVAL_MS = 30_000;
@@ -301,6 +302,7 @@ export function ScheduleView({
     [buildBoardWindowCacheKey(initialBoardWindowPayload)]: initialBoardWindowPayload,
   }));
   const [derivedPayload, setDerivedPayload] = useState<BoardWindowPayload | null>(null);
+  const [todayPulseToken, setTodayPulseToken] = useState(0);
   const lastBackgroundRefreshAtRef = useRef(0);
 
   useEffect(() => {
@@ -475,10 +477,28 @@ export function ScheduleView({
       return;
     }
 
+    // Today is special: always route through Next.js's router so URL,
+    // router state, RSC/SSR payload, and rendered UI converge in one
+    // soft navigation. The cached-derive path uses pushStateHref, which
+    // updates window.location but NOT Next's internal router state; a
+    // chain of derived navigations can leave router state out of sync
+    // with the address bar, and that desync is what makes Today appear
+    // unreliable on desktop. Correctness > the ~150ms speed delta.
+    const isTodayNavigation = isTodayClickTarget(
+      target,
+      sourcePayload.todayKey,
+      sourcePayload.todayMonthKey,
+    );
+    if (isTodayNavigation) {
+      setTodayPulseToken((t) => t + 1);
+      router.push(href);
+      return;
+    }
+
     // Resolve target via direct lookup in the cached weekWindow / monthWindow.
-    // This unifies prev/next/Today/swipe and any same-view jump that lands
-    // inside the precomputed window. Targets outside the window fall through
-    // to router.push so SSR can produce a fresh window centered on the target.
+    // This handles prev/next/swipe and any same-view jump that lands inside
+    // the precomputed window. Targets outside the window fall through to
+    // router.push so SSR can produce a fresh window centered on the target.
     let nextPayload: BoardWindowPayload | null = null;
     if (sourcePayload.selected.view === "list" && target.viewMode === "list") {
       nextPayload = deriveWeekPayloadForTarget(cachedSource, target.weekStart);
@@ -609,6 +629,7 @@ export function ScheduleView({
             showWeekends={showWeekends}
             onNavigate={handleBoardNavigate}
             onMutationSuccess={invalidatePersistedCache}
+            todayPulseToken={todayPulseToken}
           />
         </>
       ) : (
@@ -689,6 +710,7 @@ export function ScheduleView({
             showWeekends={showWeekends}
             onNavigate={handleBoardNavigate}
             onMutationSuccess={invalidatePersistedCache}
+            todayPulseToken={todayPulseToken}
           />
         </>
       )}
