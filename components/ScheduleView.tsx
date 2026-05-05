@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { DateTime } from "luxon";
@@ -9,6 +9,17 @@ import type { BoardWindowPayload } from "@/lib/board-window";
 import { DayBoard } from "@/components/DayBoard";
 import { MonthBoard } from "@/components/MonthBoard";
 import { sanitizeEditorToken } from "@/lib/editor-session";
+import {
+  buildViewKey as buildPersistedViewKey,
+  clearCache as clearPersistedCache,
+  editorIdToBucket,
+  pickFreshestForView,
+  readCache as readPersistedCache,
+  writeCache as writePersistedCache,
+} from "@/lib/board-window-cache";
+
+const BACKGROUND_REFRESH_DEBOUNCE_MS = 200;
+const BACKGROUND_REFRESH_MIN_INTERVAL_MS = 30_000;
 
 const MIKE_SHOW_WEEKENDS_STORAGE_KEY = "la_schedule_mike_show_weekends";
 const MIKE_SHOW_WEEKENDS_COOKIE_KEY = "la_schedule_mike_show_weekends";
@@ -136,14 +147,13 @@ function pushStateHref(href: string): void {
   }
 }
 
-function deriveAdjacentWeekPayload(
+function deriveWeekPayloadForTarget(
   source: BoardWindowPayload,
-  direction: -1 | 1,
+  targetWeekStart: string,
 ): BoardWindowPayload | null {
   const weeks = source.weekWindow.weeks;
-  const currentIndex = weeks.findIndex((week) => week.weekOf === source.selected.weekStart);
-  if (currentIndex < 0) return null;
-  const targetIndex = currentIndex + direction;
+  const targetIndex = weeks.findIndex((week) => week.weekOf === targetWeekStart);
+  if (targetIndex < 0) return null;
   const targetWeek = weeks[targetIndex];
   if (!targetWeek) return null;
 
@@ -190,14 +200,13 @@ function deriveAdjacentWeekPayload(
   };
 }
 
-function deriveAdjacentMonthPayload(
+function deriveMonthPayloadForTarget(
   source: BoardWindowPayload,
-  direction: -1 | 1,
+  targetMonthKey: string,
 ): BoardWindowPayload | null {
   const months = source.monthWindow.months;
-  const currentIndex = months.findIndex((entry) => entry.monthKey === source.selected.monthKey);
-  if (currentIndex < 0) return null;
-  const targetIndex = currentIndex + direction;
+  const targetIndex = months.findIndex((entry) => entry.monthKey === targetMonthKey);
+  if (targetIndex < 0) return null;
   const targetMonth = months[targetIndex];
   if (!targetMonth) return null;
 
@@ -286,11 +295,13 @@ export function ScheduleView({
   const navigationEditorToken = sanitizeEditorToken(searchParams.get("editor"));
   const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
   const isMikeEditor = normalizedEditorId === "mike";
+  const persistedBucket = editorIdToBucket(normalizedEditorId);
   const [showWeekends, setShowWeekends] = useState(initialShowWeekends);
   const [boardWindowCache, setBoardWindowCache] = useState<BoardWindowCache>(() => ({
     [buildBoardWindowCacheKey(initialBoardWindowPayload)]: initialBoardWindowPayload,
   }));
   const [derivedPayload, setDerivedPayload] = useState<BoardWindowPayload | null>(null);
+  const lastBackgroundRefreshAtRef = useRef(0);
 
   useEffect(() => {
     if (!isMikeEditor) {
@@ -326,6 +337,94 @@ export function ScheduleView({
     ));
     setDerivedPayload(null);
   }, [initialBoardWindowPayload]);
+
+  // Hydrate persisted cache for this editor on mount, and only swap state
+  // when the cached payload is strictly newer than the SSR one for the
+  // same view. SSR data is always authoritative on first paint.
+  useEffect(() => {
+    const ssrViewKey = buildPersistedViewKey(initialBoardWindowPayload);
+    const entry = readPersistedCache(persistedBucket);
+    const fresher = pickFreshestForView(entry, persistedBucket, ssrViewKey, initialBoardWindowPayload);
+    if (!fresher) return;
+    setBoardWindowCache((prev) => ({
+      ...prev,
+      [buildBoardWindowCacheKey(fresher)]: fresher,
+    }));
+    setDerivedPayload(fresher);
+  }, [initialBoardWindowPayload, persistedBucket]);
+
+  // Write-through: every payload that drives the UI is persisted under
+  // the active editor's bucket. The SSR initial payload is also written
+  // so a future cold launch can hydrate instantly from disk.
+  useEffect(() => {
+    writePersistedCache(persistedBucket, initialBoardWindowPayload);
+  }, [persistedBucket, initialBoardWindowPayload]);
+
+  useEffect(() => {
+    if (!derivedPayload) return;
+    writePersistedCache(persistedBucket, derivedPayload);
+  }, [persistedBucket, derivedPayload]);
+
+  // Background revalidation: after first paint, refresh /api/board/window
+  // for the active selection and reconcile if the server has fresher data.
+  // Also refresh when the user returns to the tab after >30s away.
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const refresh = async (reason: "mount" | "visible") => {
+      const now = Date.now();
+      if (now - lastBackgroundRefreshAtRef.current < BACKGROUND_REFRESH_MIN_INTERVAL_MS
+          && reason !== "mount") {
+        return;
+      }
+      lastBackgroundRefreshAtRef.current = now;
+      const active = derivedPayload ?? initialBoardWindowPayload;
+      const fresh = await fetchBoardWindowPayload({
+        viewMode: active.selected.view,
+        start: active.selected.weekStart,
+        month: active.selected.monthKey,
+        signal: controller.signal,
+        editorToken: navigationEditorToken,
+      });
+      if (cancelled || !fresh) return;
+      if (fresh.generatedAtUtc <= active.generatedAtUtc) {
+        // Server returned same-or-older payload; still rewrite cache so
+        // its updatedAtMs advances, but don't disturb the UI.
+        writePersistedCache(persistedBucket, fresh);
+        return;
+      }
+      setBoardWindowCache((prev) => ({
+        ...prev,
+        [buildBoardWindowCacheKey(fresh)]: fresh,
+      }));
+      setDerivedPayload(fresh);
+    };
+
+    const debounceId = window.setTimeout(() => {
+      void refresh("mount");
+    }, BACKGROUND_REFRESH_DEBOUNCE_MS);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void refresh("visible");
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(debounceId);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+    // We intentionally only re-run on editor / SSR-payload identity
+    // changes; later derivation updates should not retrigger fetches.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistedBucket, initialBoardWindowPayload, navigationEditorToken]);
+
+  const invalidatePersistedCache = useCallback(() => {
+    clearPersistedCache(persistedBucket);
+  }, [persistedBucket]);
 
   const effectiveViewMode = derivedPayload?.selected.view ?? viewMode;
   const effectiveWeekRows = derivedPayload?.selectedBoards.weekRows ?? weekRows;
@@ -376,19 +475,15 @@ export function ScheduleView({
       return;
     }
 
+    // Resolve target via direct lookup in the cached weekWindow / monthWindow.
+    // This unifies prev/next/Today/swipe and any same-view jump that lands
+    // inside the precomputed window. Targets outside the window fall through
+    // to router.push so SSR can produce a fresh window centered on the target.
     let nextPayload: BoardWindowPayload | null = null;
     if (sourcePayload.selected.view === "list" && target.viewMode === "list") {
-      if (target.weekStart === sourcePayload.selected.weekNav.nextStart) {
-        nextPayload = deriveAdjacentWeekPayload(cachedSource, 1);
-      } else if (target.weekStart === sourcePayload.selected.weekNav.prevStart) {
-        nextPayload = deriveAdjacentWeekPayload(cachedSource, -1);
-      }
+      nextPayload = deriveWeekPayloadForTarget(cachedSource, target.weekStart);
     } else if (sourcePayload.selected.view === "month" && target.viewMode === "month") {
-      if (target.monthKey === sourcePayload.selected.monthNav.nextMonth) {
-        nextPayload = deriveAdjacentMonthPayload(cachedSource, 1);
-      } else if (target.monthKey === sourcePayload.selected.monthNav.prevMonth) {
-        nextPayload = deriveAdjacentMonthPayload(cachedSource, -1);
-      }
+      nextPayload = deriveMonthPayloadForTarget(cachedSource, target.monthKey);
     }
 
     if (!nextPayload) {
@@ -472,7 +567,14 @@ export function ScheduleView({
                 ← Previous
               </a>
             )}
-            <Link className="nav-button" href={weekTodayHref} aria-label="Today" prefetch={true} scroll={false}>
+            <Link
+              className="nav-button"
+              href={weekTodayHref}
+              aria-label="Today"
+              prefetch={true}
+              scroll={false}
+              onClick={navLinkClickHandler(weekTodayHref)}
+            >
               Today
             </Link>
             {effectiveWeekCanGoNext ? (
@@ -506,6 +608,7 @@ export function ScheduleView({
             canGoNext={effectiveWeekCanGoNext}
             showWeekends={showWeekends}
             onNavigate={handleBoardNavigate}
+            onMutationSuccess={invalidatePersistedCache}
           />
         </>
       ) : (
@@ -519,6 +622,7 @@ export function ScheduleView({
                 aria-label="Today"
                 prefetch={true}
                 scroll={false}
+                onClick={navLinkClickHandler(monthTodayHref)}
               >
                 Today
               </Link>
@@ -542,7 +646,14 @@ export function ScheduleView({
                 ← Previous
               </a>
             )}
-            <Link className="nav-button" href={monthTodayHref} aria-label="Today" prefetch={true} scroll={false}>
+            <Link
+              className="nav-button"
+              href={monthTodayHref}
+              aria-label="Today"
+              prefetch={true}
+              scroll={false}
+              onClick={navLinkClickHandler(monthTodayHref)}
+            >
               Today
             </Link>
             {effectiveMonthCanGoNext ? (
@@ -577,6 +688,7 @@ export function ScheduleView({
             canGoNext={effectiveMonthCanGoNext}
             showWeekends={showWeekends}
             onNavigate={handleBoardNavigate}
+            onMutationSuccess={invalidatePersistedCache}
           />
         </>
       )}

@@ -25,3 +25,17 @@
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "camera=(), microphone=(), geolocation=()"
     Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
+
+# Service worker file must never be cached by the browser. Without this
+# header, deploying a new sw.js (including a kill-switch rollback) can
+# take up to 24 hours to propagate to installed clients.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-store, no-cache, must-revalidate"
+    Service-Worker-Allowed = "/"
+
+[[headers]]
+  for = "/sw-kill.js"
+  [headers.values]
+    Cache-Control = "no-store, no-cache, must-revalidate"

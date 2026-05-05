@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
+import { clearAllCaches as clearAllBoardWindowCaches } from "@/lib/board-window-cache";
 
 interface Props {
   initialEditorToken?: string;
@@ -125,6 +126,7 @@ export function EditorSyncButton({ initialEditorToken }: Props) {
             }
 
             setNotice({ kind: "ok", message: "Calendar synced." });
+            clearAllBoardWindowCaches();
             router.refresh();
           } catch {
             setNotice({ kind: "error", message: "Network error." });

@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+import { HydrationFlag } from "@/components/HydrationFlag";
 
 export const metadata: Metadata = {
   title: "LA Schedule",
@@ -47,9 +49,35 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
+        {/* Static fallback for the in-app status bar / launch chrome.
+            The viewport.themeColor entries above already provide
+            light/dark-aware values; this one is the unconditional
+            fallback for browsers that paint before evaluating the
+            media-queried variants. */}
+        <meta name="theme-color" content="#0b0b0b" />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body>{children}</body>
+      <body>
+        <div id="app-shell" aria-hidden="true">
+          <div className="app-shell-header" />
+          <div className="app-shell-toolbar" />
+          <div className="app-shell-nav">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="app-shell-rows">
+            <span />
+            <span />
+            <span />
+            <span />
+            <span />
+          </div>
+        </div>
+        {children}
+        <HydrationFlag />
+        <ServiceWorkerRegister />
+      </body>
     </html>
   );
 }
