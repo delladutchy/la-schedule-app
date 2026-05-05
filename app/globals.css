@@ -238,18 +238,39 @@ body {
 }
 
 /*
- * Premium variant of .title. Pairs with the Space Grotesk font set
- * via next/font (applied as an additional className on the h1 in
- * app/page.tsx) and the one-shot scramble in HeaderTitle.tsx.
- * The previous gradient + glow have been removed in favor of a
- * cleaner, sharper render that lets the new geometric face do the
- * visual work.
+ * Premium variant of .title. Pairs with the Inter font set via
+ * next/font (applied as an additional className on the h1 in
+ * app/page.tsx). Adds a slow one-shot reveal: opacity fade,
+ * 5px upward translate, and a tiny letter-spacing settle.
+ * Pure CSS — no JS, no scramble, no flicker. The animation runs
+ * exactly once because the h1 only mounts once per document load
+ * (Next.js soft navs preserve the same DOM node).
  *
  * Rollback: remove the `title--premium` className in app/page.tsx,
  * OR delete this block. One file, one change.
  */
 .title--premium {
   letter-spacing: -0.025em;
+  animation: title-reveal 760ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  will-change: opacity, transform;
+}
+@keyframes title-reveal {
+  0% {
+    opacity: 0;
+    transform: translateY(5px);
+    letter-spacing: -0.012em;
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    letter-spacing: -0.025em;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .title--premium {
+    animation: none;
+    will-change: auto;
+  }
 }
 .theme-toggle-button {
   appearance: none;

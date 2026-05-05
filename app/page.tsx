@@ -17,15 +17,13 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { EditorSyncButton } from "@/components/EditorSyncButton";
 import { EditorHistoryButton } from "@/components/EditorHistoryButton";
 import { EditorTokenBridge } from "@/components/EditorTokenBridge";
-import { HeaderTitle } from "@/components/HeaderTitle";
 import { cookies } from "next/headers";
-import { Space_Grotesk } from "next/font/google";
+import { Inter } from "next/font/google";
 
 // Header-only font. Subset to latin and a single weight so the
-// payload stays small (~25–35 KB woff2). `display: swap` so the
-// fallback paints first and the geometric face replaces it the
-// moment it's available — no FOIT.
-const spaceGrotesk = Space_Grotesk({
+// payload stays small. `display: swap` so the fallback paints first
+// and Inter replaces it the moment it's available — no FOIT.
+const headerFont = Inter({
   subsets: ["latin"],
   weight: ["600"],
   display: "swap",
@@ -339,7 +337,7 @@ export default async function AvailabilityPage({
     <div className={`page${viewMode === "month" ? " page--month" : ""}`}>
       <EditorTokenBridge />
       <header className="header">
-        <HeaderTitle className={`title title--premium ${spaceGrotesk.className}`} />
+        <h1 className={`title title--premium ${headerFont.className}`}>Jeff Ulsh</h1>
         <div className="header-actions">
           <div className="header-editor-tools">
             <EditorSyncButton initialEditorToken={initialEditorToken} />

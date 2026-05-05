@@ -31,7 +31,7 @@ vi.mock("next/headers", () => ({
 }));
 
 vi.mock("next/font/google", () => ({
-  Space_Grotesk: () => ({ className: "mock-space-grotesk", style: {}, variable: "--mock" }),
+  Inter: () => ({ className: "mock-inter", style: {}, variable: "--mock" }),
 }));
 
 vi.mock("@/lib/store", () => ({
@@ -113,10 +113,6 @@ vi.mock("@/components/EditorHistoryButton", () => ({
 
 vi.mock("@/components/EditorTokenBridge", () => ({
   EditorTokenBridge: () => null,
-}));
-
-vi.mock("@/components/HeaderTitle", () => ({
-  HeaderTitle: () => null,
 }));
 
 describe("Availability page render sync behavior", () => {
