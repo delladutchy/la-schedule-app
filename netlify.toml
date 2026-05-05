@@ -39,3 +39,12 @@
   for = "/sw-kill.js"
   [headers.values]
     Cache-Control = "no-store, no-cache, must-revalidate"
+
+# Brand assets are stable, public, and never personalized. Long-lived
+# immutable caching ensures the browser/CDN never re-fetches them after
+# the first hit. To roll a new logo, change the filename so the cache
+# key changes (or bump STATIC_CACHE_NAME in public/sw.js).
+[[headers]]
+  for = "/brand/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

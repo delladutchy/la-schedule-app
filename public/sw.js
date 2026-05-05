@@ -23,8 +23,11 @@
  */
 
 const SHELL_CACHE_NAME = "la-app-shell:v1";
+const STATIC_CACHE_NAME = "la-static:v1";
 const SESSION_COOKIE_NAME = "la_editor_session";
 const KNOWN_EDITORS = ["jeff", "legacy", "dave", "milos", "mike"];
+const STATIC_CACHE_PATH_PREFIXES = ["/brand/"];
+const PRESERVED_CACHE_NAMES = [SHELL_CACHE_NAME, STATIC_CACHE_NAME];
 
 self.addEventListener("install", function (event) {
   event.waitUntil(self.skipWaiting());
@@ -36,7 +39,7 @@ self.addEventListener("activate", function (event) {
       const names = await caches.keys();
       await Promise.all(
         names
-          .filter(function (n) { return n !== SHELL_CACHE_NAME; })
+          .filter(function (n) { return PRESERVED_CACHE_NAMES.indexOf(n) === -1; })
           .map(function (n) { return caches.delete(n); }),
       );
     } catch (e) {
@@ -52,36 +55,73 @@ self.addEventListener("activate", function (event) {
 
 self.addEventListener("fetch", function (event) {
   const req = event.request;
-  if (!shouldHandleNavigationRequest(req.url, req.method)) return;
-
-  event.respondWith((async function () {
-    try {
-      const bucket = deriveShellBucket(req.headers.get("cookie"));
-      const cacheKey = buildShellCacheKey(req.url, bucket);
-      const cache = await caches.open(SHELL_CACHE_NAME);
-      const cached = await cache.match(cacheKey);
-
-      if (cached) {
-        // Hit: serve cached HTML now, revalidate in the background.
-        event.waitUntil(
-          revalidate(req, cache, cacheKey).then(function (didUpdate) {
-            if (didUpdate) notifyClients({ type: "shell-revalidated" });
-          }),
-        );
-        return cached;
-      }
-
-      // Miss: go to the network. Cache only when the request URL had
-      // no `?editor=TOKEN` to keep the raw token out of stored bytes.
-      const fresh = await fetchAndMaybeCache(req, cache, cacheKey);
-      if (fresh) return fresh;
-      return fetch(req);
-    } catch (e) {
-      // Any SW failure → network fallback. SSR remains source of truth.
-      return fetch(req);
-    }
-  })());
+  if (shouldHandleNavigationRequest(req.url, req.method)) {
+    event.respondWith(handleNavigationRequest(event, req));
+    return;
+  }
+  if (shouldHandleStaticAssetRequest(req.url, req.method)) {
+    event.respondWith(handleStaticAssetRequest(event, req));
+    return;
+  }
 });
+
+async function handleNavigationRequest(event, req) {
+  try {
+    const bucket = deriveShellBucket(req.headers.get("cookie"));
+    const cacheKey = buildShellCacheKey(req.url, bucket);
+    const cache = await caches.open(SHELL_CACHE_NAME);
+    const cached = await cache.match(cacheKey);
+
+    if (cached) {
+      // Hit: serve cached HTML now, revalidate in the background.
+      event.waitUntil(
+        revalidate(req, cache, cacheKey).then(function (didUpdate) {
+          if (didUpdate) notifyClients({ type: "shell-revalidated" });
+        }),
+      );
+      return cached;
+    }
+
+    // Miss: go to the network. Cache only when the request URL had
+    // no `?editor=TOKEN` to keep the raw token out of stored bytes.
+    const fresh = await fetchAndMaybeCache(req, cache, cacheKey);
+    if (fresh) return fresh;
+    return fetch(req);
+  } catch (e) {
+    // Any SW failure → network fallback. SSR remains source of truth.
+    return fetch(req);
+  }
+}
+
+async function handleStaticAssetRequest(event, req) {
+  try {
+    const cache = await caches.open(STATIC_CACHE_NAME);
+    const cached = await cache.match(req.url);
+    if (cached) {
+      // Cache-first; opportunistically refresh in the background.
+      event.waitUntil(refreshStaticAsset(req, cache));
+      return cached;
+    }
+    const response = await fetch(req);
+    if (response && response.ok) {
+      try { await cache.put(req.url, response.clone()); } catch (e) { /* ignore */ }
+    }
+    return response;
+  } catch (e) {
+    return fetch(req);
+  }
+}
+
+async function refreshStaticAsset(req, cache) {
+  try {
+    const fresh = await fetch(new Request(req.url, { cache: "no-store" }));
+    if (fresh && fresh.ok) {
+      try { await cache.put(req.url, fresh.clone()); } catch (e) { /* ignore */ }
+    }
+  } catch (e) {
+    // Network error during background refresh — keep the cached copy.
+  }
+}
 
 self.addEventListener("message", function (event) {
   const data = event.data;
@@ -89,6 +129,11 @@ self.addEventListener("message", function (event) {
   if (data.type === "invalidate-shell-cache") {
     event.waitUntil((async function () {
       try { await caches.delete(SHELL_CACHE_NAME); } catch (e) { /* ignore */ }
+    })());
+  }
+  if (data.type === "invalidate-static-cache") {
+    event.waitUntil((async function () {
+      try { await caches.delete(STATIC_CACHE_NAME); } catch (e) { /* ignore */ }
     })());
   }
 });
@@ -137,6 +182,16 @@ function shouldHandleNavigationRequest(rawUrl, method) {
   let url;
   try { url = new URL(rawUrl); } catch (e) { return false; }
   return url.pathname === "/" || url.pathname === "";
+}
+
+function shouldHandleStaticAssetRequest(rawUrl, method) {
+  if (method !== "GET") return false;
+  let url;
+  try { url = new URL(rawUrl); } catch (e) { return false; }
+  for (let i = 0; i < STATIC_CACHE_PATH_PREFIXES.length; i += 1) {
+    if (url.pathname.indexOf(STATIC_CACHE_PATH_PREFIXES[i]) === 0) return true;
+  }
+  return false;
 }
 
 function shouldPersistResponseForRequest(rawUrl) {

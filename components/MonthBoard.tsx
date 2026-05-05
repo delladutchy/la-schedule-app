@@ -1022,6 +1022,8 @@ export function MonthBoard({
                   alt="Overture"
                   width={166}
                   height={43}
+                  fetchPriority="high"
+                  decoding="async"
                   className="board-day-modal-overture-logo board-day-modal-overture-logo--title"
                 />
               ) : activeDetailIsLa ? (
@@ -1031,6 +1033,8 @@ export function MonthBoard({
                     alt="LA"
                     width={136}
                     height={40}
+                    fetchPriority="high"
+                    decoding="async"
                     className="board-day-modal-la-logo"
                   />
                   <span className="board-day-modal-title-text">{activeDetailPanel.header}</span>
@@ -1233,6 +1237,8 @@ export function MonthBoard({
                     alt="Overture"
                     width={150}
                     height={44}
+                    fetchPriority="high"
+                    decoding="async"
                     className="board-day-modal-overture-logo board-day-modal-overture-logo--booking"
                   />
                 </p>
@@ -1247,6 +1253,8 @@ export function MonthBoard({
                       alt="LA"
                       width={132}
                       height={40}
+                      fetchPriority="high"
+                      decoding="async"
                       className="board-day-modal-la-logo board-day-modal-la-logo--booking"
                     />
                   </label>

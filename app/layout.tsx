@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { HydrationFlag } from "@/components/HydrationFlag";
+import { BrandPrewarm } from "@/components/BrandPrewarm";
 
 export const metadata: Metadata = {
   title: "LA Schedule",
@@ -77,6 +78,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {children}
         <HydrationFlag />
         <ServiceWorkerRegister />
+        <BrandPrewarm />
       </body>
     </html>
   );
