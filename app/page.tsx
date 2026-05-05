@@ -327,7 +327,7 @@ export default async function AvailabilityPage({
     <div className={`page${viewMode === "month" ? " page--month" : ""}`}>
       <EditorTokenBridge />
       <header className="header">
-        <h1 className="title">Jeff Ulsh</h1>
+        <h1 className="title title--premium">Jeff Ulsh</h1>
         <div className="header-actions">
           <div className="header-editor-tools">
             <EditorSyncButton initialEditorToken={initialEditorToken} />

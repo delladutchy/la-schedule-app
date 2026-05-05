@@ -236,6 +236,30 @@ body {
   color: color-mix(in srgb, var(--text-muted) 58%, #ffffff);
   font-weight: 400;
 }
+
+/*
+ * Premium variant of .title. Adds tighter optical tracking and a very
+ * subtle vertical gradient text fill that blends a hint of
+ * --today-accent into the bottom of the wordmark. Paint-only, no
+ * motion, no layout shift, no JS. Remove this block (or the
+ * `title--premium` className in app/page.tsx) to revert.
+ */
+.title--premium {
+  letter-spacing: -0.035em;
+  background-image: linear-gradient(
+    180deg,
+    var(--text) 0%,
+    color-mix(in srgb, var(--text) 86%, var(--today-accent)) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .title--premium {
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+}
 .theme-toggle-button {
   appearance: none;
   width: 34px;
@@ -810,6 +834,32 @@ body {
 
 .board-day.today .board-day-label {
   font-weight: 600;
+}
+
+/*
+ * Today highlight pulse — applied to .board-day.today and .month-day.today
+ * for ~1s after the user explicitly taps Today. Box-shadow + outline are
+ * paint-only properties and don't trigger layout. The reduced-motion
+ * fallback swaps the animation for a static outline so motion-sensitive
+ * users still get clear visual confirmation.
+ */
+.today-pulse {
+  animation: la-today-pulse 950ms ease-out 1;
+  border-radius: inherit;
+  position: relative;
+  z-index: 2;
+}
+@keyframes la-today-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--today-accent) 55%, transparent); }
+  35%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--today-accent) 30%, transparent); }
+  100% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--today-accent) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .today-pulse {
+    animation: none;
+    outline: 2px solid var(--today-accent);
+    outline-offset: 2px;
+  }
 }
 
 .board-day-label {
