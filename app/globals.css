@@ -127,6 +127,9 @@ body.hydrated #app-shell {
 
 .board-day-modal-event-meta--notes {
   white-space: pre-line;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 :root[data-theme="light"] {
@@ -1520,6 +1523,7 @@ body {
   .board-day-modal-event-title { font-size: 11px; }
   .board-day-modal-event-date { font-size: 12px; }
   .board-day-modal-event-meta { font-size: 10px; }
+  .board-day-modal-event-meta--notes { line-height: 1.4; }
   .board-day-modal-close-icon {
     width: 36px;
     height: 36px;
@@ -2608,6 +2612,12 @@ body {
     box-sizing: border-box;
     padding: 11px 11px 9px;
   }
+
+  /* Tighten event-detail meta + notes in landscape so multi-line
+     notes don't dominate the constrained modal height. */
+  .board-day-modal-event-meta { font-size: 10.5px; line-height: 1.4; }
+  .board-day-modal-event-label { font-size: 10.5px; }
+  .board-day-modal-event-meta--notes { line-height: 1.35; }
 
   .board-day-modal-backdrop--booking {
     align-items: start;
