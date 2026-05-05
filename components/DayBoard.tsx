@@ -32,6 +32,7 @@ interface Props {
   showWeekends?: boolean;
   onNavigate?: (href: string) => void;
   onMutationSuccess?: () => void;
+  todayPulseToken?: number;
 }
 
 const STAGED_LOADING_COPY: ReadonlyArray<{ delay: number; text: string }> = [
@@ -278,8 +279,16 @@ export function DayBoard({
   showWeekends = true,
   onNavigate,
   onMutationSuccess,
+  todayPulseToken = 0,
 }: Props) {
   const router = useRouter();
+  const [todayPulseActive, setTodayPulseActive] = useState(false);
+  useEffect(() => {
+    if (todayPulseToken === 0) return;
+    setTodayPulseActive(true);
+    const id = window.setTimeout(() => setTodayPulseActive(false), 1100);
+    return () => window.clearTimeout(id);
+  }, [todayPulseToken]);
   const swipeRef = useRef<{
     tracking: boolean;
     startX: number;
@@ -814,7 +823,7 @@ export function DayBoard({
               return (
                 <li
                   key={d.date}
-                  className={`board-day ${d.status}${canBookRow ? " board-day--bookable" : ""}${row.bookedLabel?.isPrivateUnavailable ? " booked-private" : ""}${d.isToday ? " today" : ""}`}
+                  className={`board-day ${d.status}${canBookRow ? " board-day--bookable" : ""}${row.bookedLabel?.isPrivateUnavailable ? " booked-private" : ""}${d.isToday ? " today" : ""}${d.isToday && todayPulseActive ? " today-pulse" : ""}`}
                   tabIndex={canBookRow ? 0 : undefined}
                   onClick={canBookRow
                     ? () => {

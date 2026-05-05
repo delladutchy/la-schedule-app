@@ -26,6 +26,7 @@ interface Props {
   showWeekends?: boolean;
   onNavigate?: (href: string) => void;
   onMutationSuccess?: () => void;
+  todayPulseToken?: number;
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -305,8 +306,16 @@ export function MonthBoard({
   showWeekends = true,
   onNavigate,
   onMutationSuccess,
+  todayPulseToken = 0,
 }: Props) {
   const router = useRouter();
+  const [todayPulseActive, setTodayPulseActive] = useState(false);
+  useEffect(() => {
+    if (todayPulseToken === 0) return;
+    setTodayPulseActive(true);
+    const id = window.setTimeout(() => setTodayPulseActive(false), 1100);
+    return () => window.clearTimeout(id);
+  }, [todayPulseToken]);
   const swipeRef = useRef<{
     tracking: boolean;
     startX: number;
@@ -939,6 +948,7 @@ export function MonthBoard({
                         isPastCurrentMonthDay ? "month-day--past" : "",
                         canBookDay ? "month-day--bookable" : "",
                         d.isToday ? "today" : "",
+                        d.isToday && todayPulseActive ? "today-pulse" : "",
                         d.isCurrentMonth ? "current" : "outside",
                       ].filter(Boolean).join(" ")}
                       >
