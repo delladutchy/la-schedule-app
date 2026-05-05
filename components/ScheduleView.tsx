@@ -477,20 +477,26 @@ export function ScheduleView({
       return;
     }
 
-    // Today is special: always route through Next.js's router so URL,
-    // router state, RSC/SSR payload, and rendered UI converge in one
-    // soft navigation. The cached-derive path uses pushStateHref, which
-    // updates window.location but NOT Next's internal router state; a
-    // chain of derived navigations can leave router state out of sync
-    // with the address bar, and that desync is what makes Today appear
-    // unreliable on desktop. Correctness > the ~150ms speed delta.
+    // Today is a guaranteed hard reset. We bypass BOTH the cached-derive
+    // path AND Next's router. router.push triggers an RSC fetch that
+    // the Stage 2 service worker intercepts as a navigation request
+    // (it matches by pathname only, not by Accept/RSC header) and
+    // returns cached HTML — which router.push can't parse. This was
+    // observed on mobile PWA where SW is active. A full browser
+    // navigation is the only path that reliably converges URL, router
+    // state, RSC, and UI.
     const isTodayNavigation = isTodayClickTarget(
       target,
       sourcePayload.todayKey,
       sourcePayload.todayMonthKey,
     );
     if (isTodayNavigation) {
-      setTodayPulseToken((t) => t + 1);
+      setDerivedPayload(null);
+      if (typeof window !== "undefined" && typeof window.location?.assign === "function") {
+        window.location.assign(href);
+        return;
+      }
+      // SSR / unsupported environment fallback.
       router.push(href);
       return;
     }
