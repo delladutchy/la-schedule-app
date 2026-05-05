@@ -251,25 +251,23 @@ body {
  */
 .title--premium {
   letter-spacing: -0.025em;
-  animation: title-type 900ms steps(9, end) both;
-  will-change: clip-path;
 }
-@keyframes title-type {
-  0% {
-    -webkit-clip-path: inset(0 100% 0 0);
-    clip-path: inset(0 100% 0 0);
-  }
-  100% {
-    -webkit-clip-path: inset(0 0 0 0);
-    clip-path: inset(0 0 0 0);
-  }
+.title-char {
+  display: inline-block;
+  white-space: pre;
+  opacity: 0;
+  animation: title-char-reveal 280ms ease-out both;
+  will-change: opacity;
+}
+@keyframes title-char-reveal {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .title--premium {
+  .title-char {
     animation: none;
+    opacity: 1;
     will-change: auto;
-    -webkit-clip-path: none;
-    clip-path: none;
   }
 }
 .theme-toggle-button {

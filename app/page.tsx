@@ -337,7 +337,21 @@ export default async function AvailabilityPage({
     <div className={`page${viewMode === "month" ? " page--month" : ""}`}>
       <EditorTokenBridge />
       <header className="header">
-        <h1 className={`title title--premium ${headerFont.className}`}>Jeff Ulsh</h1>
+        <h1
+          className={`title title--premium ${headerFont.className}`}
+          aria-label="Jeff Ulsh"
+        >
+          {Array.from("Jeff Ulsh").map((ch, i) => (
+            <span
+              key={i}
+              className="title-char"
+              style={{ animationDelay: `${i * 90}ms` }}
+              aria-hidden="true"
+            >
+              {ch === " " ? " " : ch}
+            </span>
+          ))}
+        </h1>
         <div className="header-actions">
           <div className="header-editor-tools">
             <EditorSyncButton initialEditorToken={initialEditorToken} />
