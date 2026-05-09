@@ -64,6 +64,7 @@ export interface EnsureGoogleWatchResult extends GoogleWatchStatusResult {
   }>;
   registeredCalendarIds?: string[];
   skippedCalendarIds?: string[];
+  failedCalendarIds?: string[];
 }
 
 type WatchEnv = Pick<EnvConfig,
@@ -75,6 +76,7 @@ type WatchEnv = Pick<EnvConfig,
   | "GOOGLE_WEBHOOK_TOKEN"
   | "BLOBS_STORE_NAME"
   | "PUBLIC_SITE_URL"
+  | "BLOCKER_CALENDAR_IDS"
 >;
 
 export class WatchConfigError extends Error {
@@ -97,14 +99,31 @@ function normalizeCalendarId(calendarId: string): string {
 }
 
 export function resolveWatchCalendarIds(
-  env: Pick<WatchEnv, "GOOGLE_CALENDAR_ID" | "OVERTURE_CALENDAR_ID">,
+  env: Pick<WatchEnv,
+    | "GOOGLE_CALENDAR_ID"
+    | "OVERTURE_CALENDAR_ID"
+    | "BLOCKER_CALENDAR_IDS"
+  >,
 ): string[] {
-  const primary = normalizeCalendarId(env.GOOGLE_CALENDAR_ID);
-  const overture = env.OVERTURE_CALENDAR_ID?.trim();
-  if (overture && overture !== primary) {
-    return [primary, overture];
+  const result: string[] = [];
+  const seen = new Set<string>();
+  const addUnique = (raw: string | undefined | null): void => {
+    const id = raw?.trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    result.push(id);
+  };
+
+  // Write calendars first (preserves existing ordering for callers that
+  // surface the "primary" watch). Blocker calendars are then folded in so
+  // every calendar that drives availability also receives webhooks.
+  addUnique(env.GOOGLE_CALENDAR_ID);
+  addUnique(env.OVERTURE_CALENDAR_ID);
+  for (const id of env.BLOCKER_CALENDAR_IDS ?? []) {
+    addUnique(id);
   }
-  return [primary];
+
+  return result;
 }
 
 export function resolveWebhookUrl(opts: {
@@ -266,7 +285,12 @@ function generateChannelId(calendarId: string): string {
 }
 
 export async function getGoogleCalendarWatchStatus(
-  env: Pick<WatchEnv, "BLOBS_STORE_NAME" | "GOOGLE_CALENDAR_ID" | "OVERTURE_CALENDAR_ID">,
+  env: Pick<WatchEnv,
+    | "BLOBS_STORE_NAME"
+    | "GOOGLE_CALENDAR_ID"
+    | "OVERTURE_CALENDAR_ID"
+    | "BLOCKER_CALENDAR_IDS"
+  >,
   nowMs: number = Date.now(),
 ): Promise<GoogleWatchStatusResult> {
   const metadataMap = await readGoogleCalendarWatchMetadataMap(env.BLOBS_STORE_NAME);
@@ -301,6 +325,7 @@ export async function ensureGoogleCalendarWatch(
 
   const registeredCalendarIds: string[] = [];
   const skippedCalendarIds: string[] = [];
+  const failedCalendarIds: string[] = [];
   const renewalReasons: WatchRenewalReason[] = [];
   const previousWatches: Array<{
     calendarId: string;
@@ -320,15 +345,29 @@ export async function ensureGoogleCalendarWatch(
       continue;
     }
 
-    const watch = await registerCalendarWatch({
-      clientId: env.GOOGLE_CLIENT_ID,
-      clientSecret: env.GOOGLE_CLIENT_SECRET,
-      refreshToken: env.GOOGLE_REFRESH_TOKEN,
-      calendarId,
-      webhookUrl,
-      channelId: generateChannelId(calendarId),
-      channelToken,
-    });
+    let watch;
+    try {
+      watch = await registerCalendarWatch({
+        clientId: env.GOOGLE_CLIENT_ID,
+        clientSecret: env.GOOGLE_CLIENT_SECRET,
+        refreshToken: env.GOOGLE_REFRESH_TOKEN,
+        calendarId,
+        webhookUrl,
+        channelId: generateChannelId(calendarId),
+        channelToken,
+      });
+    } catch (err) {
+      // Fail soft per calendar: a single calendar without watch permission
+      // (or a transient Google error) must not abort renewal for the rest.
+      // Existing healthy watches stay intact; the missing one will be
+      // retried on the next scheduled renewal pass.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[google:watch] register failed calendarId=${calendarId} err=${msg}`,
+      );
+      failedCalendarIds.push(calendarId);
+      continue;
+    }
 
     if (existing) {
       previousWatches.push({
@@ -355,6 +394,19 @@ export async function ensureGoogleCalendarWatch(
     didRegister = true;
   }
 
+  // If every attempted registration failed and we have no existing healthy
+  // watches to fall back on, signal failure so the caller (admin POST or
+  // scheduled cron) returns a non-2xx and surfaces the problem in logs.
+  // Partial success — at least one registered or one previously healthy —
+  // still returns success with `failedCalendarIds` for diagnostics.
+  if (
+    failedCalendarIds.length > 0
+    && registeredCalendarIds.length === 0
+    && skippedCalendarIds.length === 0
+  ) {
+    throw new Error("all_watch_registrations_failed");
+  }
+
   if (didRegister) {
     await writeGoogleCalendarWatchMetadataMap(env.BLOBS_STORE_NAME, metadataMap);
   }
@@ -369,6 +421,7 @@ export async function ensureGoogleCalendarWatch(
     renewalReason: pickMostUrgentRenewalReason(renewalReasons),
     registeredCalendarIds,
     skippedCalendarIds,
+    ...(failedCalendarIds.length > 0 ? { failedCalendarIds } : {}),
     ...(primaryPrevious
       ? {
           previous: {

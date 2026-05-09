@@ -26,6 +26,7 @@ function makeEnv(overrides: Partial<EnvConfig> = {}): Pick<EnvConfig,
   | "GOOGLE_WEBHOOK_TOKEN"
   | "BLOBS_STORE_NAME"
   | "PUBLIC_SITE_URL"
+  | "BLOCKER_CALENDAR_IDS"
 > {
   return {
     GOOGLE_CLIENT_ID: "client-id",
@@ -36,6 +37,7 @@ function makeEnv(overrides: Partial<EnvConfig> = {}): Pick<EnvConfig,
     GOOGLE_WEBHOOK_TOKEN: "google-webhook-token-0123456789",
     BLOBS_STORE_NAME: "availability-snapshots",
     PUBLIC_SITE_URL: "https://la-schedule-app.netlify.app",
+    BLOCKER_CALENDAR_IDS: [],
     ...overrides,
   };
 }
@@ -65,6 +67,74 @@ describe("lib/google-watch ensureGoogleCalendarWatch", () => {
     expect(resolveWatchCalendarIds(makeEnv({
       OVERTURE_CALENDAR_ID: "la-jobs@group.calendar.google.com",
     }))).toEqual(["la-jobs@group.calendar.google.com"]);
+  });
+
+  it("includes BLOCKER_CALENDAR_IDS calendars not already covered by write calendars", async () => {
+    const { resolveWatchCalendarIds } = await import("@/lib/google-watch");
+    expect(resolveWatchCalendarIds({
+      ...makeEnv(),
+      BLOCKER_CALENDAR_IDS: [
+        "la-jobs@group.calendar.google.com",
+        "personal@group.calendar.google.com",
+      ],
+    })).toEqual([
+      "la-jobs@group.calendar.google.com",
+      "overture@group.calendar.google.com",
+      "personal@group.calendar.google.com",
+    ]);
+  });
+
+  it("dedupes BLOCKER_CALENDAR_IDS overlap with write calendars", async () => {
+    const { resolveWatchCalendarIds } = await import("@/lib/google-watch");
+    expect(resolveWatchCalendarIds({
+      ...makeEnv(),
+      BLOCKER_CALENDAR_IDS: [
+        "la-jobs@group.calendar.google.com",
+        "overture@group.calendar.google.com",
+      ],
+    })).toEqual([
+      "la-jobs@group.calendar.google.com",
+      "overture@group.calendar.google.com",
+    ]);
+  });
+
+  it("continues registering remaining calendars when one fails", async () => {
+    readGoogleCalendarWatchMetadataMap.mockResolvedValue({});
+    registerCalendarWatch
+      .mockResolvedValueOnce({
+        channelId: "channel-la-new",
+        resourceId: "resource-la-new",
+        expiration: new Date(NOW_MS + 5 * 24 * 60 * 60 * 1000).toISOString(),
+      })
+      .mockRejectedValueOnce(new Error("forbidden_for_calendar"))
+      .mockResolvedValueOnce({
+        channelId: "channel-personal-new",
+        resourceId: "resource-personal-new",
+        expiration: new Date(NOW_MS + 5 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+    writeGoogleCalendarWatchMetadataMap.mockImplementation(
+      async (_storeName: string, map: Record<string, unknown>) => map,
+    );
+
+    const { ensureGoogleCalendarWatch } = await import("@/lib/google-watch");
+    const result = await ensureGoogleCalendarWatch({
+      ...makeEnv(),
+      BLOCKER_CALENDAR_IDS: [
+        "la-jobs@group.calendar.google.com",
+        "personal@group.calendar.google.com",
+      ],
+    }, { nowMs: NOW_MS });
+
+    expect(result.action).toBe("registered");
+    expect(result.registeredCalendarIds).toEqual([
+      "la-jobs@group.calendar.google.com",
+      "personal@group.calendar.google.com",
+    ]);
+    expect(result.failedCalendarIds).toEqual([
+      "overture@group.calendar.google.com",
+    ]);
+    expect(registerCalendarWatch).toHaveBeenCalledTimes(3);
+    expect(writeGoogleCalendarWatchMetadataMap).toHaveBeenCalledTimes(1);
   });
 
   it("GET-style status returns per-calendar watch health", async () => {
