@@ -633,10 +633,6 @@ export function MonthBoard({
   );
   const visibleDayCount = visibleDayIndexes.length;
   const weekdayLabels = visibleDayIndexes.map((index) => WEEKDAY_LABELS[index] ?? "");
-  const allDays = month.weeks.flatMap((w) => w.days);
-  const weekendToday = !hideWeekends
-    ? allDays.find((d) => d.date === todayKey && d.isWeekend)
-    : undefined;
   const bookingDateLabel = activeBookingPanel
     ? formatShortDate(activeBookingPanel.date)
     : null;
@@ -792,12 +788,6 @@ export function MonthBoard({
       <div className="month-label-row">
         <h2 className="month-label period-label-animate">{month.label}</h2>
       </div>
-      {weekendToday ? (
-        <div className="month-weekend-today" aria-label={`Today: ${weekendToday.date}`}>
-          <span className="month-day-num month-day-num--today">{weekendToday.dayOfMonth}</span>
-          <span>Today</span>
-        </div>
-      ) : null}
 
       <div className="month-weekdays" aria-hidden="true">
         {weekdayLabels.map((label) => (
