@@ -70,10 +70,14 @@ async function writeLocalCurrentSnapshot(
   await writeFile(localCurrentPath(storeName), JSON.stringify(parsed, null, 2), "utf8");
 }
 
+type ReadConsistency = "eventual" | "strong";
+
 function store(name: string) {
   // `getStore` works both inside Netlify functions and in Next.js
   // server runtime when NETLIFY_BLOBS_CONTEXT is set at build time.
-  return getStore({ name, consistency: "strong" });
+  // Default consistency is eventual; mutation pre-validation reads
+  // pass `consistency: "strong"` per call to preserve correctness.
+  return getStore({ name });
 }
 
 function rememberLastKnownGoodSnapshot(storeName: string, snapshot: Snapshot): Snapshot {
@@ -81,9 +85,12 @@ function rememberLastKnownGoodSnapshot(storeName: string, snapshot: Snapshot): S
   return snapshot;
 }
 
-async function readRemoteCurrentSnapshot(storeName: string): Promise<Snapshot | null> {
+async function readRemoteCurrentSnapshot(
+  storeName: string,
+  consistency: ReadConsistency,
+): Promise<Snapshot | null> {
   try {
-    const raw = await store(storeName).get(CURRENT_KEY, { type: "json" });
+    const raw = await store(storeName).get(CURRENT_KEY, { type: "json", consistency });
     if (!raw) return null;
     const parsed = SnapshotSchema.safeParse(raw);
     if (!parsed.success) {
@@ -97,8 +104,18 @@ async function readRemoteCurrentSnapshot(storeName: string): Promise<Snapshot | 
   }
 }
 
+export interface ReadSnapshotOptions {
+  /**
+   * Defaults to "eventual" for the public read path. Mutation pre-validation
+   * (gig create/edit/delete) passes "strong" so a just-written snapshot is
+   * guaranteed visible.
+   */
+  consistency?: ReadConsistency;
+}
+
 export async function readCurrentSnapshot(
   storeName: string,
+  options: ReadSnapshotOptions = {},
 ): Promise<Snapshot | null> {
   if (isLocalDev()) {
     const localSnapshot = await readLocalCurrentSnapshot(storeName);
@@ -108,8 +125,9 @@ export async function readCurrentSnapshot(
     return null;
   }
 
+  const consistency: ReadConsistency = options.consistency ?? "eventual";
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const remoteSnapshot = await readRemoteCurrentSnapshot(storeName);
+    const remoteSnapshot = await readRemoteCurrentSnapshot(storeName, consistency);
     if (remoteSnapshot) {
       return rememberLastKnownGoodSnapshot(storeName, remoteSnapshot);
     }

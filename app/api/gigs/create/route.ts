@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { createAllDayEvent, CalendarEventAlreadyExistsError } from "@/lib/google";
+import { classifyGoogleError, CALENDAR_AUTH_FAILED_MESSAGE } from "@/lib/google-error";
 import { buildAndPersistSnapshot } from "@/lib/sync";
 import {
   GigCreateBodySchema,
@@ -138,7 +139,7 @@ export async function POST(req: Request) {
 
   // Pre-write check against the same snapshot model used by the app.
   const snapshotReadStartedAt = Date.now();
-  let validationSnapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  let validationSnapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME, { consistency: "strong" });
   timings.snapshotReadMs = Date.now() - snapshotReadStartedAt;
   if (!validationSnapshot) {
     const preflightStartedAt = Date.now();
@@ -371,24 +372,42 @@ export async function POST(req: Request) {
             { status: 409 },
           );
         }
+        const retryCls = classifyGoogleError(retryError);
+        console.error(
+          `[gigs:create] google_error editor=${editorId} stage=retry raw=${retryCls.raw}`,
+        );
+        if (retryCls.isAuthFailure) {
+          logCreateRouteTiming("calendar_auth_failed_retry", editorId, routeStartedAt, timings);
+          return NextResponse.json(
+            { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
+            { status: 503 },
+          );
+        }
         logCreateRouteTiming("google_create_failed_retry", editorId, routeStartedAt, timings);
         return NextResponse.json(
           {
             error: "google_create_failed",
-            message: retryError instanceof Error
-              ? retryError.message
-              : "Google event create failed.",
+            message: "Could not save booking. Please try again.",
           },
           { status: 502 },
         );
       }
     }
 
+    const cls = classifyGoogleError(error);
+    console.error(`[gigs:create] google_error editor=${editorId} raw=${cls.raw}`);
+    if (cls.isAuthFailure) {
+      logCreateRouteTiming("calendar_auth_failed", editorId, routeStartedAt, timings);
+      return NextResponse.json(
+        { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
+        { status: 503 },
+      );
+    }
     logCreateRouteTiming("google_create_failed", editorId, routeStartedAt, timings);
     return NextResponse.json(
       {
         error: "google_create_failed",
-        message: error instanceof Error ? error.message : "Google event create failed.",
+        message: "Could not save booking. Please try again.",
       },
       { status: 502 },
     );

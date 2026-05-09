@@ -21,6 +21,10 @@ import { isTodayClickTarget } from "@/lib/today-navigation";
 
 const BACKGROUND_REFRESH_DEBOUNCE_MS = 200;
 const BACKGROUND_REFRESH_MIN_INTERVAL_MS = 30_000;
+// SSR snapshot is considered "recent enough" to skip the immediate mount-time
+// revalidation. The visibility-change refresh still fires when the user
+// returns to the tab, so freshness is bounded.
+const MOUNT_REFRESH_SKIP_MAX_AGE_MS = 60_000;
 
 const MIKE_SHOW_WEEKENDS_STORAGE_KEY = "la_schedule_mike_show_weekends";
 const MIKE_SHOW_WEEKENDS_COOKIE_KEY = "la_schedule_mike_show_weekends";
@@ -402,12 +406,34 @@ export function ScheduleView({
       setDerivedPayload(fresh);
     };
 
-    const debounceId = window.setTimeout(() => {
-      void refresh("mount");
-    }, BACKGROUND_REFRESH_DEBOUNCE_MS);
+    const ssrGeneratedMs = Date.parse(initialBoardWindowPayload.generatedAtUtc);
+    const ssrAgeMs = Number.isFinite(ssrGeneratedMs)
+      ? Date.now() - ssrGeneratedMs
+      : Number.POSITIVE_INFINITY;
+    const ssrIsFreshAndRecent =
+      initialBoardWindowPayload.snapshotStatus === "ok"
+      && ssrAgeMs >= 0
+      && ssrAgeMs < MOUNT_REFRESH_SKIP_MAX_AGE_MS;
+
+    let debounceId: number | null = null;
+    if (ssrIsFreshAndRecent) {
+      // [perf] temporary instrumentation — remove once perf review concludes.
+      console.info(`[perf] auto refresh scheduled reason=skipped_ssr_fresh ssrAgeMs=${ssrAgeMs}`);
+      // Treat the SSR payload as already up-to-date so the throttle window
+      // reflects when the user last received fresh data.
+      lastBackgroundRefreshAtRef.current = Date.now();
+    } else {
+      debounceId = window.setTimeout(() => {
+        // [perf] temporary instrumentation — remove once perf review concludes.
+        console.info(`[perf] auto refresh scheduled reason=mount delayMs=${BACKGROUND_REFRESH_DEBOUNCE_MS} ssrAgeMs=${ssrAgeMs}`);
+        void refresh("mount");
+      }, BACKGROUND_REFRESH_DEBOUNCE_MS);
+    }
 
     const onVisibility = () => {
       if (document.visibilityState === "visible") {
+        // [perf] temporary instrumentation — remove once perf review concludes.
+        console.info(`[perf] auto refresh scheduled reason=visible`);
         void refresh("visible");
       }
     };
@@ -416,7 +442,9 @@ export function ScheduleView({
     return () => {
       cancelled = true;
       controller.abort();
-      window.clearTimeout(debounceId);
+      if (debounceId !== null) {
+        window.clearTimeout(debounceId);
+      }
       document.removeEventListener("visibilitychange", onVisibility);
     };
     // We intentionally only re-run on editor / SSR-payload identity

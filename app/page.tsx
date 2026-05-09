@@ -166,7 +166,11 @@ export default async function AvailabilityPage({
   const viewMode = resolveViewMode(firstParam(searchParams.view));
   const initialEditorToken = firstParam(searchParams.editor);
   const now = Date.now();
+  // [perf] temporary instrumentation — remove once perf review concludes.
+  const perfPageStartedAt = Date.now();
+  const perfReadSnapshotStartedAt = Date.now();
   let snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  const perfReadSnapshotMs = Date.now() - perfReadSnapshotStartedAt;
   let state = classifySnapshot(snapshot, now, {
     freshTtlMinutes: file.freshTtlMinutes,
     hardTtlMinutes: file.hardTtlMinutes,
@@ -261,22 +265,27 @@ export default async function AvailabilityPage({
   const weekCanGoNext = weekNav.hasNext;
 
   // List view: selected week + next week. Current selected week hides past rows.
-  const rawWeekRows = buildDayBoard({
-    snapshot: snapshotData,
-    startDate: effectiveWeekStart,
-    weeks: 2,
-    timezone: tz,
-    workdayStartHour: file.workdayStartHour,
-    workdayEndHour: file.workdayEndHour,
-    nowMs: now,
-    todayKey,
-  });
-  const weekRows = trimWeekRowsForScheduleList({
-    weeks: rawWeekRows,
-    selectedWeekStart: effectiveWeekStart,
-    currentWeekStart,
-    todayKey,
-  });
+  // Skip the build when month view is active — the unused board prop is a stub
+  // because ScheduleView only renders <DayBoard> in list mode.
+  const perfBuildWeekStartedAt = Date.now();
+  const weekRows = viewMode === "list"
+    ? trimWeekRowsForScheduleList({
+        weeks: buildDayBoard({
+          snapshot: snapshotData,
+          startDate: effectiveWeekStart,
+          weeks: 2,
+          timezone: tz,
+          workdayStartHour: file.workdayStartHour,
+          workdayEndHour: file.workdayEndHour,
+          nowMs: now,
+          todayKey,
+        }),
+        selectedWeekStart: effectiveWeekStart,
+        currentWeekStart,
+        todayKey,
+      })
+    : [];
+  const perfBuildWeekMs = Date.now() - perfBuildWeekStartedAt;
 
   // Determine which month to show. Default: this month. `?month=YYYY-MM` overrides.
   const requestedMonthParam = firstParam(searchParams.month)?.trim();
@@ -296,13 +305,19 @@ export default async function AvailabilityPage({
   const monthCanGoPrev = monthNav.hasPrev && monthNav.monthKey > todayMonthKey;
 
   // Month view: full month grid with one status per day.
-  const month = buildMonthBoard({
-    snapshot: snapshotData,
-    month: monthNav.monthKey,
-    timezone: tz,
-    nowMs: now,
-    todayKey,
-  });
+  // Skip the build when list view is active — ScheduleView only renders
+  // <MonthBoard> in month mode, and the prop is a stub otherwise.
+  const perfBuildMonthStartedAt = Date.now();
+  const month = viewMode === "month"
+    ? buildMonthBoard({
+        snapshot: snapshotData,
+        month: monthNav.monthKey,
+        timezone: tz,
+        nowMs: now,
+        todayKey,
+      })
+    : { monthKey: monthNav.monthKey, label: "", weeks: [] };
+  const perfBuildMonthMs = Date.now() - perfBuildMonthStartedAt;
 
   const listToggleStart = viewMode === "month" ? `${monthNav.monthKey}-01` : effectiveWeekStart;
   const monthToggleKey = viewMode === "list" ? effectiveWeekStart.slice(0, 7) : monthNav.monthKey;
@@ -315,6 +330,7 @@ export default async function AvailabilityPage({
   const initialShowWeekends = resolvedEditorId === "mike"
     ? mikeShowWeekendsCookie === "1"
     : true;
+  const perfBuildWindowStartedAt = Date.now();
   const initialBoardWindowPayload = buildSanitizedBoardWindowPayload({
     snapshot: snapshotData,
     snapshotStatus: state.status,
@@ -332,6 +348,11 @@ export default async function AvailabilityPage({
     resolvedEditorId,
     nowMs: now,
   });
+  const perfBuildWindowMs = Date.now() - perfBuildWindowStartedAt;
+  const perfPageTotalMs = Date.now() - perfPageStartedAt;
+  console.info(
+    `[perf] page total ms readSnapshot=${perfReadSnapshotMs} buildWeek=${perfBuildWeekMs} buildMonth=${perfBuildMonthMs} buildWindow=${perfBuildWindowMs} total=${perfPageTotalMs} view=${viewMode}`,
+  );
 
   return (
     <div className={`page${viewMode === "month" ? " page--month" : ""}`}>

@@ -14,8 +14,12 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const { file, env } = getConfig();
   const nowMs = Date.now();
+  // [perf] temporary instrumentation — remove once perf review concludes.
+  const perfStartedAt = Date.now();
 
+  const perfReadSnapshotStartedAt = Date.now();
   const snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  const perfReadSnapshotMs = Date.now() - perfReadSnapshotStartedAt;
   let state = classifySnapshot(snapshot, nowMs, {
     freshTtlMinutes: file.freshTtlMinutes,
     hardTtlMinutes: file.hardTtlMinutes,
@@ -48,6 +52,7 @@ export async function GET(req: Request) {
 
   const query = parseBoardWindowQuery(new URL(req.url));
   const resolvedEditorId = resolveBoardRequestEditorId(req, env);
+  const perfBuildStartedAt = Date.now();
   const payload = buildSanitizedBoardWindowPayload({
     snapshot: state.snapshot,
     snapshotStatus: state.status,
@@ -57,6 +62,10 @@ export async function GET(req: Request) {
     resolvedEditorId,
     nowMs,
   });
+  const perfBuildMs = Date.now() - perfBuildStartedAt;
+  console.info(
+    `[perf] board-window total ms readSnapshot=${perfReadSnapshotMs} buildWindow=${perfBuildMs} total=${Date.now() - perfStartedAt} view=${query.viewMode}`,
+  );
 
   return NextResponse.json(payload);
 }

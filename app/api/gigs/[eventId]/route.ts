@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { buildAndPersistSnapshot } from "@/lib/sync";
 import { deleteCalendarEvent, updateAllDayEvent } from "@/lib/google";
+import { classifyGoogleError, CALENDAR_AUTH_FAILED_MESSAGE } from "@/lib/google-error";
 import {
   GigCreateBodySchema,
   resolveAllDayRange,
@@ -213,7 +214,7 @@ export async function PATCH(
   }
 
   const snapshotReadStartedAt = Date.now();
-  let validationSnapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  let validationSnapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME, { consistency: "strong" });
   timings.snapshotReadMs = Date.now() - snapshotReadStartedAt;
   if (!validationSnapshot) {
     const preflightStartedAt = Date.now();
@@ -339,11 +340,20 @@ export async function PATCH(
         { status: 404 },
       );
     }
+    const cls = classifyGoogleError(error);
+    console.error(`[gigs:patch] google_error editor=${editorId} raw=${cls.raw}`);
+    if (cls.isAuthFailure) {
+      logGigRouteTiming("patch", "calendar_auth_failed", editorId, routeStartedAt, timings);
+      return NextResponse.json(
+        { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
+        { status: 503 },
+      );
+    }
     logGigRouteTiming("patch", "google_update_failed", editorId, routeStartedAt, timings);
     return NextResponse.json(
       {
         error: "google_update_failed",
-        message: error instanceof Error ? error.message : "Google event update failed.",
+        message: "Could not update booking. Please try again.",
       },
       { status: 502 },
     );
@@ -378,7 +388,7 @@ export async function DELETE(
   }
 
   const snapshotReadStartedAt = Date.now();
-  let deleteAuditSource = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
+  let deleteAuditSource = await readCurrentSnapshot(env.BLOBS_STORE_NAME, { consistency: "strong" });
   timings.snapshotReadMs = Date.now() - snapshotReadStartedAt;
   if (!deleteAuditSource) {
     const preflightStartedAt = Date.now();
@@ -477,11 +487,20 @@ export async function DELETE(
         { status: 404 },
       );
     }
+    const cls = classifyGoogleError(error);
+    console.error(`[gigs:delete] google_error editor=${editorId} raw=${cls.raw}`);
+    if (cls.isAuthFailure) {
+      logGigRouteTiming("delete", "calendar_auth_failed", editorId, routeStartedAt, timings);
+      return NextResponse.json(
+        { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
+        { status: 503 },
+      );
+    }
     logGigRouteTiming("delete", "google_delete_failed", editorId, routeStartedAt, timings);
     return NextResponse.json(
       {
         error: "google_delete_failed",
-        message: error instanceof Error ? error.message : "Google event delete failed.",
+        message: "Could not delete booking. Please try again.",
       },
       { status: 502 },
     );
