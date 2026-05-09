@@ -75,8 +75,6 @@ type ReadConsistency = "eventual" | "strong";
 function store(name: string) {
   // `getStore` works both inside Netlify functions and in Next.js
   // server runtime when NETLIFY_BLOBS_CONTEXT is set at build time.
-  // Default consistency is eventual; mutation pre-validation reads
-  // pass `consistency: "strong"` per call to preserve correctness.
   return getStore({ name });
 }
 
@@ -106,9 +104,10 @@ async function readRemoteCurrentSnapshot(
 
 export interface ReadSnapshotOptions {
   /**
-   * Defaults to "eventual" for the public read path. Mutation pre-validation
-   * (gig create/edit/delete) passes "strong" so a just-written snapshot is
-   * guaranteed visible.
+   * Defaults to "strong" so reads after writes (manual sync, booking save
+   * → router.refresh SSR, post-write /api/board/window revalidation) are
+   * guaranteed to see the just-written snapshot. Eventual is available as
+   * an opt-in for callers that don't need read-after-write coherence.
    */
   consistency?: ReadConsistency;
 }
@@ -125,7 +124,7 @@ export async function readCurrentSnapshot(
     return null;
   }
 
-  const consistency: ReadConsistency = options.consistency ?? "eventual";
+  const consistency: ReadConsistency = options.consistency ?? "strong";
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const remoteSnapshot = await readRemoteCurrentSnapshot(storeName, consistency);
     if (remoteSnapshot) {
