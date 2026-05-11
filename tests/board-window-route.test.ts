@@ -1,6 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  buildSanitizedBoardWindowPayload,
+  type BoardWindowQuery,
+} from "@/lib/board-window";
+import type { BoardWindowPayload } from "@/lib/board-window";
 
 const readCurrentSnapshot = vi.fn();
+const isBoardCacheEnabled = vi.fn();
+const readBoardPayloadCache = vi.fn();
+const resolveBoardPayloadEditorBucket = vi.fn(
+  (editorId: string | null) => editorId?.trim().toLowerCase() || "public",
+);
+const fetchFreeBusy = vi.fn();
+const fetchCalendarEvents = vi.fn();
 
 const TOKENS = {
   jeff: "jeff-editor-token-0123456789",
@@ -89,6 +101,18 @@ vi.mock("@/lib/store", () => ({
   readCurrentSnapshot: (...args: unknown[]) => readCurrentSnapshot(...args),
 }));
 
+vi.mock("@/lib/board-payload-cache", () => ({
+  isBoardCacheEnabled: (...args: unknown[]) => isBoardCacheEnabled(...args),
+  readBoardPayloadCache: (...args: unknown[]) => readBoardPayloadCache(...args),
+  resolveBoardPayloadEditorBucket: (editorId: string | null) =>
+    resolveBoardPayloadEditorBucket(editorId),
+}));
+
+vi.mock("@/lib/google", () => ({
+  fetchFreeBusy: (...args: unknown[]) => fetchFreeBusy(...args),
+  fetchCalendarEvents: (...args: unknown[]) => fetchCalendarEvents(...args),
+}));
+
 async function loadRoute() {
   const mod = await import("@/app/api/board/window/route");
   return mod.GET;
@@ -118,8 +142,17 @@ describe("/api/board/window", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-01T12:00:00.000Z"));
+    isBoardCacheEnabled.mockReset();
+    readBoardPayloadCache.mockReset();
+    resolveBoardPayloadEditorBucket.mockClear();
+    fetchFreeBusy.mockReset();
+    fetchCalendarEvents.mockReset();
     readCurrentSnapshot.mockReset();
     readCurrentSnapshot.mockResolvedValue(snapshot);
+    isBoardCacheEnabled.mockReturnValue(false);
+    readBoardPayloadCache.mockResolvedValue(null);
+    fetchFreeBusy.mockResolvedValue({ intervals: [], erroredCalendarIds: [] });
+    fetchCalendarEvents.mockResolvedValue({ events: [], erroredCalendarIds: [] });
   });
 
   afterEach(() => {
@@ -259,4 +292,199 @@ describe("/api/board/window", () => {
     const body = await res.json() as { resolvedEditorId?: string | null };
     expect(body.resolvedEditorId).toBe("jeff");
   });
+
+  it("BOARD_CACHE_ENABLED=false preserves existing route behavior", async () => {
+    isBoardCacheEnabled.mockReturnValue(false);
+    const GET = await loadRoute();
+    const res = await GET(makeRequest({
+      token: TOKENS.jeff,
+      includeDateParams: false,
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { resolvedEditorId: string | null };
+    expect(body.resolvedEditorId).toBe("jeff");
+    expect(readBoardPayloadCache).not.toHaveBeenCalled();
+  });
+
+  it("BOARD_CACHE_ENABLED=true + scope=selected + cache hit returns cached payload", async () => {
+    isBoardCacheEnabled.mockReturnValue(true);
+    const cachedPayload = makeCachePayload({ resolvedEditorId: "jeff", viewMode: "month" });
+    readBoardPayloadCache.mockResolvedValue({
+      payload: cachedPayload,
+      generatedAtUtc: cachedPayload.generatedAtUtc,
+    });
+    const GET = await loadRoute();
+    const url = new URL("http://localhost/api/board/window");
+    url.searchParams.set("view", "month");
+    url.searchParams.set("scope", "selected");
+    const res = await GET(
+      new Request(url.toString(), { headers: { Authorization: `Bearer ${TOKENS.jeff}` } }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as BoardWindowPayload;
+    expect(body.generatedAtUtc).toBe(cachedPayload.generatedAtUtc);
+    expect(body.selected.weekStart).toBe(cachedPayload.selected.weekStart);
+    expect(body.selected.monthKey).toBe(cachedPayload.selected.monthKey);
+    expect(readBoardPayloadCache).toHaveBeenCalledTimes(1);
+    expect(readBoardPayloadCache).toHaveBeenCalledWith({
+      viewMode: "month",
+      weekStart: cachedPayload.selected.weekStart,
+      monthKey: cachedPayload.selected.monthKey,
+      editorBucket: "jeff",
+      scope: "selected",
+    });
+  });
+
+  it("cache miss falls back to live build path", async () => {
+    isBoardCacheEnabled.mockReturnValue(true);
+    readBoardPayloadCache.mockResolvedValue(null);
+    const GET = await loadRoute();
+    const url = new URL("http://localhost/api/board/window");
+    url.searchParams.set("view", "month");
+    url.searchParams.set("scope", "selected");
+    const res = await GET(
+      new Request(url.toString(), { headers: { Authorization: `Bearer ${TOKENS.jeff}` } }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as BoardWindowPayload;
+    expect(body.resolvedEditorId).toBe("jeff");
+    expect(body.selected.view).toBe("month");
+    expect(Array.isArray(body.selectedBoards.weekRows)).toBe(true);
+  });
+
+  it("invalid cached payload falls back to live build path", async () => {
+    isBoardCacheEnabled.mockReturnValue(true);
+    readBoardPayloadCache.mockResolvedValue({
+      payload: { status: "ok", generatedAtUtc: "2026-05-01T12:00:00.000Z" },
+      generatedAtUtc: "2026-05-01T12:00:00.000Z",
+    });
+    const GET = await loadRoute();
+    const url = new URL("http://localhost/api/board/window");
+    url.searchParams.set("view", "month");
+    url.searchParams.set("scope", "selected");
+    const res = await GET(
+      new Request(url.toString(), { headers: { Authorization: `Bearer ${TOKENS.jeff}` } }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as BoardWindowPayload;
+    expect(body.resolvedEditorId).toBe("jeff");
+    expect(body.selected.view).toBe("month");
+  });
+
+  it("stale cached payload falls back to live build path", async () => {
+    isBoardCacheEnabled.mockReturnValue(true);
+    const stalePayload = makeCachePayload({ resolvedEditorId: "jeff", viewMode: "month" });
+    readBoardPayloadCache.mockResolvedValue({
+      payload: stalePayload,
+      generatedAtUtc: "2026-04-01T00:00:00.000Z",
+    });
+    const GET = await loadRoute();
+    const url = new URL("http://localhost/api/board/window");
+    url.searchParams.set("view", "month");
+    url.searchParams.set("scope", "selected");
+    const res = await GET(
+      new Request(url.toString(), { headers: { Authorization: `Bearer ${TOKENS.jeff}` } }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as BoardWindowPayload;
+    expect(body.resolvedEditorId).toBe("jeff");
+    expect(body.generatedAtUtc).toBe(snapshot.generatedAtUtc);
+  });
+
+  it("Supabase/cache read error falls back to live build path", async () => {
+    isBoardCacheEnabled.mockReturnValue(true);
+    readBoardPayloadCache.mockRejectedValueOnce(new Error("supabase unavailable"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const GET = await loadRoute();
+      const url = new URL("http://localhost/api/board/window");
+      url.searchParams.set("view", "month");
+      url.searchParams.set("scope", "selected");
+      const res = await GET(
+        new Request(url.toString(), { headers: { Authorization: `Bearer ${TOKENS.jeff}` } }),
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json() as BoardWindowPayload;
+      expect(body.resolvedEditorId).toBe("jeff");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("full scope still uses existing live build path", async () => {
+    isBoardCacheEnabled.mockReturnValue(true);
+    const GET = await loadRoute();
+    const url = new URL("http://localhost/api/board/window");
+    url.searchParams.set("view", "month");
+    url.searchParams.set("scope", "full");
+    const res = await GET(
+      new Request(url.toString(), { headers: { Authorization: `Bearer ${TOKENS.jeff}` } }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as BoardWindowPayload;
+    expect(body.weekWindow.weeks.length).toBeGreaterThan(0);
+    expect(readBoardPayloadCache).not.toHaveBeenCalled();
+  });
+
+  it("route does not call Google APIs", async () => {
+    isBoardCacheEnabled.mockReturnValue(true);
+    const GET = await loadRoute();
+    const res = await GET(makeRequest({ token: TOKENS.jeff }));
+    expect(res.status).toBe(200);
+    expect(fetchFreeBusy).not.toHaveBeenCalled();
+    expect(fetchCalendarEvents).not.toHaveBeenCalled();
+  });
+
+  it("public users do not receive editor payloads from mismatched cache bucket", async () => {
+    isBoardCacheEnabled.mockReturnValue(true);
+    const leakedPayload = makeCachePayload({ resolvedEditorId: "jeff", viewMode: "month" });
+    readBoardPayloadCache.mockResolvedValue({
+      payload: leakedPayload,
+      generatedAtUtc: leakedPayload.generatedAtUtc,
+    });
+    const GET = await loadRoute();
+    const url = new URL("http://localhost/api/board/window");
+    url.searchParams.set("view", "month");
+    url.searchParams.set("scope", "selected");
+    const res = await GET(new Request(url.toString()));
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const serialized = JSON.stringify(body);
+    expect((body as { resolvedEditorId?: string | null }).resolvedEditorId ?? null).toBeNull();
+    expect(serialized).not.toContain("LA_NOTE_DAVE");
+    expect(serialized).not.toContain("LA_NOTE_MILOS");
+    expect(serialized).not.toContain("OVERTURE_NOTE_JEFF");
+    expect(resolveBoardPayloadEditorBucket).toHaveBeenCalledWith(null);
+  });
 });
+
+function makeCachePayload(opts: {
+  resolvedEditorId: string | null;
+  viewMode: "list" | "month";
+}): BoardWindowPayload {
+  const query: BoardWindowQuery = {
+    viewMode: opts.viewMode,
+    requestedWeek: null,
+    requestedMonth: null,
+    weeksBefore: 0,
+    weeksAfter: 0,
+    monthsBefore: 0,
+    monthsAfter: 0,
+    scope: "selected",
+  };
+
+  return buildSanitizedBoardWindowPayload({
+    snapshot,
+    snapshotStatus: "ok",
+    file,
+    env,
+    query,
+    resolvedEditorId: opts.resolvedEditorId,
+    nowMs: Date.parse("2026-05-01T12:00:00.000Z"),
+  });
+}
