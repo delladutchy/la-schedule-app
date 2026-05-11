@@ -329,6 +329,36 @@ describe("isHydrationPayloadCompatible", () => {
       payload,
     })).toBe(false);
   });
+
+  it("accepts month payloads when month matches even if weekStart differs", () => {
+    const payload = makePayload({
+      editorId: "jeff",
+      view: "month",
+      weekStart: "2026-05-11",
+      monthKey: "2026-05",
+    });
+    expect(isHydrationPayloadCompatible({
+      currentViewMode: "month",
+      targetWeekStart: "2026-05-04",
+      targetMonthKey: "2026-05",
+      payload,
+    })).toBe(true);
+  });
+
+  it("accepts list payloads when weekStart matches even if monthKey differs", () => {
+    const payload = makePayload({
+      editorId: "jeff",
+      view: "list",
+      weekStart: "2026-05-04",
+      monthKey: "2026-06",
+    });
+    expect(isHydrationPayloadCompatible({
+      currentViewMode: "list",
+      targetWeekStart: "2026-05-04",
+      targetMonthKey: "2026-05",
+      payload,
+    })).toBe(true);
+  });
 });
 describe("LRU cap", () => {
   it("retains only the most-recently-written entries up to the cap", () => {

@@ -214,7 +214,15 @@ export function isHydrationPayloadCompatible(opts: {
   if (opts.payload.selected.view !== opts.currentViewMode) return false;
   const targetWeekStart = opts.targetWeekStart?.trim();
   const targetMonthKey = opts.targetMonthKey?.trim();
-  if (targetWeekStart && opts.payload.selected.weekStart !== targetWeekStart) return false;
+  // Match the active view's primary coordinate only:
+  // - list/week view keys on `weekStart`
+  // - month view keys on `monthKey`
+  // This preserves cross-view/target protections without rejecting valid
+  // month payloads when their companion `weekStart` differs.
+  if (opts.currentViewMode === "list") {
+    if (targetWeekStart && opts.payload.selected.weekStart !== targetWeekStart) return false;
+    return true;
+  }
   if (targetMonthKey && opts.payload.selected.monthKey !== targetMonthKey) return false;
   return true;
 }

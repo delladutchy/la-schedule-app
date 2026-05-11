@@ -522,11 +522,11 @@ export function ScheduleView({
         return;
       }
       lastBackgroundRefreshAtRef.current = now;
-      const active = derivedPayload ?? initialBoardWindowPayload;
+      const target = currentViewTargetRef.current;
       const baseParams = {
-        viewMode: active.selected.view,
-        start: active.selected.weekStart,
-        month: active.selected.monthKey,
+        viewMode: target.viewMode,
+        start: target.weekStart,
+        month: target.monthKey,
         signal: controller.signal,
         editorToken: navigationEditorToken,
       };
