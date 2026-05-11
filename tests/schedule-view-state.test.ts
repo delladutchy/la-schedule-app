@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { BoardWindowPayload } from "@/lib/board-window";
 import {
   isBackgroundPayloadCompatibleWithView,
+  pickFallbackPayloadForNewView,
+  shouldPreferIncomingForTargetMatch,
   shouldRetainDerivedPayloadOnSyntheticSwap,
 } from "@/lib/schedule-view-state";
 
@@ -117,5 +119,81 @@ describe("isBackgroundPayloadCompatibleWithView", () => {
       currentViewMode: "list",
       payload,
     })).toBe(true);
+  });
+});
+
+describe("pickFallbackPayloadForNewView", () => {
+  it("uses the remembered list payload when toggling Month → Week", () => {
+    const previousList = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
+    expect(pickFallbackPayloadForNewView({
+      initialPayloadIsSynthetic: true,
+      newView: "list",
+      lastSeenByView: { list: previousList, month: makePayload({ view: "month" }) },
+    })).toBe(previousList);
+  });
+
+  it("uses the remembered month payload when toggling Week → Month", () => {
+    const previousMonth = makePayload({ view: "month", weekStart: "2026-05-04", monthKey: "2026-05" });
+    expect(pickFallbackPayloadForNewView({
+      initialPayloadIsSynthetic: true,
+      newView: "month",
+      lastSeenByView: { list: makePayload({ view: "list" }), month: previousMonth },
+    })).toBe(previousMonth);
+  });
+
+  it("returns null when no payload has been seen for the new view", () => {
+    expect(pickFallbackPayloadForNewView({
+      initialPayloadIsSynthetic: true,
+      newView: "month",
+      lastSeenByView: { list: makePayload({ view: "list" }), month: null },
+    })).toBeNull();
+  });
+
+  it("returns null on non-synthetic SSR paths even if a payload is remembered", () => {
+    const previousList = makePayload({ view: "list" });
+    expect(pickFallbackPayloadForNewView({
+      initialPayloadIsSynthetic: false,
+      newView: "list",
+      lastSeenByView: { list: previousList, month: null },
+    })).toBeNull();
+  });
+
+  it("defensively rejects a remembered entry whose view does not match its slot", () => {
+    const corrupted = makePayload({ view: "month", weekStart: "2026-05-04", monthKey: "2026-05" });
+    expect(pickFallbackPayloadForNewView({
+      initialPayloadIsSynthetic: true,
+      newView: "list",
+      // Should never happen with the in-component tracker, but guarantees
+      // a cross-view payload can never leak through the fallback path.
+      lastSeenByView: { list: corrupted, month: null },
+    })).toBeNull();
+  });
+});
+
+describe("shouldPreferIncomingForTargetMatch", () => {
+  const target = { weekStart: "2026-05-04", monthKey: "2026-05" };
+
+  it("prefers incoming when it matches target and baseline does not", () => {
+    const incoming = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
+    const baseline = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
+    expect(shouldPreferIncomingForTargetMatch({ incoming, baseline, target })).toBe(true);
+  });
+
+  it("does not switch when both payloads match the target", () => {
+    const incoming = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
+    const baseline = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
+    expect(shouldPreferIncomingForTargetMatch({ incoming, baseline, target })).toBe(false);
+  });
+
+  it("does not switch when neither payload matches the target", () => {
+    const incoming = makePayload({ view: "list", weekStart: "2026-06-01", monthKey: "2026-06" });
+    const baseline = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
+    expect(shouldPreferIncomingForTargetMatch({ incoming, baseline, target })).toBe(false);
+  });
+
+  it("does not switch when only baseline matches the target", () => {
+    const incoming = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
+    const baseline = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
+    expect(shouldPreferIncomingForTargetMatch({ incoming, baseline, target })).toBe(false);
   });
 });

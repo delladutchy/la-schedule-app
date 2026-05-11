@@ -20,7 +20,10 @@ import {
 } from "@/lib/board-window-cache";
 import {
   isBackgroundPayloadCompatibleWithView,
+  pickFallbackPayloadForNewView,
+  shouldPreferIncomingForTargetMatch,
   shouldRetainDerivedPayloadOnSyntheticSwap,
+  type LastSeenPayloadsByView,
 } from "@/lib/schedule-view-state";
 import { isTodayClickTarget } from "@/lib/today-navigation";
 
@@ -387,6 +390,13 @@ export function ScheduleView({
   const [derivedPayload, setDerivedPayload] = useState<BoardWindowPayload | null>(null);
   const [todayPulseToken, setTodayPulseToken] = useState(0);
   const lastBackgroundRefreshAtRef = useRef(0);
+  // Per-view memory of the most recently seen real payload, used as a
+  // fallback during Week ↔ Month toggles so we don't flash the skeleton
+  // when a usable payload for the new view exists from earlier this
+  // session. The ref-based store survives view toggles (component stays
+  // mounted) but resets on full unmount/page reload — localStorage
+  // hydration still handles cold starts.
+  const lastSeenByViewRef = useRef<LastSeenPayloadsByView>({ list: null, month: null });
   const currentViewTargetRef = useRef<{
     viewMode: "list" | "month";
     weekStart: string;
@@ -434,16 +444,40 @@ export function ScheduleView({
         ? prev
         : { ...prev, [cacheKey]: initialBoardWindowPayload }
     ));
-    setDerivedPayload((prev) => (
-      shouldRetainDerivedPayloadOnSyntheticSwap({
+    setDerivedPayload((prev) => {
+      if (shouldRetainDerivedPayloadOnSyntheticSwap({
         previousDerived: prev,
         nextInitialPayload: initialBoardWindowPayload,
         initialPayloadIsSynthetic,
-      })
-        ? prev
-        : null
-    ));
+      })) {
+        return prev;
+      }
+      // Cross-view swap: render the most recently seen payload for the
+      // target view immediately so the user sees a populated board instead
+      // of the skeleton. The background fetch (started below) will replace
+      // this with the URL's exact target via `applyIfBetter`.
+      return pickFallbackPayloadForNewView({
+        initialPayloadIsSynthetic,
+        newView: initialBoardWindowPayload.selected.view,
+        lastSeenByView: lastSeenByViewRef.current,
+      });
+    });
   }, [initialBoardWindowPayload, initialPayloadIsSynthetic]);
+
+  // Remember the most recently seen real payload per view so a later
+  // cross-view toggle can hydrate from it without flashing a skeleton.
+  // Only real payloads update this — the synthetic SSR sentinel is
+  // intentionally skipped.
+  useEffect(() => {
+    if (!derivedPayload) return;
+    const view = derivedPayload.selected.view;
+    if (view !== "list" && view !== "month") return;
+    if (lastSeenByViewRef.current[view] === derivedPayload) return;
+    lastSeenByViewRef.current = {
+      ...lastSeenByViewRef.current,
+      [view]: derivedPayload,
+    };
+  }, [derivedPayload]);
 
   // Hydrate persisted cache for this editor on mount, and only swap state
   // when the cached payload is strictly newer than the SSR one for the
@@ -511,9 +545,27 @@ export function ScheduleView({
         const baseline = prev ?? initialBoardWindowPayload;
         if (incoming.generatedAtUtc > baseline.generatedAtUtc) return incoming;
         if (incoming.generatedAtUtc < baseline.generatedAtUtc) return prev;
-        // Same age → prefer the response with more wide-window data so the
-        // full follow-up replaces the selected-only stage 1 result, and a
-        // stale selected response never overwrites a full one.
+        // Same age → first, prefer whichever payload actually matches the
+        // URL's target {weekStart, monthKey}. This handles the cross-view
+        // toggle case where `baseline` is a same-view fallback for the
+        // user's previous coordinates, and the fresh fetch is for the
+        // new URL's coordinates. Without this check the older "more
+        // wide-window data" tiebreak below could keep the stale-coord
+        // fallback visible.
+        if (shouldPreferIncomingForTargetMatch({
+          incoming,
+          baseline,
+          target: {
+            weekStart: initialBoardWindowPayload.selected.weekStart,
+            monthKey: initialBoardWindowPayload.selected.monthKey,
+          },
+        })) {
+          return incoming;
+        }
+        // Same age, same target match → prefer the response with more
+        // wide-window data so the full follow-up replaces the
+        // selected-only stage 1 result, and a stale selected response
+        // never overwrites a full one.
         const incomingWeeks = incoming.weekWindow.weeks.length;
         const baselineWeeks = baseline.weekWindow.weeks.length;
         const incomingMonths = incoming.monthWindow.months.length;
