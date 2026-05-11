@@ -20,6 +20,8 @@ import { applyBuffers } from "./intervals";
 import { fetchFreeBusy, fetchCalendarEvents } from "./google";
 import { getConfig } from "./config";
 import { writeCurrentSnapshot } from "./store";
+import { isBoardCacheEnabled } from "./board-payload-cache";
+import { precomputeBoardPayloadCaches } from "./precompute-board-payloads";
 import type { BusyBlock, Snapshot, NamedEvent } from "./types";
 import { DateTime } from "luxon";
 
@@ -184,6 +186,31 @@ export async function buildAndPersistSnapshot(
     console.error("[sync] snapshot write failed:", msg);
     console.info(`[sync] timings ms freebusy=${freeBusyDurationMs} namedEvents=${namedEventsDurationMs} total=${Date.now() - syncStartedAt}`);
     return { status: "failed", error: `Snapshot write failed: ${msg}` };
+  }
+
+  if (isBoardCacheEnabled()) {
+    const precomputeStartedAt = Date.now();
+    try {
+      const precompute = await precomputeBoardPayloadCaches({
+        snapshot,
+        file: {
+          timezone: file.timezone,
+          workdayStartHour: file.workdayStartHour,
+          workdayEndHour: file.workdayEndHour,
+        },
+        env: {
+          GOOGLE_CALENDAR_ID: env.GOOGLE_CALENDAR_ID,
+          OVERTURE_CALENDAR_ID: env.OVERTURE_CALENDAR_ID,
+        },
+        nowMs,
+      });
+      console.info(
+        `[sync] board-cache precompute attempted=${precompute.attempted} written=${precompute.written} failed=${precompute.failed} ms=${Date.now() - precomputeStartedAt}`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[sync] board-cache precompute failed (continuing): ${msg}`);
+    }
   }
 
   return { status: "ok", snapshot };

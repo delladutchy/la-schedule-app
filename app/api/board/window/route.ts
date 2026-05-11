@@ -1,15 +1,27 @@
 import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { readCurrentSnapshot } from "@/lib/store";
-import { classifySnapshot } from "@/lib/view";
+import {
+  classifySnapshot,
+  resolveMonthNavigation,
+  resolveWeekNavigation,
+} from "@/lib/view";
 import {
   buildSanitizedBoardWindowPayload,
   parseBoardWindowQuery,
   resolveBoardRequestEditorId,
 } from "@/lib/board-window";
+import {
+  isBoardCacheEnabled,
+  readBoardPayloadCache,
+  resolveBoardPayloadEditorBucket,
+} from "@/lib/board-payload-cache";
+import { parseBoardWindowPayload } from "@/lib/board-window-payload-schema";
+import { todayInZone } from "@/lib/time";
 import type { Snapshot } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+const TODAY_TIMEZONE = "America/New_York";
 
 export async function GET(req: Request) {
   const { file, env } = getConfig();
@@ -52,6 +64,68 @@ export async function GET(req: Request) {
 
   const query = parseBoardWindowQuery(new URL(req.url));
   const resolvedEditorId = resolveBoardRequestEditorId(req, env);
+
+  if (isBoardCacheEnabled() && query.scope === "selected" && state.status === "ok") {
+    const cacheSelected = resolveSelectedCacheCoordinates({
+      query,
+      snapshot: state.snapshot,
+      timezone: file.timezone,
+      nowMs,
+    });
+    const editorBucket = resolveBoardPayloadEditorBucket(resolvedEditorId);
+
+    try {
+      const cached = await readBoardPayloadCache({
+        viewMode: query.viewMode,
+        weekStart: cacheSelected.weekStart,
+        monthKey: cacheSelected.monthKey,
+        editorBucket,
+        scope: "selected",
+      });
+
+      if (cached) {
+        const parsedPayload = parseBoardWindowPayload(cached.payload);
+        const snapshotGeneratedMs = Date.parse(state.snapshot.generatedAtUtc);
+        const cachedGeneratedMs = Date.parse(cached.generatedAtUtc);
+        const cachedPayloadGeneratedMs = Date.parse(parsedPayload?.generatedAtUtc ?? "");
+        const payloadBucket = resolveBoardPayloadEditorBucket(
+          parsedPayload?.resolvedEditorId ?? null,
+        );
+
+        if (
+          parsedPayload
+          && payloadBucket === editorBucket
+          && parsedPayload.selected.view === query.viewMode
+          && parsedPayload.selected.weekStart === cacheSelected.weekStart
+          && parsedPayload.selected.monthKey === cacheSelected.monthKey
+          && Number.isFinite(snapshotGeneratedMs)
+          && Number.isFinite(cachedGeneratedMs)
+          && Number.isFinite(cachedPayloadGeneratedMs)
+          && cachedGeneratedMs >= snapshotGeneratedMs
+          && cachedPayloadGeneratedMs >= snapshotGeneratedMs
+        ) {
+          console.info(
+            `[board-window] cache hit scope=selected view=${query.viewMode} editor=${editorBucket} week=${cacheSelected.weekStart} month=${cacheSelected.monthKey}`,
+          );
+          return NextResponse.json(parsedPayload);
+        }
+
+        console.info(
+          `[board-window] cache bypass scope=selected view=${query.viewMode} editor=${editorBucket} reason=validation_or_staleness`,
+        );
+      } else {
+        console.info(
+          `[board-window] cache miss scope=selected view=${query.viewMode} editor=${editorBucket} week=${cacheSelected.weekStart} month=${cacheSelected.monthKey}`,
+        );
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[board-window] cache read failed scope=selected view=${query.viewMode} message=${msg}`,
+      );
+    }
+  }
+
   const perfBuildStartedAt = Date.now();
   const payload = buildSanitizedBoardWindowPayload({
     snapshot: state.snapshot,
@@ -68,6 +142,40 @@ export async function GET(req: Request) {
   );
 
   return NextResponse.json(payload);
+}
+
+function resolveSelectedCacheCoordinates(opts: {
+  query: ReturnType<typeof parseBoardWindowQuery>;
+  snapshot: Snapshot;
+  timezone: string;
+  nowMs: number;
+}): { weekStart: string; monthKey: string } {
+  const todayKey = todayInZone(TODAY_TIMEZONE, opts.nowMs);
+  const todayMonthKey = todayKey.slice(0, 7);
+
+  const requestedWeek = opts.query.requestedWeek ?? todayKey;
+  const clampedRequestedWeek = requestedWeek < todayKey ? todayKey : requestedWeek;
+  const weekStart = resolveWeekNavigation({
+    requestedDate: clampedRequestedWeek,
+    fallbackDate: todayKey,
+    windowStartUtc: opts.snapshot.windowStartUtc,
+    windowEndUtc: opts.snapshot.windowEndUtc,
+    timezone: opts.timezone,
+  }).weekStart;
+
+  const requestedMonth = opts.query.requestedMonth ?? todayMonthKey;
+  const clampedRequestedMonth = requestedMonth < todayMonthKey
+    ? todayMonthKey
+    : requestedMonth;
+  const monthKey = resolveMonthNavigation({
+    requestedMonth: clampedRequestedMonth,
+    fallbackDate: todayKey,
+    windowStartUtc: opts.snapshot.windowStartUtc,
+    windowEndUtc: opts.snapshot.windowEndUtc,
+    timezone: opts.timezone,
+  }).monthKey;
+
+  return { weekStart, monthKey };
 }
 
 function rescueStaleSnapshot(
