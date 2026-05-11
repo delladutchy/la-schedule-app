@@ -156,6 +156,7 @@ describe("lib/board-payload-cache-supabase", () => {
         scope: "full",
         payload,
         generated_at_utc: "2026-05-01T12:00:00.000Z",
+        updated_at: expect.any(String),
       },
       { onConflict: "view_mode,week_start,month_key,editor_bucket,scope" },
     );
@@ -208,5 +209,49 @@ describe("lib/board-payload-cache-supabase", () => {
     const result = await readBoardPayloadCache(key);
 
     expect(result).toBeNull();
+  });
+
+  it("returns null when snapshot payload fails schema validation", async () => {
+    const mock = createMockClient({
+      readResponse: {
+        data: {
+          payload: {
+            ...payload,
+            selected: {
+              ...payload.selected,
+              weekStart: "not-a-date",
+            },
+          },
+          generated_at_utc: "2026-05-01T12:00:00.000Z",
+        },
+        error: null,
+      },
+    });
+    getSupabaseServerClient.mockReturnValue(mock.client);
+
+    const { readBoardPayloadCache } = await import("@/lib/board-payload-cache-supabase");
+    const result = await readBoardPayloadCache(key);
+
+    expect(result).toBeNull();
+  });
+
+  it("non-PGRST116 read errors return null safely", async () => {
+    const mock = createMockClient({
+      readResponse: {
+        data: null,
+        error: { code: "57014", message: "canceling statement due to statement timeout" },
+      },
+    });
+    getSupabaseServerClient.mockReturnValue(mock.client);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const { readBoardPayloadCache } = await import("@/lib/board-payload-cache-supabase");
+      const result = await readBoardPayloadCache(key);
+      expect(result).toBeNull();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

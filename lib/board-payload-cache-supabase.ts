@@ -1,5 +1,6 @@
 import "server-only";
 import type { BoardWindowPayload } from "./board-window";
+import { parseBoardWindowPayload } from "./board-window-payload-schema";
 import { getSupabaseServerClient } from "./supabase";
 
 const BOARD_PAYLOAD_CACHE_TABLE = "board_payload_cache";
@@ -43,10 +44,14 @@ function createBoardCacheError(
   );
 }
 
-function isBoardPayload(value: unknown): value is BoardWindowPayload {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as { status?: unknown; generatedAtUtc?: unknown };
-  return candidate.status === "ok" && typeof candidate.generatedAtUtc === "string";
+function logReadFailure(
+  key: BoardPayloadCacheKey,
+  error: SupabaseQueryError,
+): void {
+  const code = error.code ? ` code=${error.code}` : "";
+  console.error(
+    `[board-cache:supabase] read failed; returning null view=${key.viewMode} week=${key.weekStart} month=${key.monthKey} editor=${key.editorBucket} scope=${key.scope}${code} message=${error.message}`,
+  );
 }
 
 export async function readBoardPayloadCache(
@@ -66,14 +71,16 @@ export async function readBoardPayloadCache(
   if (error) {
     // PostgREST may return this for singular queries with no rows.
     if (error.code === "PGRST116") return null;
-    throw createBoardCacheError("read", key, error);
+    logReadFailure(key, error);
+    return null;
   }
-  if (!data || !isBoardPayload(data.payload)) {
+  const parsedPayload = parseBoardWindowPayload(data?.payload);
+  if (!data || !parsedPayload) {
     return null;
   }
 
   return {
-    payload: data.payload,
+    payload: parsedPayload,
     generatedAtUtc: data.generated_at_utc,
   };
 }
@@ -94,6 +101,7 @@ export async function writeBoardPayloadCache(
         scope: key.scope,
         payload,
         generated_at_utc: payload.generatedAtUtc,
+        updated_at: new Date().toISOString(),
       },
       { onConflict: "view_mode,week_start,month_key,editor_bucket,scope" },
     );
