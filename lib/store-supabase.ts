@@ -60,10 +60,14 @@ export async function writeCurrentSnapshot(
   snapshot: Snapshot,
 ): Promise<void> {
   const parsed = SnapshotSchema.parse(snapshot);
+  const updatedAt = new Date().toISOString();
   const client = getSupabaseServerClient();
   const { error } = await client
     .from(SNAPSHOT_CACHE_TABLE)
-    .upsert({ store_name: storeName, snapshot: parsed }, { onConflict: "store_name" });
+    .upsert(
+      { store_name: storeName, snapshot: parsed, updated_at: updatedAt },
+      { onConflict: "store_name" },
+    );
 
   if (error) {
     throw createSupabaseStoreError("write", storeName, error);

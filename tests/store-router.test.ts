@@ -74,16 +74,24 @@ describe("lib/store router", () => {
   });
 
   it("default store still uses Netlify Blobs behavior", async () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     const store = await import("@/lib/store");
 
-    const readResult = await store.readCurrentSnapshot("availability-snapshots");
-    expect(readResult).toEqual(baseSnapshot);
-    expect(readCurrentSnapshotFromBlobs).toHaveBeenCalledWith("availability-snapshots", {});
-    expect(readCurrentSnapshotFromSupabase).not.toHaveBeenCalled();
+    try {
+      const readResult = await store.readCurrentSnapshot("availability-snapshots");
+      expect(readResult).toEqual(baseSnapshot);
+      expect(readCurrentSnapshotFromBlobs).toHaveBeenCalledWith("availability-snapshots", {});
+      expect(readCurrentSnapshotFromSupabase).not.toHaveBeenCalled();
 
-    await store.writeCurrentSnapshot("availability-snapshots", baseSnapshot);
-    expect(writeCurrentSnapshotToBlobs).toHaveBeenCalledWith("availability-snapshots", baseSnapshot);
-    expect(writeCurrentSnapshotToSupabase).not.toHaveBeenCalled();
+      await store.writeCurrentSnapshot("availability-snapshots", baseSnapshot);
+      expect(writeCurrentSnapshotToBlobs).toHaveBeenCalledWith("availability-snapshots", baseSnapshot);
+      expect(writeCurrentSnapshotToSupabase).not.toHaveBeenCalled();
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[snapshot] Supabase write-through skipped enabled=false store=availability-snapshots generatedAtUtc=2026-05-01T12:00:00.000Z",
+      );
+    } finally {
+      infoSpy.mockRestore();
+    }
   });
 
   it("falls back to Netlify Blobs when Supabase reads fail", async () => {
@@ -104,16 +112,48 @@ describe("lib/store router", () => {
 
   it("Supabase write failures do not break Netlify primary writes", async () => {
     process.env.SUPABASE_WRITES_ENABLED = "true";
-    writeCurrentSnapshotToSupabase.mockRejectedValueOnce(new Error("upsert failed"));
+    writeCurrentSnapshotToSupabase.mockRejectedValueOnce({
+      code: "42501",
+      message: "permission denied by row-level security policy",
+      secret: "do-not-log",
+    });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
 
     try {
       const store = await import("@/lib/store");
       await expect(store.writeCurrentSnapshot("availability-snapshots", baseSnapshot)).resolves.toBeUndefined();
       expect(writeCurrentSnapshotToBlobs).toHaveBeenCalledWith("availability-snapshots", baseSnapshot);
       expect(writeCurrentSnapshotToSupabase).toHaveBeenCalledWith("availability-snapshots", baseSnapshot);
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[snapshot] Supabase write-through attempting enabled=true store=availability-snapshots generatedAtUtc=2026-05-01T12:00:00.000Z",
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[snapshot] Supabase write-through failed; continuing with Netlify Blobs snapshot. store=availability-snapshots generatedAtUtc=2026-05-01T12:00:00.000Z code=42501 message=permission denied by row-level security policy",
+      );
+      expect(errorSpy.mock.calls.join(" ")).not.toContain("do-not-log");
     } finally {
       errorSpy.mockRestore();
+      infoSpy.mockRestore();
+    }
+  });
+
+  it("Supabase write-through enabled logs attempt and success", async () => {
+    process.env.SUPABASE_WRITES_ENABLED = "true";
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    try {
+      const store = await import("@/lib/store");
+      await store.writeCurrentSnapshot("availability-snapshots", baseSnapshot);
+      expect(writeCurrentSnapshotToSupabase).toHaveBeenCalledWith("availability-snapshots", baseSnapshot);
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[snapshot] Supabase write-through attempting enabled=true store=availability-snapshots generatedAtUtc=2026-05-01T12:00:00.000Z",
+      );
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[snapshot] Supabase write-through success store=availability-snapshots generatedAtUtc=2026-05-01T12:00:00.000Z",
+      );
+    } finally {
+      infoSpy.mockRestore();
     }
   });
 

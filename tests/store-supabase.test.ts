@@ -69,10 +69,11 @@ describe("lib/store-supabase", () => {
 
     expect(mock.spies.from).toHaveBeenCalledWith("snapshot_cache");
     expect(mock.spies.upsert).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         store_name: "availability-snapshots",
         snapshot,
-      },
+        updated_at: expect.any(String),
+      }),
       { onConflict: "store_name" },
     );
   });
