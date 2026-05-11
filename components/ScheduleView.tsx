@@ -18,6 +18,10 @@ import {
   readCache as readPersistedCache,
   writeCache as writePersistedCache,
 } from "@/lib/board-window-cache";
+import {
+  isBackgroundPayloadCompatibleWithView,
+  shouldRetainDerivedPayloadOnSyntheticSwap,
+} from "@/lib/schedule-view-state";
 import { isTodayClickTarget } from "@/lib/today-navigation";
 
 const BACKGROUND_REFRESH_DEBOUNCE_MS = 200;
@@ -430,8 +434,16 @@ export function ScheduleView({
         ? prev
         : { ...prev, [cacheKey]: initialBoardWindowPayload }
     ));
-    setDerivedPayload(null);
-  }, [initialBoardWindowPayload]);
+    setDerivedPayload((prev) => (
+      shouldRetainDerivedPayloadOnSyntheticSwap({
+        previousDerived: prev,
+        nextInitialPayload: initialBoardWindowPayload,
+        initialPayloadIsSynthetic,
+      })
+        ? prev
+        : null
+    ));
+  }, [initialBoardWindowPayload, initialPayloadIsSynthetic]);
 
   // Hydrate persisted cache for this editor on mount, and only swap state
   // when the cached payload is strictly newer than the SSR one for the
@@ -485,10 +497,8 @@ export function ScheduleView({
     const applyIfBetter = (incoming: BoardWindowPayload): void => {
       if (cancelled) return;
       const target = currentViewTargetRef.current;
-      if (!isHydrationPayloadCompatible({
+      if (!isBackgroundPayloadCompatibleWithView({
         currentViewMode: target.viewMode,
-        targetWeekStart: target.weekStart,
-        targetMonthKey: target.monthKey,
         payload: incoming,
       })) {
         return;
