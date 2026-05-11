@@ -270,6 +270,15 @@ interface Props {
   monthCanGoNext: boolean;
   initialShowWeekends: boolean;
   initialBoardWindowPayload: BoardWindowPayload;
+  /**
+   * True when `initialBoardWindowPayload` is a synthesized skeleton produced
+   * by the static-shell SSR rather than a real server-built payload. In that
+   * mode we never write it back to localStorage (its sentinel timestamp would
+   * shadow a fresher cached entry on the next visit), and the mount-time
+   * /api/board/window fetch always fires because the payload's snapshotStatus
+   * is `"stale"` — defeating the skip-fresh optimization.
+   */
+  initialPayloadIsSynthetic?: boolean;
 }
 
 export function ScheduleView({
@@ -294,6 +303,7 @@ export function ScheduleView({
   monthCanGoNext,
   initialShowWeekends,
   initialBoardWindowPayload,
+  initialPayloadIsSynthetic = false,
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -359,12 +369,15 @@ export function ScheduleView({
     setDerivedPayload(fresher);
   }, [initialBoardWindowPayload, persistedBucket]);
 
-  // Write-through: every payload that drives the UI is persisted under
-  // the active editor's bucket. The SSR initial payload is also written
-  // so a future cold launch can hydrate instantly from disk.
+  // Write-through: every real payload that drives the UI is persisted under
+  // the active editor's bucket. The static-shell skeleton (when
+  // `initialPayloadIsSynthetic` is true) is intentionally NOT persisted —
+  // its sentinel timestamp would shadow fresher cached entries on later
+  // visits.
   useEffect(() => {
+    if (initialPayloadIsSynthetic) return;
     writePersistedCache(persistedBucket, initialBoardWindowPayload);
-  }, [persistedBucket, initialBoardWindowPayload]);
+  }, [persistedBucket, initialBoardWindowPayload, initialPayloadIsSynthetic]);
 
   useEffect(() => {
     if (!derivedPayload) return;

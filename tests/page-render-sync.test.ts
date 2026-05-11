@@ -136,7 +136,7 @@ describe("Availability page render sync behavior", () => {
     });
   });
 
-  it("does not trigger snapshot rebuild when a stale snapshot already exists", async () => {
+  it("static-shell render performs zero snapshot work and never calls Google", async () => {
     const mod = await import("@/app/page");
     await mod.default({
       searchParams: {
@@ -145,8 +145,11 @@ describe("Availability page render sync behavior", () => {
       },
     });
 
-    expect(readCurrentSnapshot).toHaveBeenCalledTimes(1);
-    expect(classifySnapshot).toHaveBeenCalledTimes(1);
+    // Static-shell architecture: the page render only does cookie + searchParams
+    // + date math. Snapshot reads, classification, and rebuilds all happen later
+    // via /api/board/window (client-triggered) — never during the initial render.
+    expect(readCurrentSnapshot).not.toHaveBeenCalled();
+    expect(classifySnapshot).not.toHaveBeenCalled();
     expect(buildAndPersistSnapshot).not.toHaveBeenCalled();
   });
 });

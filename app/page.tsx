@@ -1,17 +1,6 @@
-import { readCurrentSnapshot } from "@/lib/store";
-import { buildAndPersistSnapshot } from "@/lib/sync";
-import {
-  classifySnapshot,
-  buildDayBoard,
-  trimWeekRowsForScheduleList,
-  resolveWeekNavigation,
-  buildMonthBoard,
-  resolveMonthNavigation,
-} from "@/lib/view";
-import { todayInZone } from "@/lib/time";
 import { getConfig } from "@/lib/config";
+import { todayInZone } from "@/lib/time";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
-import { buildSanitizedBoardWindowPayload } from "@/lib/board-window";
 import { ScheduleView } from "@/components/ScheduleView";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { EditorSyncButton } from "@/components/EditorSyncButton";
@@ -19,6 +8,9 @@ import { EditorHistoryButton } from "@/components/EditorHistoryButton";
 import { EditorTokenBridge } from "@/components/EditorTokenBridge";
 import { cookies } from "next/headers";
 import { Inter } from "next/font/google";
+import { DateTime } from "luxon";
+import type { BoardWindowPayload } from "@/lib/board-window";
+import type { MonthBoardData } from "@/lib/view";
 
 // Header-only font. Subset to latin and a single weight so the
 // payload stays small. `display: swap` so the fallback paints first
@@ -30,33 +22,27 @@ const headerFont = Inter({
 });
 
 /**
- * The public availability page.
+ * The public availability page — static-shell flavor.
  *
- * Read-only. Renders from the last known-good snapshot in storage, with a
- * throttled opportunistic refresh path to reduce stale data windows.
- *
- * Snapshot-backed board:
- *
- *     Monday, Apr 21     Available
- *     Tuesday, Apr 22    Booked
- *     ...
- *
- * Rules:
- *   - Monday–Sunday week rows.
- *   - One status per day: Available or Booked.
- *   - Any overlapping blocker-calendar event (incl. tentative) → Booked.
- *
- * Reliability:
- *   - Fail-closed if snapshot is missing or older than hardTtlMinutes.
+ * SSR work is intentionally minimal: cookies, searchParams, and a synthetic
+ * skeleton `BoardWindowPayload`. NO snapshot read, NO board build, NO Google
+ * call. The browser hydrates ScheduleView, which restores the freshest
+ * payload from localStorage (if any) and immediately fetches a fresh one
+ * from /api/board/window. Webhooks + scheduled-sync keep the snapshot fresh
+ * server-side; mutation routes use strong-consistency reads for correctness.
  */
 
-// Always render on request so the homepage reads the latest snapshot.
+// Reading cookies()/searchParams forces dynamic rendering; force-dynamic is
+// kept for clarity. The SSR cost is now O(date math), not O(snapshot+build).
 export const dynamic = "force-dynamic";
 const TODAY_TIMEZONE = "America/New_York";
-const AUTO_BOOTSTRAP_BACKOFF_MS = 2 * 60 * 1000;
 
-let autoBootstrapInFlight: Promise<void> | null = null;
-let autoBootstrapBlockedUntilMs = 0;
+// Sentinel `generatedAtUtc` for the synthetic SSR payload. Any real cached
+// payload's timestamp is strictly newer, so `pickFreshestForView` always
+// picks the cache over the skeleton — that's what enables instant repeat-
+// visit paint. The `Synthetic` flag below also stops the skeleton from
+// polluting the cache.
+const SYNTHETIC_GENERATED_AT_UTC = "1970-01-01T00:00:00.000Z";
 
 interface SearchParams {
   start?: string | string[]; // YYYY-MM-DD
@@ -92,69 +78,84 @@ function resolveInitialEditorId(
   return auth.ok ? auth.editorId : null;
 }
 
-function describeUnavailableReason(
-  snapshot: Awaited<ReturnType<typeof readCurrentSnapshot>>,
-  state: ReturnType<typeof classifySnapshot>,
-): string {
-  if (!snapshot) return "no_snapshot_in_store";
-  const generatedMs = Date.parse(snapshot.generatedAtUtc);
-  if (!Number.isFinite(generatedMs)) return "snapshot_timestamp_invalid";
-  const ageMinutes = state.ageMinutes !== null
-    ? Math.round(state.ageMinutes)
-    : Math.round(Math.max(0, (Date.now() - generatedMs) / 60000));
-  return `hard_stale_age=${ageMinutes}m`;
+function emptyMonthBoardData(monthKey: string): MonthBoardData {
+  return { monthKey, label: "", weeks: [] };
 }
 
-function rescueStaleSnapshot(
-  snapshot: NonNullable<Awaited<ReturnType<typeof readCurrentSnapshot>>>,
-  nowMs: number,
-): ReturnType<typeof classifySnapshot> | null {
-  const generatedMs = Date.parse(snapshot.generatedAtUtc);
-  const windowEndMs = Date.parse(snapshot.windowEndUtc);
-  if (!Number.isFinite(generatedMs) || !Number.isFinite(windowEndMs)) return null;
-  if (windowEndMs <= nowMs) return null;
+function buildSyntheticInitialPayload(opts: {
+  viewMode: "list" | "month";
+  weekStart: string;
+  monthKey: string;
+  todayKey: string;
+  todayMonthKey: string;
+  resolvedEditorId: string | null;
+  timezone: string;
+}): BoardWindowPayload {
+  const weekStartDate = DateTime.fromISO(opts.weekStart, { zone: opts.timezone });
+  const weekPrev = weekStartDate.isValid
+    ? weekStartDate.minus({ weeks: 1 }).toFormat("yyyy-LL-dd")
+    : opts.weekStart;
+  const weekNext = weekStartDate.isValid
+    ? weekStartDate.plus({ weeks: 1 }).toFormat("yyyy-LL-dd")
+    : opts.weekStart;
+  const monthStart = DateTime.fromFormat(opts.monthKey, "yyyy-LL", { zone: opts.timezone });
+  const monthPrev = monthStart.isValid
+    ? monthStart.minus({ months: 1 }).toFormat("yyyy-LL")
+    : opts.monthKey;
+  const monthNext = monthStart.isValid
+    ? monthStart.plus({ months: 1 }).toFormat("yyyy-LL")
+    : opts.monthKey;
+
   return {
-    status: "stale",
-    snapshot,
-    ageMinutes: Math.max(0, (nowMs - generatedMs) / 60000),
+    status: "ok",
+    snapshotStatus: "stale",
+    generatedAtUtc: SYNTHETIC_GENERATED_AT_UTC,
+    snapshotWindowStartUtc: SYNTHETIC_GENERATED_AT_UTC,
+    snapshotWindowEndUtc: SYNTHETIC_GENERATED_AT_UTC,
+    timezone: opts.timezone,
+    resolvedEditorId: opts.resolvedEditorId,
+    todayKey: opts.todayKey,
+    todayMonthKey: opts.todayMonthKey,
+    selected: {
+      view: opts.viewMode,
+      weekStart: opts.weekStart,
+      monthKey: opts.monthKey,
+      weekNav: {
+        weekStart: opts.weekStart,
+        prevStart: weekPrev,
+        nextStart: weekNext,
+        hasPrev: false,
+        hasNext: true,
+        canGoPrev: false,
+        canGoNext: true,
+      },
+      monthNav: {
+        monthKey: opts.monthKey,
+        prevMonth: monthPrev,
+        nextMonth: monthNext,
+        hasPrev: false,
+        hasNext: true,
+        canGoPrev: false,
+        canGoNext: true,
+      },
+    },
+    selectedBoards: {
+      weekRows: [],
+      month: emptyMonthBoardData(opts.monthKey),
+    },
+    weekWindow: {
+      startWeek: opts.weekStart,
+      endWeek: opts.weekStart,
+      weekCount: 0,
+      weeks: [],
+    },
+    monthWindow: {
+      startMonth: opts.monthKey,
+      endMonth: opts.monthKey,
+      monthCount: 0,
+      months: [],
+    },
   };
-}
-
-async function autoBootstrapSnapshotIfNeeded(enabled: boolean): Promise<void> {
-  if (!enabled) return;
-  const now = Date.now();
-  if (now < autoBootstrapBlockedUntilMs) return;
-
-  if (!autoBootstrapInFlight) {
-    autoBootstrapInFlight = (async () => {
-      const started = Date.now();
-      try {
-        const result = await buildAndPersistSnapshot();
-        const durationMs = Date.now() - started;
-        if (result.status === "ok") {
-          autoBootstrapBlockedUntilMs = 0;
-          console.log(`[bootstrap] snapshot generated in ${durationMs}ms`);
-          return;
-        }
-
-        autoBootstrapBlockedUntilMs = Date.now() + AUTO_BOOTSTRAP_BACKOFF_MS;
-        console.error(
-          `[bootstrap] snapshot failed in ${durationMs}ms: ${result.error ?? "unknown error"}`,
-          result.erroredCalendarIds?.length
-            ? { erroredCalendarIds: result.erroredCalendarIds }
-            : undefined,
-        );
-      } catch (err) {
-        autoBootstrapBlockedUntilMs = Date.now() + AUTO_BOOTSTRAP_BACKOFF_MS;
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[bootstrap] exception: ${msg}`);
-      }
-    })().finally(() => {
-      autoBootstrapInFlight = null;
-    });
-  }
-
-  await autoBootstrapInFlight;
 }
 
 export default async function AvailabilityPage({
@@ -162,196 +163,61 @@ export default async function AvailabilityPage({
 }: {
   searchParams?: SearchParams;
 }) {
+  // [perf] keep this lightweight log so we can confirm the SSR is fast.
+  const perfPageStartedAt = Date.now();
   const { file, env } = getConfig();
   const viewMode = resolveViewMode(firstParam(searchParams.view));
   const initialEditorToken = firstParam(searchParams.editor);
   const now = Date.now();
-  // [perf] temporary instrumentation — remove once perf review concludes.
-  const perfPageStartedAt = Date.now();
-  const perfReadSnapshotStartedAt = Date.now();
-  let snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
-  const perfReadSnapshotMs = Date.now() - perfReadSnapshotStartedAt;
-  let state = classifySnapshot(snapshot, now, {
-    freshTtlMinutes: file.freshTtlMinutes,
-    hardTtlMinutes: file.hardTtlMinutes,
-  });
-
-  if (state.status === "unavailable" || !state.snapshot) {
-    console.warn(
-      `[page] snapshot unavailable preBootstrap reason=${describeUnavailableReason(snapshot, state)} hard=${file.hardTtlMinutes}m`,
-    );
-    await autoBootstrapSnapshotIfNeeded(env.AUTO_BOOTSTRAP_ON_UNAVAILABLE);
-    snapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME);
-    state = classifySnapshot(snapshot, now, {
-      freshTtlMinutes: file.freshTtlMinutes,
-      hardTtlMinutes: file.hardTtlMinutes,
-    });
-  }
-
-  // Last-known-good rescue: if we still classify as unavailable but the
-  // persisted snapshot is parseable and its projection window still covers
-  // the present moment, render it as "stale" rather than failing closed.
-  // Better to show slightly old but real availability than nothing.
-  if (state.status === "unavailable" && snapshot) {
-    const rescued = rescueStaleSnapshot(snapshot, now);
-    if (rescued) {
-      console.warn(
-        `[page] last-known-good fallback render age=${rescued.ageMinutes !== null ? Math.round(rescued.ageMinutes) : "?"}m hard=${file.hardTtlMinutes}m generatedAt=${snapshot.generatedAtUtc} windowEnd=${snapshot.windowEndUtc}`,
-      );
-      state = rescued;
-    }
-  }
-
-  // Fail-closed render — only when we truly cannot serve any usable data.
-  if (state.status === "unavailable" || !state.snapshot) {
-    console.error(
-      `[page] fail-closed reason=${describeUnavailableReason(snapshot, state)} hadParseableSnapshot=${snapshot != null}`,
-    );
-    return (
-      <div className="page">
-        <div className="fail-closed">
-          <h1>Availability temporarily unavailable</h1>
-          <p>
-            This page could not load current availability. Please check back in a few
-            minutes, or contact directly to confirm scheduling.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // Use the LIVE config timezone, not the snapshot-embedded one, so a
-  // config change takes effect on the next page render without requiring
-  // a new sync. The snapshot's UTC busy ranges are timezone-agnostic.
-  const snapshotData = state.snapshot;
-  const windowStartUtc = snapshotData.windowStartUtc;
-  const windowEndUtc = snapshotData.windowEndUtc;
-  const tz = file.timezone;
-
-  // Single explicit timezone for current-day calculations.
   const todayKey = todayInZone(TODAY_TIMEZONE, now);
   const todayMonthKey = todayKey.slice(0, 7);
+  const tz = file.timezone;
 
-  // Determine which week to show. Default: this week. `?start=YYYY-MM-DD` overrides.
+  // Anchor the requested week/month from searchParams (or default to today)
+  // without touching the snapshot. Window-clamping happens client-side once
+  // /api/board/window returns the real boundaries.
   const requestedWeekParam = firstParam(searchParams.start)?.trim();
   const requestedWeek =
     requestedWeekParam && /^\d{4}-\d{2}-\d{2}$/.test(requestedWeekParam)
       ? requestedWeekParam
       : todayKey;
-  const clampedRequestedWeek = requestedWeek < todayKey ? todayKey : requestedWeek;
-  const currentWeekStart = resolveWeekNavigation({
-    requestedDate: todayKey,
-    fallbackDate: todayKey,
-    windowStartUtc,
-    windowEndUtc,
-    timezone: tz,
-  }).weekStart;
+  const weekStartDt = DateTime.fromISO(requestedWeek, { zone: tz });
+  const weekStart = weekStartDt.isValid
+    ? weekStartDt.startOf("week").toFormat("yyyy-LL-dd")
+    : todayKey;
 
-  const effectiveWeekStart = resolveWeekNavigation({
-    requestedDate: clampedRequestedWeek,
-    fallbackDate: todayKey,
-    windowStartUtc,
-    windowEndUtc,
-    timezone: tz,
-  }).weekStart;
-  const weekNav = resolveWeekNavigation({
-    requestedDate: effectiveWeekStart,
-    fallbackDate: todayKey,
-    windowStartUtc,
-    windowEndUtc,
-    timezone: tz,
-  });
-  const weekCanGoPrev = weekNav.hasPrev && weekNav.weekStart > currentWeekStart;
-  const weekCanGoNext = weekNav.hasNext;
-
-  // List view: selected week + next week. Current selected week hides past rows.
-  // Skip the build when month view is active — the unused board prop is a stub
-  // because ScheduleView only renders <DayBoard> in list mode.
-  const perfBuildWeekStartedAt = Date.now();
-  const weekRows = viewMode === "list"
-    ? trimWeekRowsForScheduleList({
-        weeks: buildDayBoard({
-          snapshot: snapshotData,
-          startDate: effectiveWeekStart,
-          weeks: 2,
-          timezone: tz,
-          workdayStartHour: file.workdayStartHour,
-          workdayEndHour: file.workdayEndHour,
-          nowMs: now,
-          todayKey,
-        }),
-        selectedWeekStart: effectiveWeekStart,
-        currentWeekStart,
-        todayKey,
-      })
-    : [];
-  const perfBuildWeekMs = Date.now() - perfBuildWeekStartedAt;
-
-  // Determine which month to show. Default: this month. `?month=YYYY-MM` overrides.
   const requestedMonthParam = firstParam(searchParams.month)?.trim();
-  const requestedMonth =
+  const monthKey =
     requestedMonthParam && /^\d{4}-\d{2}$/.test(requestedMonthParam)
       ? requestedMonthParam
       : todayMonthKey;
-  const clampedRequestedMonth = requestedMonth < todayMonthKey ? todayMonthKey : requestedMonth;
 
-  const monthNav = resolveMonthNavigation({
-    requestedMonth: clampedRequestedMonth,
-    fallbackDate: todayKey,
-    windowStartUtc,
-    windowEndUtc,
-    timezone: tz,
-  });
-  const monthCanGoPrev = monthNav.hasPrev && monthNav.monthKey > todayMonthKey;
-
-  // Month view: full month grid with one status per day.
-  // Skip the build when list view is active — ScheduleView only renders
-  // <MonthBoard> in month mode, and the prop is a stub otherwise.
-  const perfBuildMonthStartedAt = Date.now();
-  const month = viewMode === "month"
-    ? buildMonthBoard({
-        snapshot: snapshotData,
-        month: monthNav.monthKey,
-        timezone: tz,
-        nowMs: now,
-        todayKey,
-      })
-    : { monthKey: monthNav.monthKey, label: "", weeks: [] };
-  const perfBuildMonthMs = Date.now() - perfBuildMonthStartedAt;
-
-  const listToggleStart = viewMode === "month" ? `${monthNav.monthKey}-01` : effectiveWeekStart;
-  const monthToggleKey = viewMode === "list" ? effectiveWeekStart.slice(0, 7) : monthNav.monthKey;
-  const weekPrevHref = `/?view=list&start=${weekNav.prevStart}`;
-  const weekNextHref = `/?view=list&start=${weekNav.nextStart}`;
-  const monthPrevHref = `/?view=month&month=${monthNav.prevMonth}`;
-  const monthNextHref = `/?view=month&month=${monthNav.nextMonth}`;
   const resolvedEditorId = resolveInitialEditorId(initialEditorToken, env);
   const mikeShowWeekendsCookie = cookies().get("la_schedule_mike_show_weekends")?.value;
   const initialShowWeekends = resolvedEditorId === "mike"
     ? mikeShowWeekendsCookie === "1"
     : true;
-  const perfBuildWindowStartedAt = Date.now();
-  const initialBoardWindowPayload = buildSanitizedBoardWindowPayload({
-    snapshot: snapshotData,
-    snapshotStatus: state.status,
-    file,
-    env,
-    query: {
-      viewMode,
-      requestedWeek,
-      requestedMonth,
-      weeksBefore: 0,
-      weeksAfter: 8,
-      monthsBefore: 0,
-      monthsAfter: 4,
-    },
+
+  const initialBoardWindowPayload = buildSyntheticInitialPayload({
+    viewMode,
+    weekStart,
+    monthKey,
+    todayKey,
+    todayMonthKey,
     resolvedEditorId,
-    nowMs: now,
+    timezone: tz,
   });
-  const perfBuildWindowMs = Date.now() - perfBuildWindowStartedAt;
+
+  const listToggleStart = viewMode === "month" ? `${monthKey}-01` : weekStart;
+  const monthToggleKey = viewMode === "list" ? weekStart.slice(0, 7) : monthKey;
+  const weekPrevHref = `/?view=list&start=${initialBoardWindowPayload.selected.weekNav.prevStart}`;
+  const weekNextHref = `/?view=list&start=${initialBoardWindowPayload.selected.weekNav.nextStart}`;
+  const monthPrevHref = `/?view=month&month=${initialBoardWindowPayload.selected.monthNav.prevMonth}`;
+  const monthNextHref = `/?view=month&month=${initialBoardWindowPayload.selected.monthNav.nextMonth}`;
+
   const perfPageTotalMs = Date.now() - perfPageStartedAt;
   console.info(
-    `[perf] page total ms readSnapshot=${perfReadSnapshotMs} buildWeek=${perfBuildWeekMs} buildMonth=${perfBuildMonthMs} buildWindow=${perfBuildWindowMs} total=${perfPageTotalMs} view=${viewMode}`,
+    `[perf] page total ms readSnapshot=0 buildWeek=0 buildMonth=0 buildWindow=0 total=${perfPageTotalMs} view=${viewMode} shell=1`,
   );
 
   return (
@@ -369,7 +235,7 @@ export default async function AvailabilityPage({
               style={{ animationDelay: `${i * 90}ms` }}
               aria-hidden="true"
             >
-              {ch === " " ? " " : ch}
+              {ch === " " ? " " : ch}
             </span>
           ))}
         </h1>
@@ -396,20 +262,20 @@ export default async function AvailabilityPage({
         overtureCalendarId={env.OVERTURE_CALENDAR_ID}
         todayKey={todayKey}
         todayMonthKey={todayMonthKey}
-        weekRows={weekRows}
+        weekRows={[]}
         weekPrevHref={weekPrevHref}
         weekNextHref={weekNextHref}
-        weekCanGoPrev={weekCanGoPrev}
-        weekCanGoNext={weekCanGoNext}
-        month={month}
+        weekCanGoPrev={false}
+        weekCanGoNext={true}
+        month={emptyMonthBoardData(monthKey)}
         monthPrevHref={monthPrevHref}
         monthNextHref={monthNextHref}
-        monthCanGoPrev={monthCanGoPrev}
-        monthCanGoNext={monthNav.hasNext}
+        monthCanGoPrev={false}
+        monthCanGoNext={true}
         initialShowWeekends={initialShowWeekends}
         initialBoardWindowPayload={initialBoardWindowPayload}
+        initialPayloadIsSynthetic={true}
       />
-
     </div>
   );
 }
