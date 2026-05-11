@@ -205,6 +205,20 @@ export function pickFreshestForView(
   return cached;
 }
 
+export function isHydrationPayloadCompatible(opts: {
+  currentViewMode: "list" | "month";
+  targetWeekStart?: string | null;
+  targetMonthKey?: string | null;
+  payload: BoardWindowPayload;
+}): boolean {
+  if (opts.payload.selected.view !== opts.currentViewMode) return false;
+  const targetWeekStart = opts.targetWeekStart?.trim();
+  const targetMonthKey = opts.targetMonthKey?.trim();
+  if (targetWeekStart && opts.payload.selected.weekStart !== targetWeekStart) return false;
+  if (targetMonthKey && opts.payload.selected.monthKey !== targetMonthKey) return false;
+  return true;
+}
+
 function mergeWithLruCap(
   prev: Record<string, BoardWindowPayload> | undefined,
   freshKey: string,

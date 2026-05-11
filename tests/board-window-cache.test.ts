@@ -8,6 +8,7 @@ import {
   clearAllCaches,
   clearCache,
   editorIdToBucket,
+  isHydrationPayloadCompatible,
   pickFreshestForView,
   readCache,
   writeCache,
@@ -237,6 +238,98 @@ describe("pickFreshestForView", () => {
   });
 });
 
+describe("isHydrationPayloadCompatible", () => {
+  it("rejects hydrating Month UI from a list payload", () => {
+    const payload = makePayload({
+      editorId: "jeff",
+      view: "list",
+      weekStart: "2026-05-04",
+      monthKey: "2026-05",
+    });
+    expect(isHydrationPayloadCompatible({
+      currentViewMode: "month",
+      targetWeekStart: "2026-05-04",
+      targetMonthKey: "2026-05",
+      payload,
+    })).toBe(false);
+  });
+
+  it("rejects hydrating Week/List UI from a month payload", () => {
+    const payload = makePayload({
+      editorId: "jeff",
+      view: "month",
+      weekStart: "2026-05-04",
+      monthKey: "2026-05",
+    });
+    expect(isHydrationPayloadCompatible({
+      currentViewMode: "list",
+      targetWeekStart: "2026-05-04",
+      targetMonthKey: "2026-05",
+      payload,
+    })).toBe(false);
+  });
+
+  it("rejects payloads with mismatched selected week/month keys", () => {
+    const payload = makePayload({
+      editorId: "jeff",
+      view: "month",
+      weekStart: "2026-05-11",
+      monthKey: "2026-06",
+    });
+    expect(isHydrationPayloadCompatible({
+      currentViewMode: "month",
+      targetWeekStart: "2026-05-04",
+      targetMonthKey: "2026-05",
+      payload,
+    })).toBe(false);
+  });
+
+  it("accepts matching payloads for fast hydration", () => {
+    const payload = makePayload({
+      editorId: "jeff",
+      view: "month",
+      weekStart: "2026-05-04",
+      monthKey: "2026-05",
+      generatedAtUtc: "2026-05-04T12:30:00.000Z",
+    });
+    expect(isHydrationPayloadCompatible({
+      currentViewMode: "month",
+      targetWeekStart: "2026-05-04",
+      targetMonthKey: "2026-05",
+      payload,
+    })).toBe(true);
+  });
+
+  it("rejects stale list payloads for a different selected week target", () => {
+    const payload = makePayload({
+      editorId: "jeff",
+      view: "list",
+      weekStart: "2026-05-04",
+      monthKey: "2026-05",
+    });
+    expect(isHydrationPayloadCompatible({
+      currentViewMode: "list",
+      targetWeekStart: "2026-05-11",
+      targetMonthKey: "2026-05",
+      payload,
+    })).toBe(false);
+  });
+
+  it("rejects stale month payloads for a different selected month target", () => {
+    const payload = makePayload({
+      editorId: "jeff",
+      view: "month",
+      weekStart: "2026-05-04",
+      monthKey: "2026-05",
+    });
+    expect(isHydrationPayloadCompatible({
+      currentViewMode: "month",
+      targetWeekStart: "2026-05-04",
+      targetMonthKey: "2026-06",
+      payload,
+    })).toBe(false);
+  });
+});
 describe("LRU cap", () => {
   it("retains only the most-recently-written entries up to the cap", () => {
     const writes: BoardWindowPayload[] = [];

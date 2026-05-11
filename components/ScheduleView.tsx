@@ -13,6 +13,7 @@ import {
   buildViewKey as buildPersistedViewKey,
   clearCache as clearPersistedCache,
   editorIdToBucket,
+  isHydrationPayloadCompatible,
   pickFreshestForView,
   readCache as readPersistedCache,
   writeCache as writePersistedCache,
@@ -382,6 +383,20 @@ export function ScheduleView({
   const [derivedPayload, setDerivedPayload] = useState<BoardWindowPayload | null>(null);
   const [todayPulseToken, setTodayPulseToken] = useState(0);
   const lastBackgroundRefreshAtRef = useRef(0);
+  const currentViewTargetRef = useRef<{
+    viewMode: "list" | "month";
+    weekStart: string;
+    monthKey: string;
+  }>({
+    viewMode,
+    weekStart: initialBoardWindowPayload.selected.weekStart,
+    monthKey: initialBoardWindowPayload.selected.monthKey,
+  });
+  currentViewTargetRef.current = {
+    viewMode: derivedPayload?.selected.view ?? viewMode,
+    weekStart: derivedPayload?.selected.weekStart ?? initialBoardWindowPayload.selected.weekStart,
+    monthKey: derivedPayload?.selected.monthKey ?? initialBoardWindowPayload.selected.monthKey,
+  };
 
   useEffect(() => {
     if (!isMikeEditor) {
@@ -469,6 +484,15 @@ export function ScheduleView({
 
     const applyIfBetter = (incoming: BoardWindowPayload): void => {
       if (cancelled) return;
+      const target = currentViewTargetRef.current;
+      if (!isHydrationPayloadCompatible({
+        currentViewMode: target.viewMode,
+        targetWeekStart: target.weekStart,
+        targetMonthKey: target.monthKey,
+        payload: incoming,
+      })) {
+        return;
+      }
       setBoardWindowCache((prev) => ({
         ...prev,
         [buildBoardWindowCacheKey(incoming)]: incoming,
