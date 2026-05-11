@@ -93,6 +93,65 @@ export async function fetchBoardWindowPayload({
   return isBoardWindowPayload(payload) ? payload : null;
 }
 
+/**
+ * Loading skeleton for the board area. Rendered while the static-shell SSR
+ * has only a synthetic payload and the client has neither hydrated the
+ * localStorage cache nor received a /api/board/window response yet. Mimics
+ * the board layout to avoid layout shift, fades in with a small delay so a
+ * cache-hit microsecond render never paints it.
+ */
+function BoardSkeleton({
+  variant,
+  visibleDayCount,
+}: {
+  variant: "list" | "month";
+  visibleDayCount: number;
+}): JSX.Element {
+  if (variant === "list") {
+    return (
+      <div
+        className="board board-skeleton"
+        role="status"
+        aria-busy="true"
+        aria-label="Loading availability"
+      >
+        <div className="board-week board-week--skeleton">
+          <div className="board-skeleton-week-label" aria-hidden="true" />
+          <ul className="board-days">
+            {Array.from({ length: 10 }).map((_, dayIdx) => (
+              <li key={dayIdx} className="board-skeleton-row" aria-hidden="true" />
+            ))}
+          </ul>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <section
+      className="month-board board-skeleton"
+      aria-busy="true"
+      aria-label="Loading availability"
+      style={{ ["--month-visible-days" as string]: String(visibleDayCount) }}
+    >
+      <div className="month-weekdays" aria-hidden="true">
+        {Array.from({ length: visibleDayCount }).map((_, i) => (
+          <div key={i} className="month-weekday">&nbsp;</div>
+        ))}
+      </div>
+      <div className="month-grid">
+        {Array.from({ length: 6 }).map((_, weekIdx) => (
+          <div key={weekIdx} className="month-week month-week--skeleton">
+            {Array.from({ length: visibleDayCount }).map((_, dayIdx) => (
+              <div key={dayIdx} className="month-skeleton-cell" aria-hidden="true" />
+            ))}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function withEditorToken(href: string, editorToken: string | null): string {
   if (!editorToken) return href;
   try {
@@ -505,6 +564,16 @@ export function ScheduleView({
   const monthTodayHref = withEditorToken(`/?view=month&month=${effectiveTodayMonthKey}`, navigationEditorToken);
   const monthNextNavHref = withEditorToken(effectiveMonthNextHref, navigationEditorToken);
 
+  // Loading state: shell is up but no real data has arrived yet. True only
+  // for the static-shell SSR path AND before any cache/fetch resolves. Once
+  // localStorage cache or /api/board/window populates `derivedPayload`, this
+  // flips to false for the rest of the navigation — view toggles with a
+  // cache hit never re-enter the skeleton because React batches the cache
+  // useEffect's setDerivedPayload alongside the SSR-payload-changed reset.
+  const isLoading = initialPayloadIsSynthetic && !derivedPayload;
+  const isWeekendsHidden = isMikeEditor && !showWeekends;
+  const skeletonVisibleDayCount = isWeekendsHidden ? 5 : 7;
+
   const handleBoardNavigate = useCallback((href: string) => {
     const sourcePayload = derivedPayload ?? initialBoardWindowPayload;
     const cachedSource = boardWindowCache[buildBoardWindowCacheKey(sourcePayload)] ?? sourcePayload;
@@ -657,21 +726,25 @@ export function ScheduleView({
             {renderWeekendToggle("weekend-visibility-row--nav")}
           </nav>
 
-          <DayBoard
-            weeks={effectiveWeekRows}
-            initialEditorToken={initialEditorToken}
-            initialResolvedEditorId={resolvedEditorId}
-            editorCalendarId={editorCalendarId}
-            overtureCalendarId={overtureCalendarId}
-            prevHref={weekPrevNavHref}
-            nextHref={weekNextNavHref}
-            canGoPrev={effectiveWeekCanGoPrev}
-            canGoNext={effectiveWeekCanGoNext}
-            showWeekends={showWeekends}
-            onNavigate={handleBoardNavigate}
-            onMutationSuccess={invalidatePersistedCache}
-            todayPulseToken={todayPulseToken}
-          />
+          {isLoading ? (
+            <BoardSkeleton variant="list" visibleDayCount={skeletonVisibleDayCount} />
+          ) : (
+            <DayBoard
+              weeks={effectiveWeekRows}
+              initialEditorToken={initialEditorToken}
+              initialResolvedEditorId={resolvedEditorId}
+              editorCalendarId={editorCalendarId}
+              overtureCalendarId={overtureCalendarId}
+              prevHref={weekPrevNavHref}
+              nextHref={weekNextNavHref}
+              canGoPrev={effectiveWeekCanGoPrev}
+              canGoNext={effectiveWeekCanGoNext}
+              showWeekends={showWeekends}
+              onNavigate={handleBoardNavigate}
+              onMutationSuccess={invalidatePersistedCache}
+              todayPulseToken={todayPulseToken}
+            />
+          )}
         </>
       ) : (
         <>
@@ -737,22 +810,26 @@ export function ScheduleView({
             {renderWeekendToggle("weekend-visibility-row--nav")}
           </nav>
 
-          <MonthBoard
-            month={effectiveMonth}
-            todayKey={effectiveTodayKey}
-            initialEditorToken={initialEditorToken}
-            initialResolvedEditorId={resolvedEditorId}
-            editorCalendarId={editorCalendarId}
-            overtureCalendarId={overtureCalendarId}
-            prevHref={monthPrevNavHref}
-            nextHref={monthNextNavHref}
-            canGoPrev={effectiveMonthCanGoPrev}
-            canGoNext={effectiveMonthCanGoNext}
-            showWeekends={showWeekends}
-            onNavigate={handleBoardNavigate}
-            onMutationSuccess={invalidatePersistedCache}
-            todayPulseToken={todayPulseToken}
-          />
+          {isLoading ? (
+            <BoardSkeleton variant="month" visibleDayCount={skeletonVisibleDayCount} />
+          ) : (
+            <MonthBoard
+              month={effectiveMonth}
+              todayKey={effectiveTodayKey}
+              initialEditorToken={initialEditorToken}
+              initialResolvedEditorId={resolvedEditorId}
+              editorCalendarId={editorCalendarId}
+              overtureCalendarId={overtureCalendarId}
+              prevHref={monthPrevNavHref}
+              nextHref={monthNextNavHref}
+              canGoPrev={effectiveMonthCanGoPrev}
+              canGoNext={effectiveMonthCanGoNext}
+              showWeekends={showWeekends}
+              onNavigate={handleBoardNavigate}
+              onMutationSuccess={invalidatePersistedCache}
+              todayPulseToken={todayPulseToken}
+            />
+          )}
         </>
       )}
     </>

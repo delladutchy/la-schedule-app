@@ -2959,3 +2959,113 @@ body {
     margin-top: 0;
   }
 }
+
+/* ============================================================
+   Loading skeleton — static-shell architecture
+   Rendered by ScheduleView while the static-shell SSR payload
+   is synthetic AND no cached/fresh data has hydrated yet.
+   - `la-skeleton-fade-in` delays first visibility by 80ms so a
+     cache-hit microsecond render never paints the skeleton.
+   - `la-skeleton-shimmer` is a subtle moving highlight.
+   - `prefers-reduced-motion` disables both animations.
+   ============================================================ */
+
+.board-skeleton {
+  opacity: 0;
+  animation: la-skeleton-fade-in 220ms ease 80ms forwards;
+}
+
+.board-skeleton .board-week--skeleton {
+  margin: 0 0 12px;
+}
+
+.board-skeleton-week-label {
+  height: 16px;
+  width: 132px;
+  margin: 12px 4px 10px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--border) 55%, var(--surface));
+  position: relative;
+  overflow: hidden;
+}
+
+.board-skeleton-row {
+  list-style: none;
+  background: color-mix(in srgb, var(--border) 32%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  border-radius: 12px;
+  height: 56px;
+  margin: 0 0 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.board-skeleton .month-week--skeleton {
+  display: grid;
+  grid-template-columns: repeat(var(--month-visible-days, 7), minmax(0, 1fr));
+  gap: 8px;
+}
+
+.month-skeleton-cell {
+  background: color-mix(in srgb, var(--border) 28%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--border) 32%, transparent);
+  border-radius: 8px;
+  aspect-ratio: 1 / 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.board-skeleton-week-label::after,
+.board-skeleton-row::after,
+.month-skeleton-cell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    color-mix(in srgb, var(--text) 7%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: la-skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+/* Loaded board fade-in: applies once when the real <DayBoard>/<MonthBoard>
+   replaces the skeleton (or paints from a cache hit). Browsers only run
+   the animation on the first mount of the matching element, so this
+   doesn't restart on later prop updates / background refreshes. */
+.board:not(.board-skeleton),
+.month-board:not(.board-skeleton) {
+  animation: la-board-fade-in 220ms ease forwards;
+}
+
+@keyframes la-skeleton-fade-in {
+  to { opacity: 1; }
+}
+
+@keyframes la-skeleton-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+@keyframes la-board-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-skeleton {
+    opacity: 1;
+    animation: none;
+  }
+  .board-skeleton-week-label::after,
+  .board-skeleton-row::after,
+  .month-skeleton-cell::after {
+    animation: none;
+  }
+  .board:not(.board-skeleton),
+  .month-board:not(.board-skeleton) {
+    animation: none;
+  }
+}
