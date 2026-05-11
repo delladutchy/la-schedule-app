@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@netlify/blobs": "^8.1.0",
+    "@supabase/supabase-js": "^2.105.4",
     "googleapis": "^144.0.0",
     "luxon": "^3.5.0",
     "next": "14.2.15",
