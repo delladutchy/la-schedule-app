@@ -39,6 +39,13 @@ export interface BoardWindowQuery {
   weeksAfter: number;
   monthsBefore: number;
   monthsAfter: number;
+  /**
+   * "selected" returns only `selectedBoards` and leaves `weekWindow.weeks`
+   * and `monthWindow.months` empty. Used for fast first-paint loads;
+   * the client follows up with a full-scope request to populate prev/next
+   * derivation. "full" (default) returns the previous wide-window shape.
+   */
+  scope: "selected" | "full";
 }
 
 export interface BoardWindowPayload {
@@ -239,6 +246,8 @@ export function parseBoardWindowQuery(url: URL): BoardWindowQuery {
   const centerDate = firstParam(url.searchParams.get("center"));
   const startParam = firstParam(url.searchParams.get("start"));
   const monthParam = firstParam(url.searchParams.get("month"));
+  const scopeParam = firstParam(url.searchParams.get("scope"))?.toLowerCase();
+  const isSelectedScope = scopeParam === "selected";
   const requestedWeek = startParam && DATE_KEY_PATTERN.test(startParam)
     ? startParam
     : centerDate && DATE_KEY_PATTERN.test(centerDate)
@@ -254,10 +263,14 @@ export function parseBoardWindowQuery(url: URL): BoardWindowQuery {
     viewMode: resolveViewMode(firstParam(url.searchParams.get("view"))),
     requestedWeek,
     requestedMonth,
-    weeksBefore: parseBoundedInt(firstParam(url.searchParams.get("weeksBefore")), 0, 0, 8),
-    weeksAfter: parseBoundedInt(firstParam(url.searchParams.get("weeksAfter")), 8, 1, 16),
-    monthsBefore: parseBoundedInt(firstParam(url.searchParams.get("monthsBefore")), 0, 0, 4),
-    monthsAfter: parseBoundedInt(firstParam(url.searchParams.get("monthsAfter")), 4, 1, 8),
+    // Selected scope zeroes the wide-window dims so the build pipeline only
+    // produces the selected week/month. Prev/next derivation falls back to
+    // router.push until the follow-up full-scope fetch arrives.
+    weeksBefore: isSelectedScope ? 0 : parseBoundedInt(firstParam(url.searchParams.get("weeksBefore")), 0, 0, 8),
+    weeksAfter: isSelectedScope ? 0 : parseBoundedInt(firstParam(url.searchParams.get("weeksAfter")), 8, 1, 16),
+    monthsBefore: isSelectedScope ? 0 : parseBoundedInt(firstParam(url.searchParams.get("monthsBefore")), 0, 0, 4),
+    monthsAfter: isSelectedScope ? 0 : parseBoundedInt(firstParam(url.searchParams.get("monthsAfter")), 4, 1, 8),
+    scope: isSelectedScope ? "selected" : "full",
   };
 }
 
@@ -370,6 +383,15 @@ export function buildSanitizedBoardWindowPayload(opts: {
     access,
   );
 
+  // Skip the wide-window precompute entirely when scope=selected — the
+  // dominant cost in this function. The client fetches scope=selected
+  // first for fast first paint, then fires a follow-up full request to
+  // populate weekWindow.weeks / monthWindow.months for prev/next.
+  const isSelectedScope = opts.query.weeksBefore === 0
+    && opts.query.weeksAfter === 0
+    && opts.query.monthsBefore === 0
+    && opts.query.monthsAfter === 0;
+
   const selectedWeekStartDate = DateTime.fromISO(selectedWeekStart, { zone: tz }).startOf("week");
   const weekWindowStartDate = selectedWeekStartDate
     .minus({ weeks: opts.query.weeksBefore });
@@ -383,26 +405,30 @@ export function buildSanitizedBoardWindowPayload(opts: {
   const weekWindowCount = opts.query.weeksBefore + opts.query.weeksAfter + 1;
   const alignedWeekWindowCount = alignedWeeksBefore + opts.query.weeksAfter + 1;
   const weekWindowRows: WeekGroup[] = [];
-  for (let i = 0; i < alignedWeekWindowCount; i += 1) {
-    const weekStart = clampedWeekWindowStartDate.plus({ weeks: i });
-    const weekStartKey = weekStart.toFormat("yyyy-LL-dd");
-    const weekRows = buildDayBoard({
-      snapshot: opts.snapshot,
-      startDate: weekStartKey,
-      weeks: 1,
-      timezone: tz,
-      workdayStartHour: opts.file.workdayStartHour,
-      workdayEndHour: opts.file.workdayEndHour,
-      nowMs,
-      todayKey,
-    });
-    if (weekRows[0]) {
-      weekWindowRows.push(sanitizeWeekRows(weekRows, access)[0] as WeekGroup);
+  if (!isSelectedScope) {
+    for (let i = 0; i < alignedWeekWindowCount; i += 1) {
+      const weekStart = clampedWeekWindowStartDate.plus({ weeks: i });
+      const weekStartKey = weekStart.toFormat("yyyy-LL-dd");
+      const weekRows = buildDayBoard({
+        snapshot: opts.snapshot,
+        startDate: weekStartKey,
+        weeks: 1,
+        timezone: tz,
+        workdayStartHour: opts.file.workdayStartHour,
+        workdayEndHour: opts.file.workdayEndHour,
+        nowMs,
+        todayKey,
+      });
+      if (weekRows[0]) {
+        weekWindowRows.push(sanitizeWeekRows(weekRows, access)[0] as WeekGroup);
+      }
     }
   }
-  const weekWindowEnd = clampedWeekWindowStartDate
-    .plus({ weeks: alignedWeekWindowCount - 1 })
-    .toFormat("yyyy-LL-dd");
+  const weekWindowEnd = isSelectedScope
+    ? weekWindowStart
+    : clampedWeekWindowStartDate
+        .plus({ weeks: alignedWeekWindowCount - 1 })
+        .toFormat("yyyy-LL-dd");
 
   const currentMonthStart = DateTime.fromFormat(todayMonthKey, "yyyy-LL", { zone: tz }).startOf("month");
   const selectedMonthStart = DateTime.fromFormat(selectedMonthNav.monthKey, "yyyy-LL", { zone: tz }).startOf("month");
@@ -416,25 +442,31 @@ export function buildSanitizedBoardWindowPayload(opts: {
   const monthWindowCount = opts.query.monthsBefore + opts.query.monthsAfter + 1;
   const alignedMonthWindowCount = alignedMonthsBefore + opts.query.monthsAfter + 1;
   const monthWindowBoards: MonthBoardData[] = [];
-  for (let i = 0; i < alignedMonthWindowCount; i += 1) {
-    const monthKey = clampedMonthWindowStartDate.plus({ months: i }).toFormat("yyyy-LL");
-    monthWindowBoards.push(
-      sanitizeMonthBoard(
-        buildMonthBoard({
-          snapshot: opts.snapshot,
-          month: monthKey,
-          timezone: tz,
-          nowMs,
-          todayKey,
-        }),
-        access,
-      ),
-    );
+  if (!isSelectedScope) {
+    for (let i = 0; i < alignedMonthWindowCount; i += 1) {
+      const monthKey = clampedMonthWindowStartDate.plus({ months: i }).toFormat("yyyy-LL");
+      monthWindowBoards.push(
+        sanitizeMonthBoard(
+          buildMonthBoard({
+            snapshot: opts.snapshot,
+            month: monthKey,
+            timezone: tz,
+            nowMs,
+            todayKey,
+          }),
+          access,
+        ),
+      );
+    }
   }
-  const monthWindowStart = clampedMonthWindowStartDate.toFormat("yyyy-LL");
-  const monthWindowEnd = clampedMonthWindowStartDate
-    .plus({ months: alignedMonthWindowCount - 1 })
-    .toFormat("yyyy-LL");
+  const monthWindowStart = isSelectedScope
+    ? selectedMonthNav.monthKey
+    : clampedMonthWindowStartDate.toFormat("yyyy-LL");
+  const monthWindowEnd = isSelectedScope
+    ? selectedMonthNav.monthKey
+    : clampedMonthWindowStartDate
+        .plus({ months: alignedMonthWindowCount - 1 })
+        .toFormat("yyyy-LL");
 
   // keep variable references stable for payload consumers
   void weekWindowCount;

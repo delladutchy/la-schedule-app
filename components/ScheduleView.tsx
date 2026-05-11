@@ -35,6 +35,7 @@ interface BoardWindowFetchParams {
   viewMode: "list" | "month";
   start?: string;
   month?: string;
+  scope?: "selected" | "full";
   signal?: AbortSignal;
   editorToken?: string | null;
 }
@@ -59,6 +60,7 @@ export async function fetchBoardWindowPayload({
   viewMode,
   start,
   month,
+  scope,
   signal,
   editorToken,
 }: BoardWindowFetchParams): Promise<BoardWindowPayload | null> {
@@ -66,6 +68,9 @@ export async function fetchBoardWindowPayload({
 
   const url = new URL("/api/board/window", window.location.origin);
   url.searchParams.set("view", viewMode);
+  if (scope === "selected") {
+    url.searchParams.set("scope", "selected");
+  }
   if (start) {
     url.searchParams.set("start", start);
   }
@@ -446,9 +451,46 @@ export function ScheduleView({
   // Background revalidation: after first paint, refresh /api/board/window
   // for the active selection and reconcile if the server has fresher data.
   // Also refresh when the user returns to the tab after >30s away.
+  //
+  // Mount path is two-stage:
+  //   1. ?scope=selected → returns ONLY the selected week/month (skips the
+  //      heavy prev/next precompute). Returns fast — that's the perceived
+  //      load time the user feels.
+  //   2. Default scope (full) → returns the wide window so prev/next can
+  //      derive client-side without another server hit. Runs in parallel
+  //      with stage 1; its result replaces the in-memory payload when it
+  //      arrives because it has strictly more data.
+  //
+  // Visibility path stays single-stage (full) because the user already saw
+  // data and we want one authoritative response.
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+
+    const applyIfBetter = (incoming: BoardWindowPayload): void => {
+      if (cancelled) return;
+      setBoardWindowCache((prev) => ({
+        ...prev,
+        [buildBoardWindowCacheKey(incoming)]: incoming,
+      }));
+      setDerivedPayload((prev) => {
+        const baseline = prev ?? initialBoardWindowPayload;
+        if (incoming.generatedAtUtc > baseline.generatedAtUtc) return incoming;
+        if (incoming.generatedAtUtc < baseline.generatedAtUtc) return prev;
+        // Same age → prefer the response with more wide-window data so the
+        // full follow-up replaces the selected-only stage 1 result, and a
+        // stale selected response never overwrites a full one.
+        const incomingWeeks = incoming.weekWindow.weeks.length;
+        const baselineWeeks = baseline.weekWindow.weeks.length;
+        const incomingMonths = incoming.monthWindow.months.length;
+        const baselineMonths = baseline.monthWindow.months.length;
+        if (incomingWeeks > baselineWeeks || incomingMonths > baselineMonths) {
+          return incoming;
+        }
+        return prev;
+      });
+    };
+
     const refresh = async (reason: "mount" | "visible") => {
       const now = Date.now();
       if (now - lastBackgroundRefreshAtRef.current < BACKGROUND_REFRESH_MIN_INTERVAL_MS
@@ -457,25 +499,29 @@ export function ScheduleView({
       }
       lastBackgroundRefreshAtRef.current = now;
       const active = derivedPayload ?? initialBoardWindowPayload;
-      const fresh = await fetchBoardWindowPayload({
+      const baseParams = {
         viewMode: active.selected.view,
         start: active.selected.weekStart,
         month: active.selected.monthKey,
         signal: controller.signal,
         editorToken: navigationEditorToken,
-      });
-      if (cancelled || !fresh) return;
-      if (fresh.generatedAtUtc <= active.generatedAtUtc) {
-        // Server returned same-or-older payload; still rewrite cache so
-        // its updatedAtMs advances, but don't disturb the UI.
-        writePersistedCache(persistedBucket, fresh);
+      };
+
+      if (reason === "mount") {
+        // Fire both stages in parallel. Stage 1 (selected) typically
+        // returns first and triggers the first real paint; stage 2 (full)
+        // arrives shortly after and quietly upgrades the cached payload.
+        const fastPromise = fetchBoardWindowPayload({ ...baseParams, scope: "selected" });
+        const fullPromise = fetchBoardWindowPayload({ ...baseParams });
+        fastPromise.then((fast) => { if (fast) applyIfBetter(fast); }).catch(() => { /* aborted */ });
+        const full = await fullPromise;
+        if (full) applyIfBetter(full);
         return;
       }
-      setBoardWindowCache((prev) => ({
-        ...prev,
-        [buildBoardWindowCacheKey(fresh)]: fresh,
-      }));
-      setDerivedPayload(fresh);
+
+      // Visibility refresh: single full fetch.
+      const fresh = await fetchBoardWindowPayload(baseParams);
+      if (fresh) applyIfBetter(fresh);
     };
 
     const ssrGeneratedMs = Date.parse(initialBoardWindowPayload.generatedAtUtc);
@@ -573,6 +619,21 @@ export function ScheduleView({
   const isLoading = initialPayloadIsSynthetic && !derivedPayload;
   const isWeekendsHidden = isMikeEditor && !showWeekends;
   const skeletonVisibleDayCount = isWeekendsHidden ? 5 : 7;
+
+  // After 500 ms of sustained loading, show "Loading calendar…" so a slow
+  // /api/board/window response doesn't look stuck. Hidden again the moment
+  // any data arrives.
+  const [showExtendedLoadingText, setShowExtendedLoadingText] = useState(false);
+  useEffect(() => {
+    if (!isLoading) {
+      setShowExtendedLoadingText(false);
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setShowExtendedLoadingText(true);
+    }, 500);
+    return () => window.clearTimeout(timeoutId);
+  }, [isLoading]);
 
   const handleBoardNavigate = useCallback((href: string) => {
     const sourcePayload = derivedPayload ?? initialBoardWindowPayload;
@@ -727,7 +788,18 @@ export function ScheduleView({
           </nav>
 
           {isLoading ? (
-            <BoardSkeleton variant="list" visibleDayCount={skeletonVisibleDayCount} />
+            <>
+              <BoardSkeleton variant="list" visibleDayCount={skeletonVisibleDayCount} />
+              {showExtendedLoadingText ? (
+                <div
+                  className="board-loading-extended-text"
+                  role="status"
+                  aria-live="polite"
+                >
+                  Loading calendar…
+                </div>
+              ) : null}
+            </>
           ) : (
             <DayBoard
               weeks={effectiveWeekRows}
@@ -811,7 +883,18 @@ export function ScheduleView({
           </nav>
 
           {isLoading ? (
-            <BoardSkeleton variant="month" visibleDayCount={skeletonVisibleDayCount} />
+            <>
+              <BoardSkeleton variant="month" visibleDayCount={skeletonVisibleDayCount} />
+              {showExtendedLoadingText ? (
+                <div
+                  className="board-loading-extended-text"
+                  role="status"
+                  aria-live="polite"
+                >
+                  Loading calendar…
+                </div>
+              ) : null}
+            </>
           ) : (
             <MonthBoard
               month={effectiveMonth}

@@ -141,6 +141,32 @@ describe("/api/board/window", () => {
     expect(body).toHaveProperty("monthWindow.months");
   });
 
+  it("scope=selected returns selected boards only and skips the wide window", async () => {
+    const GET = await loadRoute();
+    const url = new URL("http://localhost/api/board/window");
+    url.searchParams.set("view", "month");
+    url.searchParams.set("scope", "selected");
+    url.searchParams.set("start", "2026-05-12");
+    url.searchParams.set("month", "2026-05");
+    const res = await GET(
+      new Request(url.toString(), { headers: { Authorization: `Bearer ${TOKENS.jeff}` } }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      selectedBoards: { weekRows: unknown[]; month: { weeks: unknown[] } };
+      weekWindow: { weeks: unknown[] };
+      monthWindow: { months: unknown[] };
+    };
+    // Selected views must still be populated for the fast-paint payload.
+    expect(Array.isArray(body.selectedBoards.weekRows)).toBe(true);
+    expect(Array.isArray(body.selectedBoards.month.weeks)).toBe(true);
+    expect(body.selectedBoards.month.weeks.length).toBeGreaterThan(0);
+    // Wide window must be empty so the route's CPU cost is just the selected
+    // builds, not the 9-week + 5-month precompute.
+    expect(body.weekWindow.weeks).toEqual([]);
+    expect(body.monthWindow.months).toEqual([]);
+  });
+
   it("defaults to no past week/month window slices", async () => {
     const GET = await loadRoute();
     const res = await GET(makeRequest({ token: TOKENS.jeff }));

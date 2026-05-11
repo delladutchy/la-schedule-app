@@ -3040,6 +3040,15 @@ body {
   animation: la-board-fade-in 220ms ease forwards;
 }
 
+.board-loading-extended-text {
+  font-size: 13px;
+  color: var(--text-subtle);
+  text-align: center;
+  margin: 14px 0 4px;
+  opacity: 0;
+  animation: la-skeleton-fade-in 220ms ease forwards;
+}
+
 @keyframes la-skeleton-fade-in {
   to { opacity: 1; }
 }

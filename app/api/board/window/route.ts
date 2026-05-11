@@ -64,7 +64,7 @@ export async function GET(req: Request) {
   });
   const perfBuildMs = Date.now() - perfBuildStartedAt;
   console.info(
-    `[perf] board-window total ms readSnapshot=${perfReadSnapshotMs} buildWindow=${perfBuildMs} total=${Date.now() - perfStartedAt} view=${query.viewMode}`,
+    `[perf] board-window total ms readSnapshot=${perfReadSnapshotMs} buildWindow=${perfBuildMs} total=${Date.now() - perfStartedAt} view=${query.viewMode} scope=${query.scope}`,
   );
 
   return NextResponse.json(payload);
