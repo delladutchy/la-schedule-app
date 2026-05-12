@@ -214,38 +214,49 @@ export async function buildAndPersistSnapshot(
 
   try {
     const writeStartedAt = Date.now();
-    await writeCurrentSnapshot(env.BLOBS_STORE_NAME, snapshot);
+    const snapshotWriteResult = await writeCurrentSnapshot(env.BLOBS_STORE_NAME, snapshot);
     console.info(`[sync] timings ms freebusy=${freeBusyDurationMs} namedEvents=${namedEventsDurationMs} write=${Date.now() - writeStartedAt} total=${Date.now() - syncStartedAt}`);
+    if (isBoardCacheEnabled()) {
+      if (snapshotWriteResult.supabaseWriteAttempted && !snapshotWriteResult.supabaseWriteSucceeded) {
+        const codePart = snapshotWriteResult.supabaseWriteErrorCode
+          ? ` code=${snapshotWriteResult.supabaseWriteErrorCode}`
+          : "";
+        const messagePart = snapshotWriteResult.supabaseWriteErrorMessage
+          ? ` message=${snapshotWriteResult.supabaseWriteErrorMessage}`
+          : "";
+        console.error(
+          `[sync] board-cache precompute skipped because snapshot_cache write-through failed store=${env.BLOBS_STORE_NAME} generatedAtUtc=${snapshot.generatedAtUtc}${codePart}${messagePart}`,
+        );
+      } else {
+        const precomputeStartedAt = Date.now();
+        try {
+          const precompute = await precomputeBoardPayloadCaches({
+            snapshot,
+            file: {
+              timezone: file.timezone,
+              workdayStartHour: file.workdayStartHour,
+              workdayEndHour: file.workdayEndHour,
+            },
+            env: {
+              GOOGLE_CALENDAR_ID: env.GOOGLE_CALENDAR_ID,
+              OVERTURE_CALENDAR_ID: env.OVERTURE_CALENDAR_ID,
+            },
+            nowMs,
+          });
+          console.info(
+            `[sync] board-cache precompute attempted=${precompute.attempted} written=${precompute.written} failed=${precompute.failed} ms=${Date.now() - precomputeStartedAt}`,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[sync] board-cache precompute failed (continuing): ${msg}`);
+        }
+      }
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[sync] snapshot write failed:", msg);
     console.info(`[sync] timings ms freebusy=${freeBusyDurationMs} namedEvents=${namedEventsDurationMs} total=${Date.now() - syncStartedAt}`);
     return { status: "failed", error: `Snapshot write failed: ${msg}` };
-  }
-
-  if (isBoardCacheEnabled()) {
-    const precomputeStartedAt = Date.now();
-    try {
-      const precompute = await precomputeBoardPayloadCaches({
-        snapshot,
-        file: {
-          timezone: file.timezone,
-          workdayStartHour: file.workdayStartHour,
-          workdayEndHour: file.workdayEndHour,
-        },
-        env: {
-          GOOGLE_CALENDAR_ID: env.GOOGLE_CALENDAR_ID,
-          OVERTURE_CALENDAR_ID: env.OVERTURE_CALENDAR_ID,
-        },
-        nowMs,
-      });
-      console.info(
-        `[sync] board-cache precompute attempted=${precompute.attempted} written=${precompute.written} failed=${precompute.failed} ms=${Date.now() - precomputeStartedAt}`,
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[sync] board-cache precompute failed (continuing): ${msg}`);
-    }
   }
 
   return { status: "ok", snapshot };

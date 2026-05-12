@@ -69,7 +69,10 @@ describe("lib/sync board cache precompute integration", () => {
       events: [],
       erroredCalendarIds: [],
     });
-    writeCurrentSnapshot.mockResolvedValue(undefined);
+    writeCurrentSnapshot.mockResolvedValue({
+      supabaseWriteAttempted: false,
+      supabaseWriteSucceeded: false,
+    });
     precomputeBoardPayloadCaches.mockResolvedValue({
       attempted: 14,
       written: 14,
@@ -91,6 +94,10 @@ describe("lib/sync board cache precompute integration", () => {
 
   it("with BOARD_CACHE_ENABLED=true, runs precompute after snapshot write", async () => {
     isBoardCacheEnabled.mockReturnValue(true);
+    writeCurrentSnapshot.mockResolvedValueOnce({
+      supabaseWriteAttempted: true,
+      supabaseWriteSucceeded: true,
+    });
     const { buildAndPersistSnapshot } = await import("@/lib/sync");
     const nowMs = Date.parse("2026-05-11T12:00:00.000Z");
 
@@ -101,7 +108,7 @@ describe("lib/sync board cache precompute integration", () => {
     expect(precomputeBoardPayloadCaches).toHaveBeenCalledTimes(1);
     const args = precomputeBoardPayloadCaches.mock.calls[0]?.[0] as
       | {
-        snapshot: { version: number };
+        snapshot: { version: number; generatedAtUtc: string };
         file: { timezone: string };
         env: { GOOGLE_CALENDAR_ID: string };
         nowMs: number;
@@ -111,10 +118,15 @@ describe("lib/sync board cache precompute integration", () => {
     expect(args?.file.timezone).toBe(file.timezone);
     expect(args?.env.GOOGLE_CALENDAR_ID).toBe(env.GOOGLE_CALENDAR_ID);
     expect(args?.nowMs).toBe(nowMs);
+    expect(args?.snapshot.generatedAtUtc).toBe(new Date(nowMs).toISOString());
   });
 
   it("precompute failures are swallowed and do not fail sync", async () => {
     isBoardCacheEnabled.mockReturnValue(true);
+    writeCurrentSnapshot.mockResolvedValueOnce({
+      supabaseWriteAttempted: true,
+      supabaseWriteSucceeded: true,
+    });
     precomputeBoardPayloadCaches.mockRejectedValueOnce(new Error("supabase unavailable"));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -126,6 +138,30 @@ describe("lib/sync board cache precompute integration", () => {
       expect(precomputeBoardPayloadCaches).toHaveBeenCalledTimes(1);
       expect(fetchFreeBusy).toHaveBeenCalledTimes(1);
       expect(fetchCalendarEvents).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("skips board-cache precompute when snapshot_cache write-through fails", async () => {
+    isBoardCacheEnabled.mockReturnValue(true);
+    writeCurrentSnapshot.mockResolvedValueOnce({
+      supabaseWriteAttempted: true,
+      supabaseWriteSucceeded: false,
+      supabaseWriteErrorCode: "42501",
+      supabaseWriteErrorMessage: "permission denied",
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const { buildAndPersistSnapshot } = await import("@/lib/sync");
+      const result = await buildAndPersistSnapshot(Date.parse("2026-05-11T12:00:00.000Z"));
+      expect(result.status).toBe("ok");
+      expect(writeCurrentSnapshot).toHaveBeenCalledTimes(1);
+      expect(precomputeBoardPayloadCaches).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[sync] board-cache precompute skipped because snapshot_cache write-through failed store=availability-snapshots generatedAtUtc=2026-05-11T12:00:00.000Z code=42501 message=permission denied",
+      );
     } finally {
       errorSpy.mockRestore();
     }

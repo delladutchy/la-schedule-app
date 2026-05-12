@@ -23,6 +23,12 @@ function isSupabaseWritesEnabled(): boolean {
   return isFeatureEnabled(process.env.SUPABASE_WRITES_ENABLED);
 }
 
+function parseGeneratedAtMs(snapshot: Snapshot | null): number | null {
+  if (!snapshot) return null;
+  const parsed = Date.parse(snapshot.generatedAtUtc);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function extractSafeErrorDetails(err: unknown): { code?: string; message: string } {
   if (err instanceof Error) {
     const code = (() => {
@@ -43,23 +49,52 @@ function extractSafeErrorDetails(err: unknown): { code?: string; message: string
 }
 
 export type { ReadSnapshotOptions };
+export interface SnapshotWriteResult {
+  supabaseWriteAttempted: boolean;
+  supabaseWriteSucceeded: boolean;
+  supabaseWriteErrorCode?: string;
+  supabaseWriteErrorMessage?: string;
+}
 
 export async function readCurrentSnapshot(
   storeName: string,
   options: ReadSnapshotOptions = {},
 ): Promise<Snapshot | null> {
   if (isSupabaseReadsEnabled()) {
+    let supabaseSnapshot: Snapshot | null = null;
     try {
-      const supabaseSnapshot = await readCurrentSnapshotFromSupabase(storeName, options);
-      if (supabaseSnapshot) {
-        return supabaseSnapshot;
-      }
+      supabaseSnapshot = await readCurrentSnapshotFromSupabase(storeName, options);
     } catch (err) {
       console.error(
         "[snapshot] Supabase read failed; falling back to Netlify Blobs.",
         err,
       );
+      return readCurrentSnapshotFromBlobs(storeName, options);
     }
+
+    const blobsSnapshot = await readCurrentSnapshotFromBlobs(storeName, options);
+
+    if (!supabaseSnapshot) {
+      return blobsSnapshot;
+    }
+    if (!blobsSnapshot) {
+      return supabaseSnapshot;
+    }
+
+    const supabaseGeneratedAtMs = parseGeneratedAtMs(supabaseSnapshot);
+    const blobsGeneratedAtMs = parseGeneratedAtMs(blobsSnapshot);
+    if (
+      supabaseGeneratedAtMs === null
+      || blobsGeneratedAtMs === null
+      || supabaseGeneratedAtMs < blobsGeneratedAtMs
+    ) {
+      console.info(
+        `[snapshot] Supabase snapshot stale; using Netlify Blobs fallback store=${storeName} supabaseGeneratedAt=${supabaseSnapshot.generatedAtUtc} blobsGeneratedAt=${blobsSnapshot.generatedAtUtc}`,
+      );
+      return blobsSnapshot;
+    }
+
+    return supabaseSnapshot;
   }
 
   return readCurrentSnapshotFromBlobs(storeName, options);
@@ -68,14 +103,17 @@ export async function readCurrentSnapshot(
 export async function writeCurrentSnapshot(
   storeName: string,
   snapshot: Snapshot,
-): Promise<void> {
+): Promise<SnapshotWriteResult> {
   await writeCurrentSnapshotToBlobs(storeName, snapshot);
   const generatedAtUtc = snapshot.generatedAtUtc;
   if (!isSupabaseWritesEnabled()) {
     console.info(
       `[snapshot] Supabase write-through skipped enabled=false store=${storeName} generatedAtUtc=${generatedAtUtc}`,
     );
-    return;
+    return {
+      supabaseWriteAttempted: false,
+      supabaseWriteSucceeded: false,
+    };
   }
 
   console.info(
@@ -87,6 +125,10 @@ export async function writeCurrentSnapshot(
     console.info(
       `[snapshot] Supabase write-through success store=${storeName} generatedAtUtc=${generatedAtUtc}`,
     );
+    return {
+      supabaseWriteAttempted: true,
+      supabaseWriteSucceeded: true,
+    };
   } catch (err) {
     // Blobs remains the primary write path in this migration stage.
     const safe = extractSafeErrorDetails(err);
@@ -94,5 +136,11 @@ export async function writeCurrentSnapshot(
     console.error(
       `[snapshot] Supabase write-through failed; continuing with Netlify Blobs snapshot. store=${storeName} generatedAtUtc=${generatedAtUtc}${codePart} message=${safe.message}`,
     );
+    return {
+      supabaseWriteAttempted: true,
+      supabaseWriteSucceeded: false,
+      ...(safe.code ? { supabaseWriteErrorCode: safe.code } : {}),
+      supabaseWriteErrorMessage: safe.message,
+    };
   }
 }

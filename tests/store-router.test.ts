@@ -121,6 +121,62 @@ describe("lib/store router", () => {
     expect(readCurrentSnapshotFromBlobs).toHaveBeenCalledWith("availability-snapshots", { consistency: "strong" });
   });
 
+  it("uses Supabase snapshot when it is fresher than Netlify Blobs", async () => {
+    process.env.SUPABASE_READS_ENABLED = "true";
+    const blobsSnapshot: Snapshot = {
+      ...baseSnapshot,
+      generatedAtUtc: "2026-05-01T11:00:00.000Z",
+    };
+    const supabaseSnapshot: Snapshot = {
+      ...baseSnapshot,
+      generatedAtUtc: "2026-05-01T12:00:00.000Z",
+    };
+    readCurrentSnapshotFromBlobs.mockResolvedValueOnce(blobsSnapshot);
+    readCurrentSnapshotFromSupabase.mockResolvedValueOnce(supabaseSnapshot);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    try {
+      const store = await import("@/lib/store");
+      const readResult = await store.readCurrentSnapshot("availability-snapshots");
+      expect(readResult).toEqual(supabaseSnapshot);
+      expect(readCurrentSnapshotFromSupabase).toHaveBeenCalledWith("availability-snapshots", {});
+      expect(readCurrentSnapshotFromBlobs).toHaveBeenCalledWith("availability-snapshots", {});
+      expect(infoSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("Supabase snapshot stale; using Netlify Blobs fallback"),
+      );
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it("falls back to Netlify Blobs when Supabase snapshot is stale", async () => {
+    process.env.SUPABASE_READS_ENABLED = "true";
+    const blobsSnapshot: Snapshot = {
+      ...baseSnapshot,
+      generatedAtUtc: "2026-05-01T12:00:00.000Z",
+    };
+    const supabaseSnapshot: Snapshot = {
+      ...baseSnapshot,
+      generatedAtUtc: "2026-05-01T11:00:00.000Z",
+    };
+    readCurrentSnapshotFromBlobs.mockResolvedValueOnce(blobsSnapshot);
+    readCurrentSnapshotFromSupabase.mockResolvedValueOnce(supabaseSnapshot);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    try {
+      const store = await import("@/lib/store");
+      const readResult = await store.readCurrentSnapshot("availability-snapshots");
+      expect(readResult).toEqual(blobsSnapshot);
+      expect(readCurrentSnapshotFromSupabase).toHaveBeenCalledWith("availability-snapshots", {});
+      expect(readCurrentSnapshotFromBlobs).toHaveBeenCalledWith("availability-snapshots", {});
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[snapshot] Supabase snapshot stale; using Netlify Blobs fallback store=availability-snapshots supabaseGeneratedAt=2026-05-01T11:00:00.000Z blobsGeneratedAt=2026-05-01T12:00:00.000Z",
+      );
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
   it("Supabase write failures do not break Netlify primary writes", async () => {
     process.env.SUPABASE_WRITES_ENABLED = "true";
     writeCurrentSnapshotToSupabase.mockRejectedValueOnce({
@@ -133,7 +189,12 @@ describe("lib/store router", () => {
 
     try {
       const store = await import("@/lib/store");
-      await expect(store.writeCurrentSnapshot("availability-snapshots", baseSnapshot)).resolves.toBeUndefined();
+      await expect(store.writeCurrentSnapshot("availability-snapshots", baseSnapshot)).resolves.toEqual({
+        supabaseWriteAttempted: true,
+        supabaseWriteSucceeded: false,
+        supabaseWriteErrorCode: "42501",
+        supabaseWriteErrorMessage: "permission denied by row-level security policy",
+      });
       expect(writeCurrentSnapshotToBlobs).toHaveBeenCalledWith("availability-snapshots", baseSnapshot);
       expect(writeCurrentSnapshotToSupabase).toHaveBeenCalledWith("availability-snapshots", baseSnapshot);
       expect(infoSpy).toHaveBeenCalledWith(
@@ -171,7 +232,10 @@ describe("lib/store router", () => {
   it("does not require Supabase env vars unless Supabase flags are enabled", async () => {
     const store = await import("@/lib/store");
     await expect(store.readCurrentSnapshot("availability-snapshots")).resolves.toEqual(baseSnapshot);
-    await expect(store.writeCurrentSnapshot("availability-snapshots", baseSnapshot)).resolves.toBeUndefined();
+    await expect(store.writeCurrentSnapshot("availability-snapshots", baseSnapshot)).resolves.toEqual({
+      supabaseWriteAttempted: false,
+      supabaseWriteSucceeded: false,
+    });
 
     expect(readCurrentSnapshotFromSupabase).not.toHaveBeenCalled();
     expect(writeCurrentSnapshotToSupabase).not.toHaveBeenCalled();
