@@ -188,6 +188,11 @@ interface BoardNavigationTarget {
   monthKey: string;
 }
 
+interface RouteTargetCoordinates {
+  weekStart: string;
+  monthKey: string;
+}
+
 function resolveTargetFromHref(
   href: string,
   fallback: BoardNavigationTarget,
@@ -473,15 +478,19 @@ export function ScheduleView({
   const [hasExplicitFocusedDate, setHasExplicitFocusedDate] = useState(false);
   const [todayPulseToken, setTodayPulseToken] = useState(0);
   const lastBackgroundRefreshAtRef = useRef(0);
+  const [routeTarget, setRouteTarget] = useState<RouteTargetCoordinates>(() => ({
+    weekStart: normalizeWeekStartForCacheLookup({
+      weekStart: initialBoardWindowPayload.selected.weekStart,
+      timezone: initialBoardWindowPayload.timezone,
+    }),
+    monthKey: initialBoardWindowPayload.selected.monthKey,
+  }));
 
   // Route target is controlled by URL/navigation actions only.
   // Date/job clicks update focusedDate (cross-view context) but must not
   // move the active render/fetch target.
-  const routeTargetWeekStart = normalizeWeekStartForCacheLookup({
-    weekStart: initialBoardWindowPayload.selected.weekStart,
-    timezone: initialBoardWindowPayload.timezone,
-  });
-  const routeTargetMonthKey = initialBoardWindowPayload.selected.monthKey;
+  const routeTargetWeekStart = routeTarget.weekStart;
+  const routeTargetMonthKey = routeTarget.monthKey;
 
   const renderableListPayload = resolveRenderableViewPayload({
     viewMode: "list",
@@ -547,6 +556,20 @@ export function ScheduleView({
     // while the next URL's data is fetched. Skeleton appears only when
     // the slot for the active view has truly never been populated.
   }, [initialBoardWindowPayload]);
+
+  useEffect(() => {
+    setRouteTarget({
+      weekStart: normalizeWeekStartForCacheLookup({
+        weekStart: initialBoardWindowPayload.selected.weekStart,
+        timezone: initialBoardWindowPayload.timezone,
+      }),
+      monthKey: initialBoardWindowPayload.selected.monthKey,
+    });
+  }, [
+    initialBoardWindowPayload.selected.weekStart,
+    initialBoardWindowPayload.selected.monthKey,
+    initialBoardWindowPayload.timezone,
+  ]);
 
   // Hydrate persisted cache on mount and on URL change. Routes the cached
   // entry to its matching slot by `cached.selected.view`, so a list cache
@@ -937,6 +960,10 @@ export function ScheduleView({
       return;
     }
 
+    setRouteTarget({
+      weekStart: normalizedTargetWeekStart,
+      monthKey: target.monthKey,
+    });
     setBoardWindowCache((prev) => ({
       ...prev,
       [buildBoardWindowCacheKey(nextPayload)]: nextPayload,

@@ -116,6 +116,23 @@ describe("isPayloadAnImprovement", () => {
     expect(isPayloadAnImprovement({ incoming, current, target })).toBe(true);
   });
 
+  it("prefers same-age month incoming that matches URL target when current does not", () => {
+    const targetMonth = { weekStart: "2026-11-03", monthKey: "2026-11" };
+    const current = makePayload({
+      view: "month",
+      weekStart: "2026-10-06",
+      monthKey: "2026-10",
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    const incoming = makePayload({
+      view: "month",
+      weekStart: "2026-11-03",
+      monthKey: "2026-11",
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    expect(isPayloadAnImprovement({ incoming, current, target: targetMonth })).toBe(true);
+  });
+
   it("keeps current when only current matches the target (defensive)", () => {
     const current = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
     const incoming = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
