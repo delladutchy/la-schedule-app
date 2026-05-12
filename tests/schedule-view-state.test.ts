@@ -134,6 +134,52 @@ describe("isPayloadAnImprovement", () => {
     expect(isPayloadAnImprovement({ incoming, current, target })).toBe(false);
   });
 
+  it("does not replace route-target list payload with richer non-target list payload", () => {
+    const routeTarget = { weekStart: "2026-05-04", monthKey: "2026-05" };
+    const current = makePayload({
+      view: "list",
+      weekStart: "2026-05-04",
+      monthKey: "2026-05",
+      weekWindowCount: 0,
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    const incoming = makePayload({
+      view: "list",
+      weekStart: "2026-05-11",
+      monthKey: "2026-05",
+      weekWindowCount: 9,
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    expect(isPayloadAnImprovement({
+      incoming,
+      current,
+      target: routeTarget,
+    })).toBe(false);
+  });
+
+  it("does not replace route-target month payload with richer non-target month payload", () => {
+    const routeTarget = { weekStart: "2026-11-03", monthKey: "2026-11" };
+    const current = makePayload({
+      view: "month",
+      weekStart: "2026-11-03",
+      monthKey: "2026-11",
+      monthWindowCount: 0,
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    const incoming = makePayload({
+      view: "month",
+      weekStart: "2026-12-01",
+      monthKey: "2026-12",
+      monthWindowCount: 5,
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    expect(isPayloadAnImprovement({
+      incoming,
+      current,
+      target: routeTarget,
+    })).toBe(false);
+  });
+
   it("treats same-view list target matching by weekStart only", () => {
     const current = makePayload({
       view: "list",
