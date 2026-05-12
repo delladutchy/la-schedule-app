@@ -6,6 +6,8 @@ const readCurrentSnapshot = vi.fn();
 const appendAuditEvent = vi.fn();
 const authorizeEditorRequest = vi.fn();
 const sendCreateJobNotification = vi.fn();
+const refreshSnapshotAfterMutation = vi.fn();
+const scheduleDeferredReconciliationSync = vi.fn();
 
 const snapshot = {
   version: 1 as const,
@@ -85,6 +87,11 @@ vi.mock("@/lib/notifications", () => ({
   sendCreateJobNotification: (...args: unknown[]) => sendCreateJobNotification(...args),
 }));
 
+vi.mock("@/lib/mutation-postsync", () => ({
+  refreshSnapshotAfterMutation: (...args: unknown[]) => refreshSnapshotAfterMutation(...args),
+  scheduleDeferredReconciliationSync: (...args: unknown[]) => scheduleDeferredReconciliationSync(...args),
+}));
+
 async function loadRoute() {
   const mod = await import("@/app/api/gigs/create/route");
   return mod.POST;
@@ -98,7 +105,11 @@ describe("/api/gigs/create audit logging", () => {
     appendAuditEvent.mockReset();
     authorizeEditorRequest.mockReset();
     sendCreateJobNotification.mockReset();
+    refreshSnapshotAfterMutation.mockReset();
+    scheduleDeferredReconciliationSync.mockReset();
     mockEnv.OVERTURE_CALENDAR_ID = "overture@group.calendar.google.com";
+    refreshSnapshotAfterMutation.mockResolvedValue({ status: "ok", snapshot });
+    scheduleDeferredReconciliationSync.mockResolvedValue({ queued: true, statusCode: 202 });
   });
 
   it("appends audit event after successful create", async () => {
@@ -411,6 +422,7 @@ describe("/api/gigs/create audit logging", () => {
     readCurrentSnapshot.mockResolvedValue(snapshot);
     createAllDayEvent.mockResolvedValue({ id: "evt-123", status: "confirmed" });
     buildAndPersistSnapshot.mockResolvedValue({ status: "failed", error: "sync failed" });
+    refreshSnapshotAfterMutation.mockResolvedValue({ status: "failed", error: "sync failed" });
 
     const POST = await loadRoute();
     const req = new Request("http://localhost/api/gigs/create", {
@@ -510,5 +522,30 @@ describe("/api/gigs/create audit logging", () => {
     const body = await res.json() as Record<string, string>;
     expect(body.error).toBe("snapshot_unavailable");
     expect(body.message).toBe("FreeBusy transport error: ECONNRESET");
+  });
+
+  it("uses fast post-mutation refresh path and queues deferred reconciliation", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    createAllDayEvent.mockResolvedValue({ id: "evt-fast", status: "confirmed" });
+    refreshSnapshotAfterMutation.mockResolvedValue({ status: "ok", snapshot });
+    scheduleDeferredReconciliationSync.mockResolvedValue({ queued: true, statusCode: 202 });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#99999 — Fast Path Test",
+        startDate: "2026-05-20",
+        endDate: "2026-05-20",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(refreshSnapshotAfterMutation).toHaveBeenCalledTimes(1);
+    expect(scheduleDeferredReconciliationSync).toHaveBeenCalledTimes(1);
+    expect(buildAndPersistSnapshot).not.toHaveBeenCalled();
   });
 });

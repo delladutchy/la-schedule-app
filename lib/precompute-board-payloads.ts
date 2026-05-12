@@ -31,6 +31,7 @@ export interface PrecomputeBoardPayloadCacheOptions {
   file: Pick<FileConfig, "timezone" | "workdayStartHour" | "workdayEndHour">;
   env: Pick<EnvConfig, "GOOGLE_CALENDAR_ID" | "OVERTURE_CALENDAR_ID">;
   nowMs?: number;
+  scopes?: readonly CacheScope[];
 }
 
 export interface PrecomputeBoardPayloadCacheResult {
@@ -112,9 +113,12 @@ export async function precomputeBoardPayloadCaches(
   };
   const editorTargets = buildEditorTargets();
   const nowMs = opts.nowMs ?? Date.now();
+  const scopes = opts.scopes && opts.scopes.length > 0
+    ? opts.scopes
+    : PRECOMPUTE_SCOPES;
 
   for (const editorTarget of editorTargets) {
-    for (const scope of PRECOMPUTE_SCOPES) {
+    for (const scope of scopes) {
       for (const viewMode of PRECOMPUTE_VIEW_MODES) {
         result.attempted += 1;
         try {

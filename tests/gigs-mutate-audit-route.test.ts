@@ -6,6 +6,8 @@ const buildAndPersistSnapshot = vi.fn();
 const readCurrentSnapshot = vi.fn();
 const appendAuditEvent = vi.fn();
 const authorizeEditorRequest = vi.fn();
+const refreshSnapshotAfterMutation = vi.fn();
+const scheduleDeferredReconciliationSync = vi.fn();
 
 const snapshot = {
   version: 1 as const,
@@ -88,6 +90,11 @@ vi.mock("@/lib/editor-auth", async () => {
   };
 });
 
+vi.mock("@/lib/mutation-postsync", () => ({
+  refreshSnapshotAfterMutation: (...args: unknown[]) => refreshSnapshotAfterMutation(...args),
+  scheduleDeferredReconciliationSync: (...args: unknown[]) => scheduleDeferredReconciliationSync(...args),
+}));
+
 async function loadRoutes() {
   const mod = await import("@/app/api/gigs/[eventId]/route");
   return { PATCH: mod.PATCH, DELETE: mod.DELETE };
@@ -101,7 +108,11 @@ describe("/api/gigs/[eventId] audit logging", () => {
     readCurrentSnapshot.mockReset();
     appendAuditEvent.mockReset();
     authorizeEditorRequest.mockReset();
+    refreshSnapshotAfterMutation.mockReset();
+    scheduleDeferredReconciliationSync.mockReset();
     mockEnv.OVERTURE_CALENDAR_ID = "overture@group.calendar.google.com";
+    refreshSnapshotAfterMutation.mockResolvedValue({ status: "ok", snapshot });
+    scheduleDeferredReconciliationSync.mockResolvedValue({ queued: true, statusCode: 202 });
   });
 
   it("appends audit event after successful edit", async () => {
@@ -674,5 +685,53 @@ describe("/api/gigs/[eventId] audit logging", () => {
     expect(body.message).not.toMatch(/quota/i);
     expect(body.message).not.toMatch(/project_number/i);
     expect(updateAllDayEvent).not.toHaveBeenCalled();
+  });
+
+  it("PATCH uses fast post-mutation refresh and queues deferred reconciliation", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-fast-edit",
+        ownerEditor: "dave",
+      }],
+    });
+    updateAllDayEvent.mockResolvedValue({ id: "evt-fast-edit", status: "confirmed" });
+    refreshSnapshotAfterMutation.mockResolvedValue({ status: "ok", snapshot });
+    scheduleDeferredReconciliationSync.mockResolvedValue({ queued: true, statusCode: 202 });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-fast-edit", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#90909 — Fast Edit",
+        startDate: "2026-05-09",
+        endDate: "2026-05-09",
+      }),
+    });
+
+    const res = await PATCH(req, { params: { eventId: "evt-fast-edit" } });
+    expect(res.status).toBe(200);
+    expect(refreshSnapshotAfterMutation).toHaveBeenCalledTimes(1);
+    expect(scheduleDeferredReconciliationSync).toHaveBeenCalledTimes(1);
+    expect(buildAndPersistSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("DELETE uses fast post-mutation refresh and queues deferred reconciliation", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    deleteCalendarEvent.mockResolvedValue({ id: "evt-delete" });
+    refreshSnapshotAfterMutation.mockResolvedValue({ status: "ok", snapshot });
+    scheduleDeferredReconciliationSync.mockResolvedValue({ queued: true, statusCode: 202 });
+    const { DELETE } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-delete" } });
+    expect(res.status).toBe(200);
+    expect(refreshSnapshotAfterMutation).toHaveBeenCalledTimes(1);
+    expect(scheduleDeferredReconciliationSync).toHaveBeenCalledTimes(1);
+    expect(buildAndPersistSnapshot).not.toHaveBeenCalled();
   });
 });

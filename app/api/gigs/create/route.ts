@@ -26,6 +26,10 @@ import {
   resolveEditorProfile,
   resolveWriteCalendarForMode,
 } from "@/lib/editor-profiles";
+import {
+  refreshSnapshotAfterMutation,
+  scheduleDeferredReconciliationSync,
+} from "@/lib/mutation-postsync";
 
 export const dynamic = "force-dynamic";
 
@@ -34,9 +38,11 @@ interface RouteTimings {
   preflightSyncMs: number;
   googleWriteMs: number;
   postSyncMs: number;
+  reconcileQueueMs: number;
   retryPreflightSyncMs: number;
   retryGoogleWriteMs: number;
   retryPostSyncMs: number;
+  retryReconcileQueueMs: number;
 }
 
 function createEmptyRouteTimings(): RouteTimings {
@@ -45,9 +51,11 @@ function createEmptyRouteTimings(): RouteTimings {
     preflightSyncMs: 0,
     googleWriteMs: 0,
     postSyncMs: 0,
+    reconcileQueueMs: 0,
     retryPreflightSyncMs: 0,
     retryGoogleWriteMs: 0,
     retryPostSyncMs: 0,
+    retryReconcileQueueMs: 0,
   };
 }
 
@@ -59,7 +67,7 @@ function logCreateRouteTiming(
 ): void {
   const totalMs = Date.now() - routeStartedAt;
   console.info(
-    `[gigs:create] ${outcome} editor=${editorId} ms snapshotRead=${timings.snapshotReadMs} preflightSync=${timings.preflightSyncMs} googleWrite=${timings.googleWriteMs} postSync=${timings.postSyncMs} retryPreflightSync=${timings.retryPreflightSyncMs} retryGoogleWrite=${timings.retryGoogleWriteMs} retryPostSync=${timings.retryPostSyncMs} total=${totalMs}`,
+    `[gigs:create] ${outcome} editor=${editorId} ms snapshotRead=${timings.snapshotReadMs} preflightSync=${timings.preflightSyncMs} googleWrite=${timings.googleWriteMs} postSync=${timings.postSyncMs} reconcileQueue=${timings.reconcileQueueMs} retryPreflightSync=${timings.retryPreflightSyncMs} retryGoogleWrite=${timings.retryGoogleWriteMs} retryPostSync=${timings.retryPostSyncMs} retryReconcileQueue=${timings.retryReconcileQueueMs} total=${totalMs}`,
   );
 }
 
@@ -210,8 +218,51 @@ export async function POST(req: Request) {
     timings.googleWriteMs = Date.now() - googleWriteStartedAt;
 
     const postSyncStartedAt = Date.now();
-    const postSync = await buildAndPersistSnapshot();
+    const postSync = await refreshSnapshotAfterMutation({
+      storeName: env.BLOBS_STORE_NAME,
+      baselineSnapshot: validationSnapshot,
+      mutation: {
+        action: "create",
+        event: {
+          eventId: created.id,
+          calendarId: writeCalendar.calendarId,
+          summary,
+          ...(payload.description ? { description: payload.description } : {}),
+          ownerEditor: editorId,
+          startDate: payload.startDate,
+          endDateExclusive: payload.endDateExclusive,
+        },
+      },
+      file: {
+        timezone: file.timezone,
+        preBufferMinutes: file.preBufferMinutes,
+        postBufferMinutes: file.postBufferMinutes,
+        workdayStartHour: file.workdayStartHour,
+        workdayEndHour: file.workdayEndHour,
+      },
+      env: {
+        CALENDAR_DISPLAY_MODES: env.CALENDAR_DISPLAY_MODES,
+        GOOGLE_CALENDAR_ID: env.GOOGLE_CALENDAR_ID,
+        OVERTURE_CALENDAR_ID: env.OVERTURE_CALENDAR_ID,
+      },
+    });
     timings.postSyncMs = Date.now() - postSyncStartedAt;
+
+    const reconcileQueueStartedAt = Date.now();
+    const reconcileQueue = await scheduleDeferredReconciliationSync({
+      requestUrl: req.url,
+      adminToken: env.ADMIN_TOKEN,
+      reason: "gigs_create_post_google_write",
+      editorId,
+      generatedAtUtc: postSync.snapshot?.generatedAtUtc ?? new Date().toISOString(),
+      action: "create",
+    });
+    timings.reconcileQueueMs = Date.now() - reconcileQueueStartedAt;
+    if (!reconcileQueue.queued) {
+      console.warn(
+        `[gigs:create] deferred_reconcile_not_queued editor=${editorId} status=${reconcileQueue.statusCode ?? "n/a"} message=${reconcileQueue.message ?? "unknown"}`,
+      );
+    }
 
     if (postSync.status === "ok") {
       let appendedAudit = false;
@@ -311,8 +362,51 @@ export async function POST(req: Request) {
         const created = await createEvent();
         timings.retryGoogleWriteMs = Date.now() - retryGoogleWriteStartedAt;
         const retryPostSyncStartedAt = Date.now();
-        const postSync = await buildAndPersistSnapshot();
+        const postSync = await refreshSnapshotAfterMutation({
+          storeName: env.BLOBS_STORE_NAME,
+          baselineSnapshot: refreshed.snapshot,
+          mutation: {
+            action: "create",
+            event: {
+              eventId: created.id,
+              calendarId: writeCalendar.calendarId,
+              summary,
+              ...(payload.description ? { description: payload.description } : {}),
+              ownerEditor: editorId,
+              startDate: payload.startDate,
+              endDateExclusive: payload.endDateExclusive,
+            },
+          },
+          file: {
+            timezone: file.timezone,
+            preBufferMinutes: file.preBufferMinutes,
+            postBufferMinutes: file.postBufferMinutes,
+            workdayStartHour: file.workdayStartHour,
+            workdayEndHour: file.workdayEndHour,
+          },
+          env: {
+            CALENDAR_DISPLAY_MODES: env.CALENDAR_DISPLAY_MODES,
+            GOOGLE_CALENDAR_ID: env.GOOGLE_CALENDAR_ID,
+            OVERTURE_CALENDAR_ID: env.OVERTURE_CALENDAR_ID,
+          },
+        });
         timings.retryPostSyncMs = Date.now() - retryPostSyncStartedAt;
+
+        const retryReconcileStartedAt = Date.now();
+        const retryReconcile = await scheduleDeferredReconciliationSync({
+          requestUrl: req.url,
+          adminToken: env.ADMIN_TOKEN,
+          reason: "gigs_create_retry_post_google_write",
+          editorId,
+          generatedAtUtc: postSync.snapshot?.generatedAtUtc ?? new Date().toISOString(),
+          action: "create",
+        });
+        timings.retryReconcileQueueMs = Date.now() - retryReconcileStartedAt;
+        if (!retryReconcile.queued) {
+          console.warn(
+            `[gigs:create] deferred_reconcile_not_queued editor=${editorId} stage=retry status=${retryReconcile.statusCode ?? "n/a"} message=${retryReconcile.message ?? "unknown"}`,
+          );
+        }
 
         if (postSync.status === "ok") {
           let appendedAudit = false;

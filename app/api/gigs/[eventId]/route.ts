@@ -25,6 +25,10 @@ import {
   type EditorProfile,
   type ProfileCalendarEnv,
 } from "@/lib/editor-profiles";
+import {
+  refreshSnapshotAfterMutation,
+  scheduleDeferredReconciliationSync,
+} from "@/lib/mutation-postsync";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +37,7 @@ interface RouteTimings {
   preflightSyncMs: number;
   googleWriteMs: number;
   postSyncMs: number;
+  reconcileQueueMs: number;
 }
 
 function createEmptyRouteTimings(): RouteTimings {
@@ -41,6 +46,7 @@ function createEmptyRouteTimings(): RouteTimings {
     preflightSyncMs: 0,
     googleWriteMs: 0,
     postSyncMs: 0,
+    reconcileQueueMs: 0,
   };
 }
 
@@ -53,7 +59,7 @@ function logGigRouteTiming(
 ): void {
   const totalMs = Date.now() - routeStartedAt;
   console.info(
-    `[gigs:${action}] ${outcome} editor=${editorId} ms snapshotRead=${timings.snapshotReadMs} preflightSync=${timings.preflightSyncMs} googleWrite=${timings.googleWriteMs} postSync=${timings.postSyncMs} total=${totalMs}`,
+    `[gigs:${action}] ${outcome} editor=${editorId} ms snapshotRead=${timings.snapshotReadMs} preflightSync=${timings.preflightSyncMs} googleWrite=${timings.googleWriteMs} postSync=${timings.postSyncMs} reconcileQueue=${timings.reconcileQueueMs} total=${totalMs}`,
   );
 }
 
@@ -289,8 +295,51 @@ export async function PATCH(
     timings.googleWriteMs = Date.now() - googleWriteStartedAt;
 
     const postSyncStartedAt = Date.now();
-    const postSync = await buildAndPersistSnapshot();
+    const postSync = await refreshSnapshotAfterMutation({
+      storeName: env.BLOBS_STORE_NAME,
+      baselineSnapshot: validationSnapshot,
+      mutation: {
+        action: "edit",
+        event: {
+          eventId: updated.id,
+          calendarId: editorCalendarId,
+          summary: payload.summary,
+          ...(payload.description ? { description: payload.description } : {}),
+          ...(ownerEditor ? { ownerEditor } : {}),
+          startDate: payload.startDate,
+          endDateExclusive: payload.endDateExclusive,
+        },
+      },
+      file: {
+        timezone: file.timezone,
+        preBufferMinutes: file.preBufferMinutes,
+        postBufferMinutes: file.postBufferMinutes,
+        workdayStartHour: file.workdayStartHour,
+        workdayEndHour: file.workdayEndHour,
+      },
+      env: {
+        CALENDAR_DISPLAY_MODES: env.CALENDAR_DISPLAY_MODES,
+        GOOGLE_CALENDAR_ID: env.GOOGLE_CALENDAR_ID,
+        OVERTURE_CALENDAR_ID: env.OVERTURE_CALENDAR_ID,
+      },
+    });
     timings.postSyncMs = Date.now() - postSyncStartedAt;
+
+    const reconcileQueueStartedAt = Date.now();
+    const reconcileQueue = await scheduleDeferredReconciliationSync({
+      requestUrl: req.url,
+      adminToken: env.ADMIN_TOKEN,
+      reason: "gigs_patch_post_google_write",
+      editorId,
+      generatedAtUtc: postSync.snapshot?.generatedAtUtc ?? new Date().toISOString(),
+      action: "patch",
+    });
+    timings.reconcileQueueMs = Date.now() - reconcileQueueStartedAt;
+    if (!reconcileQueue.queued) {
+      console.warn(
+        `[gigs:patch] deferred_reconcile_not_queued editor=${editorId} status=${reconcileQueue.statusCode ?? "n/a"} message=${reconcileQueue.message ?? "unknown"}`,
+      );
+    }
 
     if (postSync.status === "ok") {
       try {
@@ -372,7 +421,7 @@ export async function DELETE(
 ) {
   const routeStartedAt = Date.now();
   const timings = createEmptyRouteTimings();
-  const { env } = getConfig();
+  const { file, env } = getConfig();
   const auth = authorizeEditorRequest(req, env);
   const editorId = auth.ok ? auth.editorId : "unknown";
 
@@ -441,8 +490,44 @@ export async function DELETE(
     timings.googleWriteMs = Date.now() - googleWriteStartedAt;
 
     const postSyncStartedAt = Date.now();
-    const postSync = await buildAndPersistSnapshot();
+    const postSync = await refreshSnapshotAfterMutation({
+      storeName: env.BLOBS_STORE_NAME,
+      baselineSnapshot: deleteAuditSource,
+      mutation: {
+        action: "delete",
+        eventId,
+        calendarId: editorCalendarId,
+      },
+      file: {
+        timezone: file.timezone,
+        preBufferMinutes: file.preBufferMinutes,
+        postBufferMinutes: file.postBufferMinutes,
+        workdayStartHour: file.workdayStartHour,
+        workdayEndHour: file.workdayEndHour,
+      },
+      env: {
+        CALENDAR_DISPLAY_MODES: env.CALENDAR_DISPLAY_MODES,
+        GOOGLE_CALENDAR_ID: env.GOOGLE_CALENDAR_ID,
+        OVERTURE_CALENDAR_ID: env.OVERTURE_CALENDAR_ID,
+      },
+    });
     timings.postSyncMs = Date.now() - postSyncStartedAt;
+
+    const reconcileQueueStartedAt = Date.now();
+    const reconcileQueue = await scheduleDeferredReconciliationSync({
+      requestUrl: req.url,
+      adminToken: env.ADMIN_TOKEN,
+      reason: "gigs_delete_post_google_write",
+      editorId,
+      generatedAtUtc: postSync.snapshot?.generatedAtUtc ?? new Date().toISOString(),
+      action: "delete",
+    });
+    timings.reconcileQueueMs = Date.now() - reconcileQueueStartedAt;
+    if (!reconcileQueue.queued) {
+      console.warn(
+        `[gigs:delete] deferred_reconcile_not_queued editor=${editorId} status=${reconcileQueue.statusCode ?? "n/a"} message=${reconcileQueue.message ?? "unknown"}`,
+      );
+    }
 
     if (postSync.status === "ok") {
       try {
