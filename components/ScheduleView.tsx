@@ -511,6 +511,7 @@ export function ScheduleView({
   const activeView: "list" | "month" = viewMode;
   const activePayload: BoardWindowPayload | null =
     activeView === "list" ? renderableListPayload : renderableMonthPayload;
+  const hasRenderableActivePayload = activePayload != null;
 
   useEffect(() => {
     if (!isMikeEditor) {
@@ -563,13 +564,13 @@ export function ScheduleView({
       ...prev,
       [buildBoardWindowCacheKey(fresher)]: fresher,
     }));
-    const target = {
-      weekStart: initialBoardWindowPayload.selected.weekStart,
-      monthKey: initialBoardWindowPayload.selected.monthKey,
-    };
-    if (fresher.selected.view === "list") {
-      setListPayload((prev) => (
-        isPayloadAnImprovement({ incoming: fresher, current: prev, target })
+      const target = {
+        weekStart: focusedTargetWeekStart,
+        monthKey: focusedTargetMonthKey,
+      };
+      if (fresher.selected.view === "list") {
+        setListPayload((prev) => (
+          isPayloadAnImprovement({ incoming: fresher, current: prev, target })
           ? fresher
           : prev
       ));
@@ -580,7 +581,12 @@ export function ScheduleView({
           : prev
       ));
     }
-  }, [initialBoardWindowPayload, persistedBucket]);
+  }, [
+    initialBoardWindowPayload,
+    persistedBucket,
+    focusedTargetWeekStart,
+    focusedTargetMonthKey,
+  ]);
 
   // Write-through: every real payload that drives the UI is persisted under
   // the active editor's bucket. The static-shell skeleton (when
@@ -636,8 +642,8 @@ export function ScheduleView({
         [buildBoardWindowCacheKey(incoming)]: incoming,
       }));
       const target = {
-        weekStart: initialBoardWindowPayload.selected.weekStart,
-        monthKey: initialBoardWindowPayload.selected.monthKey,
+        weekStart: focusedTargetWeekStart,
+        monthKey: focusedTargetMonthKey,
       };
       if (incoming.selected.view === "list") {
         setListPayload((prev) => (
@@ -667,9 +673,9 @@ export function ScheduleView({
       // currently navigated to; in-flight responses for old URLs are
       // dropped by the `cancelled` guard above.
       const baseParams = {
-        viewMode: initialBoardWindowPayload.selected.view,
-        start: initialBoardWindowPayload.selected.weekStart,
-        month: initialBoardWindowPayload.selected.monthKey,
+        viewMode: activeView,
+        start: focusedTargetWeekStart,
+        month: focusedTargetMonthKey,
         signal: controller.signal,
         editorToken: navigationEditorToken,
       };
@@ -701,7 +707,12 @@ export function ScheduleView({
       && ssrAgeMs < MOUNT_REFRESH_SKIP_MAX_AGE_MS;
 
     let debounceId: number | null = null;
-    if (ssrIsFreshAndRecent) {
+    if (!hasRenderableActivePayload) {
+      // Recovery path: if target-aware gating has no renderable payload yet,
+      // fetch the focused target immediately instead of waiting for debounce.
+      console.info("[perf] auto refresh scheduled reason=missing_target_payload");
+      void refresh("mount");
+    } else if (ssrIsFreshAndRecent) {
       // [perf] temporary instrumentation — remove once perf review concludes.
       console.info(`[perf] auto refresh scheduled reason=skipped_ssr_fresh ssrAgeMs=${ssrAgeMs}`);
       // Treat the SSR payload as already up-to-date so the throttle window
@@ -735,7 +746,15 @@ export function ScheduleView({
     // We intentionally only re-run on editor / SSR-payload identity
     // changes; later derivation updates should not retrigger fetches.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [persistedBucket, initialBoardWindowPayload, navigationEditorToken]);
+  }, [
+    persistedBucket,
+    initialBoardWindowPayload,
+    navigationEditorToken,
+    activeView,
+    focusedTargetWeekStart,
+    focusedTargetMonthKey,
+    hasRenderableActivePayload,
+  ]);
 
   const invalidatePersistedCache = useCallback(() => {
     clearPersistedCache(persistedBucket);

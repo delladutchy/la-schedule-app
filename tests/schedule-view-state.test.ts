@@ -133,6 +133,46 @@ describe("isPayloadAnImprovement", () => {
     const incoming = makePayload({ view: "list", weekWindowCount: 9 });
     expect(isPayloadAnImprovement({ incoming, current, target })).toBe(false);
   });
+
+  it("treats same-view list target matching by weekStart only", () => {
+    const current = makePayload({
+      view: "list",
+      weekStart: "2026-11-02",
+      monthKey: "2026-10",
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    const incoming = makePayload({
+      view: "list",
+      weekStart: "2026-11-09",
+      monthKey: "2026-10",
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    expect(isPayloadAnImprovement({
+      incoming,
+      current,
+      target: { weekStart: "2026-11-09", monthKey: "2026-11" },
+    })).toBe(true);
+  });
+
+  it("treats same-view month target matching by monthKey only", () => {
+    const current = makePayload({
+      view: "month",
+      weekStart: "2026-06-01",
+      monthKey: "2026-06",
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    const incoming = makePayload({
+      view: "month",
+      weekStart: "2026-06-29",
+      monthKey: "2026-07",
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    expect(isPayloadAnImprovement({
+      incoming,
+      current,
+      target: { weekStart: "2026-07-06", monthKey: "2026-07" },
+    })).toBe(true);
+  });
 });
 
 describe("isPayloadRenderableForViewTarget", () => {

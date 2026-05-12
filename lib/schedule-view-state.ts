@@ -5,6 +5,16 @@ export interface PayloadTargetCoordinates {
   monthKey: string;
 }
 
+function payloadMatchesTargetForView(opts: {
+  payload: BoardWindowPayload;
+  target: PayloadTargetCoordinates;
+}): boolean {
+  if (opts.payload.selected.view === "list") {
+    return opts.payload.selected.weekStart === opts.target.weekStart;
+  }
+  return opts.payload.selected.monthKey === opts.target.monthKey;
+}
+
 export function isPayloadRenderableForViewTarget(opts: {
   viewMode: "list" | "month";
   target: PayloadTargetCoordinates;
@@ -44,12 +54,14 @@ export function isPayloadAnImprovement(opts: {
   if (opts.incoming.generatedAtUtc > opts.current.generatedAtUtc) return true;
   if (opts.incoming.generatedAtUtc < opts.current.generatedAtUtc) return false;
 
-  const incomingMatchesTarget =
-    opts.incoming.selected.weekStart === opts.target.weekStart
-    && opts.incoming.selected.monthKey === opts.target.monthKey;
-  const currentMatchesTarget =
-    opts.current.selected.weekStart === opts.target.weekStart
-    && opts.current.selected.monthKey === opts.target.monthKey;
+  const incomingMatchesTarget = payloadMatchesTargetForView({
+    payload: opts.incoming,
+    target: opts.target,
+  });
+  const currentMatchesTarget = payloadMatchesTargetForView({
+    payload: opts.current,
+    target: opts.target,
+  });
   if (incomingMatchesTarget && !currentMatchesTarget) return true;
   if (!incomingMatchesTarget && currentMatchesTarget) return false;
 
