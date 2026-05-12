@@ -11,6 +11,7 @@ import {
   parseGigDescription,
   parseLaJobSummary,
 } from "@/lib/gigs";
+import { CALL_TIME_OPTIONS, isCallTimeOption } from "@/lib/call-time-options";
 
 interface Props {
   month: MonthBoardData;
@@ -31,21 +32,6 @@ interface Props {
 }
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const CALL_TIME_OPTIONS = [
-  "TBD",
-  "6:00 AM",
-  "7:00 AM",
-  "8:00 AM",
-  "9:00 AM",
-  "10:00 AM",
-  "11:00 AM",
-  "12:00 PM",
-  "1:00 PM",
-  "2:00 PM",
-  "3:00 PM",
-  "4:00 PM",
-  "5:00 PM",
-] as const;
 const FULL_WEEK_DAY_INDEXES = [0, 1, 2, 3, 4, 5, 6] as const;
 const WEEKDAY_ONLY_INDEXES = [0, 1, 2, 3, 4] as const;
 type MonthWeek = MonthBoardData["weeks"][number];
@@ -455,12 +441,12 @@ export function MonthBoard({
     setBookingEndDate(endDate);
     setBookingPickerMonthKey(startMonthKey);
     setBookingPickerExpanded(false);
-    setBookingCallTimeOption(parsedDescription.callTime && CALL_TIME_OPTIONS.includes(parsedDescription.callTime as (typeof CALL_TIME_OPTIONS)[number])
+    setBookingCallTimeOption(parsedDescription.callTime && isCallTimeOption(parsedDescription.callTime)
       ? parsedDescription.callTime
       : parsedDescription.callTime
         ? "Other"
         : "TBD");
-    setBookingCallTimeOther(parsedDescription.callTime && !CALL_TIME_OPTIONS.includes(parsedDescription.callTime as (typeof CALL_TIME_OPTIONS)[number])
+    setBookingCallTimeOther(parsedDescription.callTime && !isCallTimeOption(parsedDescription.callTime)
       ? parsedDescription.callTime
       : "");
     setBookingNotes(parsedDescription.jobNotes ?? "");

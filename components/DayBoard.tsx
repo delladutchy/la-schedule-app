@@ -17,6 +17,7 @@ import {
   parseGigDescription,
   parseLaJobSummary,
 } from "@/lib/gigs";
+import { CALL_TIME_OPTIONS, isCallTimeOption } from "@/lib/call-time-options";
 
 interface Props {
   weeks: WeekGroup[];
@@ -64,21 +65,6 @@ function useStagedLoadingCopy(isActive: boolean): string {
 }
 
 type BookedLabel = ReturnType<typeof summarizeBookedDayLabel>;
-const CALL_TIME_OPTIONS = [
-  "TBD",
-  "6:00 AM",
-  "7:00 AM",
-  "8:00 AM",
-  "9:00 AM",
-  "10:00 AM",
-  "11:00 AM",
-  "12:00 PM",
-  "1:00 PM",
-  "2:00 PM",
-  "3:00 PM",
-  "4:00 PM",
-  "5:00 PM",
-] as const;
 
 interface ActiveDetailPanel {
   rowKey: string;
@@ -425,12 +411,12 @@ export function DayBoard({
     setBookingEndDate(endDate);
     setBookingPickerMonthKey(startMonthKey);
     setBookingPickerExpanded(false);
-    setBookingCallTimeOption(parsedDescription.callTime && CALL_TIME_OPTIONS.includes(parsedDescription.callTime as (typeof CALL_TIME_OPTIONS)[number])
+    setBookingCallTimeOption(parsedDescription.callTime && isCallTimeOption(parsedDescription.callTime)
       ? parsedDescription.callTime
       : parsedDescription.callTime
         ? "Other"
         : "TBD");
-    setBookingCallTimeOther(parsedDescription.callTime && !CALL_TIME_OPTIONS.includes(parsedDescription.callTime as (typeof CALL_TIME_OPTIONS)[number])
+    setBookingCallTimeOther(parsedDescription.callTime && !isCallTimeOption(parsedDescription.callTime)
       ? parsedDescription.callTime
       : "");
     setBookingNotes(parsedDescription.jobNotes ?? "");
