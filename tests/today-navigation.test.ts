@@ -3,6 +3,7 @@ import {
   deriveFocusedDateForMonthKey,
   deriveFocusedDateForWeekTarget,
   deriveListStartFromFocusedDate,
+  deriveWeekAnchorDateForMonth,
   deriveMonthKeyFromFocusedDate,
   isTodayClickTarget,
   normalizeWeekStartForCacheLookup,
@@ -187,5 +188,29 @@ describe("focused date navigation helpers", () => {
       fallbackDate: "2026-02-01",
       dayOfMonth: 31,
     })).toBe("2026-02-28");
+  });
+
+  it("Month November with no selected date anchors Week toggle to a week inside November", () => {
+    expect(deriveWeekAnchorDateForMonth({
+      monthKey: "2026-11",
+      timezone,
+      preferredDate: null,
+    })).toBe("2026-11-02");
+  });
+
+  it("Month November + selected November 12 keeps selected day for Week toggle", () => {
+    expect(deriveWeekAnchorDateForMonth({
+      monthKey: "2026-11",
+      timezone,
+      preferredDate: "2026-11-12",
+    })).toBe("2026-11-12");
+  });
+
+  it("ignores preferred dates outside visible month and falls back to in-month week anchor", () => {
+    expect(deriveWeekAnchorDateForMonth({
+      monthKey: "2026-11",
+      timezone,
+      preferredDate: "2026-10-30",
+    })).toBe("2026-11-02");
   });
 });

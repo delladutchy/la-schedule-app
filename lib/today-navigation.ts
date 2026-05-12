@@ -70,6 +70,37 @@ export function deriveListStartFromFocusedDate(opts: {
   return dt.toFormat("yyyy-LL-dd");
 }
 
+export function deriveWeekAnchorDateForMonth(opts: {
+  monthKey: string;
+  timezone: string;
+  preferredDate?: string | null;
+}): string {
+  const monthStart = DateTime.fromFormat(opts.monthKey, "yyyy-LL", { zone: opts.timezone })
+    .startOf("month");
+  if (!monthStart.isValid) {
+    return `${opts.monthKey}-01`;
+  }
+
+  const preferredDate = opts.preferredDate
+    ? DateTime.fromISO(opts.preferredDate, { zone: opts.timezone })
+    : null;
+  if (
+    preferredDate?.isValid
+    && preferredDate.toFormat("yyyy-LL") === opts.monthKey
+  ) {
+    return preferredDate.toFormat("yyyy-LL-dd");
+  }
+
+  for (let i = 0; i < 7; i += 1) {
+    const candidate = monthStart.plus({ days: i });
+    if (candidate.startOf("week").toFormat("yyyy-LL") === opts.monthKey) {
+      return candidate.toFormat("yyyy-LL-dd");
+    }
+  }
+
+  return monthStart.toFormat("yyyy-LL-dd");
+}
+
 export function deriveFocusedDateForMonthKey(opts: {
   monthKey: string;
   timezone: string;

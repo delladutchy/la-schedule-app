@@ -22,6 +22,7 @@ import {
   isPayloadRenderableForViewTarget,
 } from "@/lib/schedule-view-state";
 import {
+  deriveWeekAnchorDateForMonth,
   deriveFocusedDateForMonthKey,
   deriveFocusedDateForWeekTarget,
   deriveListStartFromFocusedDate,
@@ -469,6 +470,7 @@ export function ScheduleView({
   const [monthPayload, setMonthPayload] = useState<BoardWindowPayload | null>(null);
   const [focusedDate, setFocusedDate] = useState<string>(() =>
     deriveInitialFocusedDate(initialBoardWindowPayload, viewMode));
+  const [hasExplicitFocusedDate, setHasExplicitFocusedDate] = useState(false);
   const [todayPulseToken, setTodayPulseToken] = useState(0);
   const lastBackgroundRefreshAtRef = useRef(0);
 
@@ -775,12 +777,25 @@ export function ScheduleView({
     renderableMonthPayload?.selected.monthNav.canGoPrev ?? monthCanGoPrev;
   const effectiveMonthCanGoNext =
     renderableMonthPayload?.selected.monthNav.canGoNext ?? monthCanGoNext;
-  const effectiveListToggleStart = deriveListStartFromFocusedDate({
+  const focusedDateMonthKey = deriveMonthKeyFromFocusedDate({
     focusedDate,
-    fallbackStartDate: effectiveViewMode === "month"
-      ? `${effectiveMonth.monthKey}-01`
-      : (renderableListPayload?.selected.weekStart ?? listToggleStart),
+    timezone: activePayload?.timezone ?? initialBoardWindowPayload.timezone,
+    fallbackMonthKey: "",
   });
+  const monthToWeekPreferredDate =
+    hasExplicitFocusedDate && focusedDateMonthKey === effectiveMonth.monthKey
+      ? focusedDate
+      : null;
+  const effectiveListToggleStart = effectiveViewMode === "month"
+    ? deriveWeekAnchorDateForMonth({
+        monthKey: effectiveMonth.monthKey,
+        timezone: activePayload?.timezone ?? initialBoardWindowPayload.timezone,
+        preferredDate: monthToWeekPreferredDate,
+      })
+    : deriveListStartFromFocusedDate({
+        focusedDate,
+        fallbackStartDate: renderableListPayload?.selected.weekStart ?? listToggleStart,
+      });
   const effectiveMonthToggleKey = deriveMonthKeyFromFocusedDate({
     focusedDate,
     timezone: activePayload?.timezone ?? initialBoardWindowPayload.timezone,
@@ -887,8 +902,10 @@ export function ScheduleView({
       : target.weekStart;
 
     if (isTodayNavigation) {
+      setHasExplicitFocusedDate(false);
       setFocusedDate(sourcePayload.todayKey);
     } else if (target.viewMode === "list") {
+      setHasExplicitFocusedDate(false);
       setFocusedDate(deriveFocusedDateForWeekTarget({
         focusedDate,
         targetWeekStart: normalizedTargetWeekStart,
@@ -896,6 +913,7 @@ export function ScheduleView({
         timezone: sourcePayload.timezone,
       }));
     } else {
+      setHasExplicitFocusedDate(false);
       setFocusedDate(deriveFocusedDateForMonthKey({
         monthKey: target.monthKey,
         timezone: sourcePayload.timezone,
@@ -933,6 +951,7 @@ export function ScheduleView({
   }, [activePayload, activeView, boardWindowCache, focusedDate, initialBoardWindowPayload, router]);
 
   const handleDateFocus = useCallback((date: string) => {
+    setHasExplicitFocusedDate(true);
     setFocusedDate(date);
   }, []);
 
