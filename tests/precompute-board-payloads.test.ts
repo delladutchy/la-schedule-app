@@ -64,7 +64,7 @@ describe("lib/precompute-board-payloads", () => {
     writeBoardPayloadCache.mockResolvedValue(undefined);
   });
 
-  it("writes selected-scope list/month payloads for required editor buckets", async () => {
+  it("writes selected/full list/month payloads for required editor buckets", async () => {
     const { precomputeBoardPayloadCaches } = await import("@/lib/precompute-board-payloads");
     const result = await precomputeBoardPayloadCaches({
       snapshot,
@@ -74,21 +74,34 @@ describe("lib/precompute-board-payloads", () => {
     });
 
     expect(result).toEqual({
-      attempted: 14,
-      written: 14,
+      attempted: 28,
+      written: 28,
       failed: 0,
     });
-    expect(writeBoardPayloadCache).toHaveBeenCalledTimes(14);
+    expect(writeBoardPayloadCache).toHaveBeenCalledTimes(28);
 
     const editorBuckets = new Set<string>();
     const views = new Set<string>();
+    const scopes = new Set<string>();
     for (const [key, payload] of writeBoardPayloadCache.mock.calls as Array<
       [{ editorBucket: string; viewMode: string; scope: string }, unknown]
     >) {
       editorBuckets.add(key.editorBucket);
       views.add(key.viewMode);
-      expect(key.scope).toBe("selected");
-      expect(BoardWindowPayloadSchema.safeParse(payload).success).toBe(true);
+      scopes.add(key.scope);
+      const parsed = BoardWindowPayloadSchema.safeParse(payload);
+      expect(parsed.success).toBe(true);
+      const boardPayload = parsed.success ? parsed.data : null;
+      if (boardPayload) {
+        expect(boardPayload.generatedAtUtc).toBe(snapshot.generatedAtUtc);
+        if (key.scope === "full") {
+          expect(boardPayload.weekWindow.weeks.length).toBeGreaterThan(1);
+          expect(boardPayload.monthWindow.months.length).toBeGreaterThan(1);
+        } else {
+          expect(boardPayload.weekWindow.weeks).toEqual([]);
+          expect(boardPayload.monthWindow.months).toEqual([]);
+        }
+      }
     }
 
     expect(editorBuckets).toEqual(new Set([
@@ -101,6 +114,7 @@ describe("lib/precompute-board-payloads", () => {
       "mike",
     ]));
     expect(views).toEqual(new Set(["list", "month"]));
+    expect(scopes).toEqual(new Set(["selected", "full"]));
   });
 
   it("swallows per-payload write failures and keeps going", async () => {
@@ -123,11 +137,11 @@ describe("lib/precompute-board-payloads", () => {
       });
 
       expect(result).toEqual({
-        attempted: 14,
-        written: 12,
+        attempted: 28,
+        written: 26,
         failed: 2,
       });
-      expect(writeBoardPayloadCache).toHaveBeenCalledTimes(14);
+      expect(writeBoardPayloadCache).toHaveBeenCalledTimes(28);
       expect(errorSpy).toHaveBeenCalledTimes(2);
     } finally {
       errorSpy.mockRestore();

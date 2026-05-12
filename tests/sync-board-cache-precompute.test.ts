@@ -74,8 +74,8 @@ describe("lib/sync board cache precompute integration", () => {
       supabaseWriteSucceeded: false,
     });
     precomputeBoardPayloadCaches.mockResolvedValue({
-      attempted: 14,
-      written: 14,
+      attempted: 28,
+      written: 28,
       failed: 0,
     });
     isBoardCacheEnabled.mockReturnValue(false);

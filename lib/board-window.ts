@@ -20,6 +20,13 @@ const MONTH_KEY_PATTERN = /^\d{4}-\d{2}$/;
 
 type ViewMode = "list" | "month";
 
+export const BOARD_WINDOW_FULL_DEFAULTS = {
+  weeksBefore: 0,
+  weeksAfter: 8,
+  monthsBefore: 0,
+  monthsAfter: 4,
+} as const;
+
 interface CalendarScopeEnv {
   GOOGLE_CALENDAR_ID: string;
   OVERTURE_CALENDAR_ID?: string;
@@ -266,10 +273,38 @@ export function parseBoardWindowQuery(url: URL): BoardWindowQuery {
     // Selected scope zeroes the wide-window dims so the build pipeline only
     // produces the selected week/month. Prev/next derivation falls back to
     // router.push until the follow-up full-scope fetch arrives.
-    weeksBefore: isSelectedScope ? 0 : parseBoundedInt(firstParam(url.searchParams.get("weeksBefore")), 0, 0, 8),
-    weeksAfter: isSelectedScope ? 0 : parseBoundedInt(firstParam(url.searchParams.get("weeksAfter")), 8, 1, 16),
-    monthsBefore: isSelectedScope ? 0 : parseBoundedInt(firstParam(url.searchParams.get("monthsBefore")), 0, 0, 4),
-    monthsAfter: isSelectedScope ? 0 : parseBoundedInt(firstParam(url.searchParams.get("monthsAfter")), 4, 1, 8),
+    weeksBefore: isSelectedScope
+      ? 0
+      : parseBoundedInt(
+          firstParam(url.searchParams.get("weeksBefore")),
+          BOARD_WINDOW_FULL_DEFAULTS.weeksBefore,
+          0,
+          8,
+        ),
+    weeksAfter: isSelectedScope
+      ? 0
+      : parseBoundedInt(
+          firstParam(url.searchParams.get("weeksAfter")),
+          BOARD_WINDOW_FULL_DEFAULTS.weeksAfter,
+          1,
+          16,
+        ),
+    monthsBefore: isSelectedScope
+      ? 0
+      : parseBoundedInt(
+          firstParam(url.searchParams.get("monthsBefore")),
+          BOARD_WINDOW_FULL_DEFAULTS.monthsBefore,
+          0,
+          4,
+        ),
+    monthsAfter: isSelectedScope
+      ? 0
+      : parseBoundedInt(
+          firstParam(url.searchParams.get("monthsAfter")),
+          BOARD_WINDOW_FULL_DEFAULTS.monthsAfter,
+          1,
+          8,
+        ),
     scope: isSelectedScope ? "selected" : "full",
   };
 }

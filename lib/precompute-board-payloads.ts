@@ -1,5 +1,6 @@
 import "server-only";
 import {
+  BOARD_WINDOW_FULL_DEFAULTS,
   buildSanitizedBoardWindowPayload,
   type BoardWindowQuery,
 } from "./board-window";
@@ -11,8 +12,10 @@ import type { EnvConfig, FileConfig } from "./config";
 import type { Snapshot } from "./types";
 
 type ViewMode = "list" | "month";
+type CacheScope = "selected" | "full";
 
 const PRECOMPUTE_VIEW_MODES: readonly ViewMode[] = ["list", "month"] as const;
+const PRECOMPUTE_SCOPES: readonly CacheScope[] = ["selected", "full"] as const;
 const PRECOMPUTE_EDITOR_IDS: readonly (string | null)[] = [
   null,
   "legacy",
@@ -41,16 +44,29 @@ interface EditorTarget {
   editorBucket: string;
 }
 
-function buildSelectedScopeQuery(viewMode: ViewMode): BoardWindowQuery {
+function buildPrecomputeQuery(viewMode: ViewMode, scope: CacheScope): BoardWindowQuery {
+  if (scope === "selected") {
+    return {
+      viewMode,
+      requestedWeek: null,
+      requestedMonth: null,
+      weeksBefore: 0,
+      weeksAfter: 0,
+      monthsBefore: 0,
+      monthsAfter: 0,
+      scope: "selected",
+    };
+  }
+
   return {
     viewMode,
     requestedWeek: null,
     requestedMonth: null,
-    weeksBefore: 0,
-    weeksAfter: 0,
-    monthsBefore: 0,
-    monthsAfter: 0,
-    scope: "selected",
+    weeksBefore: BOARD_WINDOW_FULL_DEFAULTS.weeksBefore,
+    weeksAfter: BOARD_WINDOW_FULL_DEFAULTS.weeksAfter,
+    monthsBefore: BOARD_WINDOW_FULL_DEFAULTS.monthsBefore,
+    monthsAfter: BOARD_WINDOW_FULL_DEFAULTS.monthsAfter,
+    scope: "full",
   };
 }
 
@@ -98,35 +114,37 @@ export async function precomputeBoardPayloadCaches(
   const nowMs = opts.nowMs ?? Date.now();
 
   for (const editorTarget of editorTargets) {
-    for (const viewMode of PRECOMPUTE_VIEW_MODES) {
-      result.attempted += 1;
-      try {
-        const payload = buildSanitizedBoardWindowPayload({
-          snapshot: opts.snapshot,
-          snapshotStatus: "ok",
-          file: opts.file,
-          env: opts.env,
-          query: buildSelectedScopeQuery(viewMode),
-          resolvedEditorId: editorTarget.resolvedEditorId,
-          nowMs,
-        });
+    for (const scope of PRECOMPUTE_SCOPES) {
+      for (const viewMode of PRECOMPUTE_VIEW_MODES) {
+        result.attempted += 1;
+        try {
+          const payload = buildSanitizedBoardWindowPayload({
+            snapshot: opts.snapshot,
+            snapshotStatus: "ok",
+            file: opts.file,
+            env: opts.env,
+            query: buildPrecomputeQuery(viewMode, scope),
+            resolvedEditorId: editorTarget.resolvedEditorId,
+            nowMs,
+          });
 
-        await writeBoardPayloadCache(
-          {
-            viewMode,
-            weekStart: payload.selected.weekStart,
-            monthKey: payload.selected.monthKey,
-            editorBucket: editorTarget.editorBucket,
-            scope: "selected",
-          },
-          payload,
-        );
-        result.written += 1;
-      } catch (err) {
-        result.failed += 1;
-        console.error(
-          `[board-cache:precompute] payload write failed editor=${editorTarget.editorBucket} view=${viewMode} message=${toSafeErrorMessage(err)}`,
-        );
+          await writeBoardPayloadCache(
+            {
+              viewMode,
+              weekStart: payload.selected.weekStart,
+              monthKey: payload.selected.monthKey,
+              editorBucket: editorTarget.editorBucket,
+              scope,
+            },
+            payload,
+          );
+          result.written += 1;
+        } catch (err) {
+          result.failed += 1;
+          console.error(
+            `[board-cache:precompute] payload write failed editor=${editorTarget.editorBucket} view=${viewMode} scope=${scope} message=${toSafeErrorMessage(err)}`,
+          );
+        }
       }
     }
   }

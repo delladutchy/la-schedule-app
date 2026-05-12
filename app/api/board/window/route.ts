@@ -7,7 +7,9 @@ import {
   resolveWeekNavigation,
 } from "@/lib/view";
 import {
+  BOARD_WINDOW_FULL_DEFAULTS,
   buildSanitizedBoardWindowPayload,
+  type BoardWindowPayload,
   parseBoardWindowQuery,
   resolveBoardRequestEditorId,
 } from "@/lib/board-window";
@@ -64,8 +66,9 @@ export async function GET(req: Request) {
 
   const query = parseBoardWindowQuery(new URL(req.url));
   const resolvedEditorId = resolveBoardRequestEditorId(req, env);
+  const cacheScopes = resolveCacheScopes(query);
 
-  if (isBoardCacheEnabled() && query.scope === "selected" && state.status === "ok") {
+  if (isBoardCacheEnabled() && cacheScopes.length > 0 && state.status === "ok") {
     const cacheSelected = resolveSelectedCacheCoordinates({
       query,
       snapshot: state.snapshot,
@@ -74,55 +77,58 @@ export async function GET(req: Request) {
     });
     const editorBucket = resolveBoardPayloadEditorBucket(resolvedEditorId);
 
-    try {
-      const cached = await readBoardPayloadCache({
-        viewMode: query.viewMode,
-        weekStart: cacheSelected.weekStart,
-        monthKey: cacheSelected.monthKey,
-        editorBucket,
-        scope: "selected",
-      });
+    for (const cacheScope of cacheScopes) {
+      try {
+        const cached = await readBoardPayloadCache({
+          viewMode: query.viewMode,
+          weekStart: cacheSelected.weekStart,
+          monthKey: cacheSelected.monthKey,
+          editorBucket,
+          scope: cacheScope,
+        });
 
-      if (cached) {
-        const parsedPayload = parseBoardWindowPayload(cached.payload);
-        const snapshotGeneratedMs = Date.parse(state.snapshot.generatedAtUtc);
-        const cachedGeneratedMs = Date.parse(cached.generatedAtUtc);
-        const cachedPayloadGeneratedMs = Date.parse(parsedPayload?.generatedAtUtc ?? "");
-        const payloadBucket = resolveBoardPayloadEditorBucket(
-          parsedPayload?.resolvedEditorId ?? null,
-        );
-
-        if (
-          parsedPayload
-          && payloadBucket === editorBucket
-          && parsedPayload.selected.view === query.viewMode
-          && parsedPayload.selected.weekStart === cacheSelected.weekStart
-          && parsedPayload.selected.monthKey === cacheSelected.monthKey
-          && Number.isFinite(snapshotGeneratedMs)
-          && Number.isFinite(cachedGeneratedMs)
-          && Number.isFinite(cachedPayloadGeneratedMs)
-          && cachedGeneratedMs >= snapshotGeneratedMs
-          && cachedPayloadGeneratedMs >= snapshotGeneratedMs
-        ) {
-          console.info(
-            `[board-window] cache hit scope=selected view=${query.viewMode} editor=${editorBucket} week=${cacheSelected.weekStart} month=${cacheSelected.monthKey}`,
+        if (cached) {
+          const parsedPayload = parseBoardWindowPayload(cached.payload);
+          const snapshotGeneratedMs = Date.parse(state.snapshot.generatedAtUtc);
+          const cachedGeneratedMs = Date.parse(cached.generatedAtUtc);
+          const cachedPayloadGeneratedMs = Date.parse(parsedPayload?.generatedAtUtc ?? "");
+          const payloadBucket = resolveBoardPayloadEditorBucket(
+            parsedPayload?.resolvedEditorId ?? null,
           );
-          return NextResponse.json(parsedPayload);
-        }
 
-        console.info(
-          `[board-window] cache bypass scope=selected view=${query.viewMode} editor=${editorBucket} reason=validation_or_staleness`,
-        );
-      } else {
-        console.info(
-          `[board-window] cache miss scope=selected view=${query.viewMode} editor=${editorBucket} week=${cacheSelected.weekStart} month=${cacheSelected.monthKey}`,
+          if (
+            parsedPayload
+            && hasExpectedScopeWindowShape(cacheScope, parsedPayload)
+            && payloadBucket === editorBucket
+            && parsedPayload.selected.view === query.viewMode
+            && parsedPayload.selected.weekStart === cacheSelected.weekStart
+            && parsedPayload.selected.monthKey === cacheSelected.monthKey
+            && Number.isFinite(snapshotGeneratedMs)
+            && Number.isFinite(cachedGeneratedMs)
+            && Number.isFinite(cachedPayloadGeneratedMs)
+            && cachedGeneratedMs === snapshotGeneratedMs
+            && cachedPayloadGeneratedMs === snapshotGeneratedMs
+          ) {
+            console.info(
+              `[board-window] cache hit scope=${cacheScope} view=${query.viewMode} editor=${editorBucket} week=${cacheSelected.weekStart} month=${cacheSelected.monthKey}`,
+            );
+            return NextResponse.json(parsedPayload);
+          }
+
+          console.info(
+            `[board-window] cache bypass scope=${cacheScope} view=${query.viewMode} editor=${editorBucket} reason=validation_or_staleness`,
+          );
+        } else {
+          console.info(
+            `[board-window] cache miss scope=${cacheScope} view=${query.viewMode} editor=${editorBucket} week=${cacheSelected.weekStart} month=${cacheSelected.monthKey}`,
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(
+          `[board-window] cache read failed scope=${cacheScope} view=${query.viewMode} message=${msg}`,
         );
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(
-        `[board-window] cache read failed scope=selected view=${query.viewMode} message=${msg}`,
-      );
     }
   }
 
@@ -191,4 +197,40 @@ function rescueStaleSnapshot(
     snapshot,
     ageMinutes: Math.max(0, (nowMs - generatedMs) / 60000),
   };
+}
+
+function resolveCacheScopes(
+  query: ReturnType<typeof parseBoardWindowQuery>,
+): ("selected" | "full")[] {
+  if (isSelectedScopeQuery(query)) return ["full", "selected"];
+  if (isCanonicalFullScopeQuery(query)) return ["full"];
+  return [];
+}
+
+function isSelectedScopeQuery(
+  query: ReturnType<typeof parseBoardWindowQuery>,
+): boolean {
+  return query.scope === "selected";
+}
+
+function isCanonicalFullScopeQuery(
+  query: ReturnType<typeof parseBoardWindowQuery>,
+): boolean {
+  return query.scope === "full"
+    && query.weeksBefore === BOARD_WINDOW_FULL_DEFAULTS.weeksBefore
+    && query.weeksAfter === BOARD_WINDOW_FULL_DEFAULTS.weeksAfter
+    && query.monthsBefore === BOARD_WINDOW_FULL_DEFAULTS.monthsBefore
+    && query.monthsAfter === BOARD_WINDOW_FULL_DEFAULTS.monthsAfter;
+}
+
+function hasExpectedScopeWindowShape(
+  scope: "selected" | "full",
+  payload: BoardWindowPayload,
+): boolean {
+  if (scope === "selected") {
+    return payload.weekWindow.weeks.length === 0
+      && payload.monthWindow.months.length === 0;
+  }
+  return payload.weekWindow.weeks.length > 0
+    && payload.monthWindow.months.length > 0;
 }
