@@ -223,16 +223,6 @@ function isClientInterceptClick(event: MouseEvent<HTMLAnchorElement>): boolean {
   return true;
 }
 
-function pushStateHref(href: string): void {
-  if (typeof window === "undefined") return;
-  const nextUrl = new URL(href, window.location.origin);
-  const nextPath = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
-  const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  if (nextPath !== currentPath) {
-    window.history.pushState(null, "", nextPath);
-  }
-}
-
 function deriveWeekPayloadForTarget(
   source: BoardWindowPayload,
   targetWeekStart: string,
@@ -886,17 +876,8 @@ export function ScheduleView({
       return;
     }
 
-    // Today bumps the pulse token but is otherwise resolved through the
-    // same in-window derivation path as prev/next below. We **must not**
-    // use `router.push` as the primary nav for Today because earlier
-    // prev/next clicks used `pushStateHref` (window.history.pushState
-    // only), which advances the URL bar without advancing Next.js's
-    // internal router state. A subsequent `router.push` to today's URL
-    // can then be silently short-circuited by Next.js when it thinks
-    // the route is already current — resulting in the URL never
-    // updating and the active slot never refreshing. Routing Today
-    // through the deriveX + pushStateHref path keeps the URL bar,
-    // router state, and active slot in lock-step.
+    // Today bumps the pulse token but follows the same navigation
+    // coordinate flow as prev/next.
     const isTodayNavigation = isTodayClickTarget(
       target,
       sourcePayload.todayKey,
@@ -956,7 +937,11 @@ export function ScheduleView({
     }
 
     if (!nextPayload) {
-      router.push(href);
+      setRouteTarget({
+        weekStart: normalizedTargetWeekStart,
+        monthKey: target.monthKey,
+      });
+      router.push(href, { scroll: false });
       return;
     }
 
@@ -973,7 +958,7 @@ export function ScheduleView({
     } else if (nextPayload.selected.view === "month") {
       setMonthPayload(nextPayload);
     }
-    pushStateHref(href);
+    router.push(href, { scroll: false });
   }, [activePayload, activeView, boardWindowCache, focusedDate, initialBoardWindowPayload, router]);
 
   const handleDateFocus = useCallback((date: string) => {
