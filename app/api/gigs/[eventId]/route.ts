@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { buildAndPersistSnapshot } from "@/lib/sync";
 import { deleteCalendarEvent, updateAllDayEvent } from "@/lib/google";
-import { classifyGoogleError, CALENDAR_AUTH_FAILED_MESSAGE } from "@/lib/google-error";
+import {
+  classifyGoogleError,
+  CALENDAR_AUTH_FAILED_MESSAGE,
+  CALENDAR_RATE_LIMIT_MESSAGE,
+} from "@/lib/google-error";
 import {
   GigCreateBodySchema,
   resolveAllDayRange,
@@ -225,7 +229,9 @@ export async function PATCH(
       return NextResponse.json(
         {
           error: "snapshot_unavailable",
-          message: preflight.error ?? "Could not refresh snapshot before update.",
+          message: preflight.isRateLimit
+            ? CALENDAR_RATE_LIMIT_MESSAGE
+            : preflight.error ?? "Could not refresh snapshot before update.",
         },
         { status: 503 },
       );
@@ -399,7 +405,9 @@ export async function DELETE(
       return NextResponse.json(
         {
           error: "snapshot_unavailable",
-          message: preflight.error ?? "Could not refresh snapshot before delete.",
+          message: preflight.isRateLimit
+            ? CALENDAR_RATE_LIMIT_MESSAGE
+            : preflight.error ?? "Could not refresh snapshot before delete.",
         },
         { status: 503 },
       );

@@ -451,4 +451,64 @@ describe("/api/gigs/create audit logging", () => {
     expect(appendAuditEvent).toHaveBeenCalledTimes(1);
     expect(sendCreateJobNotification).toHaveBeenCalledTimes(1);
   });
+
+  it("returns friendly rate-limit message when preflight sync is quota-exceeded", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue(null); // triggers preflight
+    buildAndPersistSnapshot.mockResolvedValue({
+      status: "failed",
+      isRateLimit: true,
+      error: "FreeBusy transport error: Quota exceeded for quota metric 'Queries' and limit 'Queries per minute per user' of service 'calendar-json.googleapis.com' for consumer 'project_number:123456789'.",
+    });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12345 — Rate Limit Test",
+        startDate: "2026-05-07",
+        endDate: "2026-05-07",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(503);
+    const body = await res.json() as Record<string, string>;
+    expect(body.error).toBe("snapshot_unavailable");
+    expect(body.message).toBe(
+      "Google Calendar is rate-limiting sync right now. Wait about a minute and try again.",
+    );
+    expect(body.message).not.toMatch(/quota/i);
+    expect(body.message).not.toMatch(/project_number/i);
+    expect(body.message).not.toMatch(/googleapis/i);
+    expect(createAllDayEvent).not.toHaveBeenCalled();
+  });
+
+  it("returns generic message when preflight sync fails for non-rate-limit reasons", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue(null);
+    buildAndPersistSnapshot.mockResolvedValue({
+      status: "failed",
+      isRateLimit: false,
+      error: "FreeBusy transport error: ECONNRESET",
+    });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12346 — Generic Fail Test",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(503);
+    const body = await res.json() as Record<string, string>;
+    expect(body.error).toBe("snapshot_unavailable");
+    expect(body.message).toBe("FreeBusy transport error: ECONNRESET");
+  });
 });

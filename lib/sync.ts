@@ -19,9 +19,10 @@
 import { applyBuffers } from "./intervals";
 import { fetchFreeBusy, fetchCalendarEvents } from "./google";
 import { getConfig } from "./config";
-import { writeCurrentSnapshot } from "./store";
+import { readCurrentSnapshot, writeCurrentSnapshot } from "./store";
 import { isBoardCacheEnabled } from "./board-payload-cache";
 import { precomputeBoardPayloadCaches } from "./precompute-board-payloads";
+import { classifyGoogleError } from "./google-error";
 import type { BusyBlock, Snapshot, NamedEvent } from "./types";
 import { DateTime } from "luxon";
 
@@ -29,14 +30,48 @@ export interface BuildResult {
   status: "ok" | "failed";
   snapshot?: Snapshot;
   error?: string;
+  /** True when the FreeBusy call was rejected due to Google API quota/rate limits. */
+  isRateLimit?: boolean;
+  /** True when the sync was skipped because a fresh snapshot already existed. */
+  skipped?: boolean;
   erroredCalendarIds?: string[];
+}
+
+export interface BuildAndPersistOptions {
+  /**
+   * If set, skip the full Google sync and return the existing snapshot when it
+   * was written within this many milliseconds ago.  Used by the webhook route to
+   * coalesce redundant syncs that fire after a mutation's own post-write sync
+   * already ran.  Never set this on the preflight path — that path only runs
+   * when no snapshot exists.
+   */
+  skipIfFresherThanMs?: number;
 }
 
 export async function buildAndPersistSnapshot(
   nowMs: number = Date.now(),
+  opts: BuildAndPersistOptions = {},
 ): Promise<BuildResult> {
   const syncStartedAt = Date.now();
   const { file, env } = getConfig();
+
+  // Coalesce redundant syncs: if a fresh snapshot already exists, skip the
+  // full Google API round-trip.  Callers that set skipIfFresherThanMs (e.g.
+  // the webhook route) accept a slightly stale return in exchange for not
+  // hammering Google FreeBusy when a mutation post-sync just ran.
+  if (opts.skipIfFresherThanMs != null && opts.skipIfFresherThanMs > 0) {
+    const existing = await readCurrentSnapshot(env.BLOBS_STORE_NAME, { consistency: "eventual" });
+    if (existing) {
+      const generatedMs = Date.parse(existing.generatedAtUtc);
+      const ageMs = nowMs - generatedMs;
+      if (Number.isFinite(generatedMs) && ageMs < opts.skipIfFresherThanMs) {
+        console.info(
+          `[sync] skip coalesce age=${Math.round(ageMs)}ms threshold=${opts.skipIfFresherThanMs}ms generatedAt=${existing.generatedAtUtc}`,
+        );
+        return { status: "ok", snapshot: existing, skipped: true };
+      }
+    }
+  }
 
   // Window: from start of today in display zone, extending horizonDays forward.
   const startOfToday = DateTime.fromMillis(nowMs, { zone: "utc" })
@@ -73,12 +108,12 @@ export async function buildAndPersistSnapshot(
   const namedEventsDurationMs = Date.now() - namedEventsStartedAt;
 
   if (freeBusyResult.status === "rejected") {
-    const msg = freeBusyResult.reason instanceof Error
-      ? freeBusyResult.reason.message
-      : String(freeBusyResult.reason);
-    console.error("[sync] freebusy transport error:", msg);
+    const reason = freeBusyResult.reason;
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    const { isRateLimit } = classifyGoogleError(reason);
+    console.error(`[sync] freebusy transport error${isRateLimit ? " (rate-limited)" : ""}:`, msg);
     console.info(`[sync] timings ms freebusy=${freeBusyDurationMs} namedEvents=${namedEventsDurationMs} total=${Date.now() - syncStartedAt}`);
-    return { status: "failed", error: `FreeBusy transport error: ${msg}` };
+    return { status: "failed", error: `FreeBusy transport error: ${msg}`, isRateLimit };
   }
   const fb = freeBusyResult.value;
 

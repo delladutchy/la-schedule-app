@@ -39,12 +39,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const result = await buildAndPersistSnapshot();
+  // Skip the Google sync when a mutation's own post-write sync already ran
+  // within the last 10 seconds — webhooks firing for those mutations are
+  // redundant and waste FreeBusy quota.
+  const result = await buildAndPersistSnapshot(Date.now(), { skipIfFresherThanMs: 10_000 });
   const durationMs = Date.now() - started;
 
   if (result.status === "ok") {
-    console.info(`[google:webhook] ok ms total=${durationMs}`);
-    return NextResponse.json({ status: "ok", durationMs });
+    const skippedTag = result.skipped ? " skipped=true" : "";
+    console.info(`[google:webhook] ok${skippedTag} ms total=${durationMs}`);
+    return NextResponse.json({ status: "ok", durationMs, skipped: result.skipped ?? false });
   }
 
   console.info(`[google:webhook] failed ms total=${durationMs}`);

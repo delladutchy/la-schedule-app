@@ -110,4 +110,49 @@ describe("/api/google/calendar/webhook", () => {
     expect(Array.isArray(body.erroredCalendarIds)).toBe(true);
     expect(JSON.stringify(body)).not.toContain("google-webhook-token-0123456789");
   });
+
+  it("passes skipIfFresherThanMs to buildAndPersistSnapshot", async () => {
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot: { busy: [] } });
+    const POST = await loadPost();
+    const req = new Request(
+      "http://localhost/api/google/calendar/webhook?token=google-webhook-token-0123456789",
+      { method: "POST" },
+    );
+    await POST(req);
+    expect(buildAndPersistSnapshot).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.objectContaining({ skipIfFresherThanMs: 10_000 }),
+    );
+  });
+
+  it("returns skipped=true in response body when sync was coalesced", async () => {
+    buildAndPersistSnapshot.mockResolvedValue({
+      status: "ok",
+      snapshot: { busy: [] },
+      skipped: true,
+    });
+    const POST = await loadPost();
+    const req = new Request(
+      "http://localhost/api/google/calendar/webhook?token=google-webhook-token-0123456789",
+      { method: "POST" },
+    );
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.status).toBe("ok");
+    expect(body.skipped).toBe(true);
+  });
+
+  it("returns skipped=false in response body when sync ran fully", async () => {
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot: { busy: [] } });
+    const POST = await loadPost();
+    const req = new Request(
+      "http://localhost/api/google/calendar/webhook?token=google-webhook-token-0123456789",
+      { method: "POST" },
+    );
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.skipped).toBe(false);
+  });
 });

@@ -621,4 +621,58 @@ describe("/api/gigs/[eventId] audit logging", () => {
     expect(res.status).toBe(401);
     expect(appendAuditEvent).not.toHaveBeenCalled();
   });
+
+  it("DELETE returns friendly rate-limit message when preflight sync is quota-exceeded", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue(null); // triggers preflight
+    buildAndPersistSnapshot.mockResolvedValue({
+      status: "failed",
+      isRateLimit: true,
+      error: "FreeBusy transport error: Quota exceeded for quota metric 'Queries' and limit 'Queries per minute per user' of service 'calendar-json.googleapis.com' for consumer 'project_number:123456789'.",
+    });
+    const { DELETE } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-delete" } });
+    expect(res.status).toBe(503);
+    const body = await res.json() as Record<string, string>;
+    expect(body.error).toBe("snapshot_unavailable");
+    expect(body.message).toBe(
+      "Google Calendar is rate-limiting sync right now. Wait about a minute and try again.",
+    );
+    expect(body.message).not.toMatch(/quota/i);
+    expect(body.message).not.toMatch(/project_number/i);
+    expect(deleteCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it("PATCH returns friendly rate-limit message when preflight sync is quota-exceeded", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue(null); // triggers preflight
+    buildAndPersistSnapshot.mockResolvedValue({
+      status: "failed",
+      isRateLimit: true,
+      error: "FreeBusy transport error: Quota exceeded for quota metric 'Queries' and limit 'Queries per minute per user' of service 'calendar-json.googleapis.com' for consumer 'project_number:123456789'.",
+    });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-edit", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12346 — Updated Job",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-edit" } });
+    expect(res.status).toBe(503);
+    const body = await res.json() as Record<string, string>;
+    expect(body.error).toBe("snapshot_unavailable");
+    expect(body.message).toBe(
+      "Google Calendar is rate-limiting sync right now. Wait about a minute and try again.",
+    );
+    expect(body.message).not.toMatch(/quota/i);
+    expect(body.message).not.toMatch(/project_number/i);
+    expect(updateAllDayEvent).not.toHaveBeenCalled();
+  });
 });
