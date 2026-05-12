@@ -124,28 +124,34 @@ describe("isBackgroundPayloadCompatibleWithView", () => {
 
 describe("pickFallbackPayloadForNewView", () => {
   it("uses the remembered list payload when toggling Month → Week", () => {
+    const previousMonth = makePayload({ view: "month", weekStart: "2026-05-04", monthKey: "2026-05" });
     const previousList = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
     expect(pickFallbackPayloadForNewView({
       initialPayloadIsSynthetic: true,
       newView: "list",
-      lastSeenByView: { list: previousList, month: makePayload({ view: "month" }) },
+      previousDerived: previousMonth,
+      lastSeenByView: { list: previousList, month: previousMonth },
     })).toBe(previousList);
   });
 
   it("uses the remembered month payload when toggling Week → Month", () => {
+    const previousList = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
     const previousMonth = makePayload({ view: "month", weekStart: "2026-05-04", monthKey: "2026-05" });
     expect(pickFallbackPayloadForNewView({
       initialPayloadIsSynthetic: true,
       newView: "month",
-      lastSeenByView: { list: makePayload({ view: "list" }), month: previousMonth },
+      previousDerived: previousList,
+      lastSeenByView: { list: previousList, month: previousMonth },
     })).toBe(previousMonth);
   });
 
   it("returns null when no payload has been seen for the new view", () => {
+    const previousList = makePayload({ view: "list" });
     expect(pickFallbackPayloadForNewView({
       initialPayloadIsSynthetic: true,
       newView: "month",
-      lastSeenByView: { list: makePayload({ view: "list" }), month: null },
+      previousDerived: previousList,
+      lastSeenByView: { list: previousList, month: null },
     })).toBeNull();
   });
 
@@ -154,7 +160,34 @@ describe("pickFallbackPayloadForNewView", () => {
     expect(pickFallbackPayloadForNewView({
       initialPayloadIsSynthetic: false,
       newView: "list",
+      previousDerived: makePayload({ view: "month" }),
       lastSeenByView: { list: previousList, month: null },
+    })).toBeNull();
+  });
+
+  it("does not seed a fallback when previousDerived is null (Today reset / first mount)", () => {
+    // handleBoardNavigate's Today branch deliberately clears derivedPayload
+    // to null before router.push so the new URL's target wins outright.
+    // If we hydrated lastSeen here, the old-coord payload would shadow the
+    // new today-target render until the mount fetch arrives — exactly the
+    // regression this guard prevents.
+    const lastSeenList = makePayload({ view: "list", weekStart: "2026-05-18", monthKey: "2026-05" });
+    expect(pickFallbackPayloadForNewView({
+      initialPayloadIsSynthetic: true,
+      newView: "list",
+      previousDerived: null,
+      lastSeenByView: { list: lastSeenList, month: null },
+    })).toBeNull();
+  });
+
+  it("does not double-handle same-view swaps (shouldRetain covers those)", () => {
+    const previousList = makePayload({ view: "list", weekStart: "2026-05-18", monthKey: "2026-05" });
+    const lastSeenList = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
+    expect(pickFallbackPayloadForNewView({
+      initialPayloadIsSynthetic: true,
+      newView: "list",
+      previousDerived: previousList,
+      lastSeenByView: { list: lastSeenList, month: null },
     })).toBeNull();
   });
 
@@ -163,6 +196,7 @@ describe("pickFallbackPayloadForNewView", () => {
     expect(pickFallbackPayloadForNewView({
       initialPayloadIsSynthetic: true,
       newView: "list",
+      previousDerived: makePayload({ view: "month" }),
       // Should never happen with the in-component tracker, but guarantees
       // a cross-view payload can never leak through the fallback path.
       lastSeenByView: { list: corrupted, month: null },

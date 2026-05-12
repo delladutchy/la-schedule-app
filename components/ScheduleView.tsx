@@ -454,11 +454,16 @@ export function ScheduleView({
       }
       // Cross-view swap: render the most recently seen payload for the
       // target view immediately so the user sees a populated board instead
-      // of the skeleton. The background fetch (started below) will replace
-      // this with the URL's exact target via `applyIfBetter`.
+      // of the skeleton. The helper only returns a fallback on a genuine
+      // cross-view swap (prev non-null AND different view) — when
+      // `prev === null` the caller has deliberately reset (e.g., Today
+      // button clears state before `router.push`), and we must let the
+      // skeleton / cache hydration / mount fetch path resolve the new
+      // URL target outright.
       return pickFallbackPayloadForNewView({
         initialPayloadIsSynthetic,
         newView: initialBoardWindowPayload.selected.view,
+        previousDerived: prev,
         lastSeenByView: lastSeenByViewRef.current,
       });
     });

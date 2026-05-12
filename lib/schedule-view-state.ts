@@ -24,11 +24,18 @@ export function isBackgroundPayloadCompatibleWithView(opts: {
 
 /**
  * Pick a same-view payload from the per-view session memory to render
- * immediately during a Week ↔ Month toggle. Returns `null` for the
- * non-synthetic SSR path (the legacy server-baked payload is authoritative)
- * and when there is no remembered payload for the new view yet. The
- * payload's `selected.view` is verified defensively so a corrupted ref
- * entry can never bleed across views.
+ * immediately during a Week ↔ Month toggle.
+ *
+ * Only applies on a **genuine cross-view swap** — `previousDerived` is
+ * non-null AND its view differs from the new view. Other combinations
+ * intentionally return `null`:
+ *   - `previousDerived === null` means either a deliberate reset
+ *     (e.g., Today button explicitly clears state before `router.push`)
+ *     or a first mount. In both cases we must not seed with a stale
+ *     last-seen payload — let the skeleton / cache-hydration / mount
+ *     fetch path do its job so the URL's target wins outright.
+ *   - Same-view swap is handled by `shouldRetainDerivedPayloadOnSyntheticSwap`
+ *     instead, which retains the visible payload directly.
  *
  * Caller is expected to follow up with a background `/api/board/window`
  * fetch targeting the URL's coordinates; that response will replace this
@@ -37,9 +44,12 @@ export function isBackgroundPayloadCompatibleWithView(opts: {
 export function pickFallbackPayloadForNewView(opts: {
   initialPayloadIsSynthetic: boolean;
   newView: "list" | "month";
+  previousDerived: BoardWindowPayload | null;
   lastSeenByView: LastSeenPayloadsByView;
 }): BoardWindowPayload | null {
   if (!opts.initialPayloadIsSynthetic) return null;
+  if (!opts.previousDerived) return null;
+  if (opts.previousDerived.selected.view === opts.newView) return null;
   const candidate = opts.lastSeenByView[opts.newView];
   if (!candidate) return null;
   if (candidate.selected.view !== opts.newView) return null;
