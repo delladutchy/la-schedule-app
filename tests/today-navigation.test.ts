@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isTodayClickTarget } from "@/lib/today-navigation";
+import {
+  isTodayClickTarget,
+  normalizeWeekStartForCacheLookup,
+} from "@/lib/today-navigation";
 
 const TODAY_KEY = "2026-05-04";
 const TODAY_MONTH = "2026-05";
@@ -83,5 +86,41 @@ describe("isTodayClickTarget", () => {
         TODAY_MONTH,
       )).toBe(true);
     });
+  });
+});
+
+describe("normalizeWeekStartForCacheLookup", () => {
+  const timezone = "America/New_York";
+
+  it("snaps a mid-week date (the Today calendar date) to its Monday", () => {
+    // Today's href is `?start=<calendar date>`, which can be any
+    // weekday. `weekWindow.weeks` is keyed by the week's Monday — the
+    // normalization gates the in-window derive lookup that powers the
+    // Today button after a prev/next pushStateHref navigation.
+    expect(normalizeWeekStartForCacheLookup({
+      weekStart: "2026-05-12", // Tuesday
+      timezone,
+    })).toBe("2026-05-11"); // Monday of that week
+  });
+
+  it("returns Sunday's input as the previous Monday (Luxon week-start)", () => {
+    expect(normalizeWeekStartForCacheLookup({
+      weekStart: "2026-05-17", // Sunday
+      timezone,
+    })).toBe("2026-05-11"); // Monday of that ISO week
+  });
+
+  it("leaves an already-Monday date unchanged", () => {
+    expect(normalizeWeekStartForCacheLookup({
+      weekStart: "2026-05-11",
+      timezone,
+    })).toBe("2026-05-11");
+  });
+
+  it("returns the raw input when the date is unparseable (defensive)", () => {
+    expect(normalizeWeekStartForCacheLookup({
+      weekStart: "not-a-date",
+      timezone,
+    })).toBe("not-a-date");
   });
 });

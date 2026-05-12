@@ -19,7 +19,7 @@ import {
   writeCache as writePersistedCache,
 } from "@/lib/board-window-cache";
 import { isPayloadAnImprovement } from "@/lib/schedule-view-state";
-import { isTodayClickTarget } from "@/lib/today-navigation";
+import { isTodayClickTarget, normalizeWeekStartForCacheLookup } from "@/lib/today-navigation";
 
 const BACKGROUND_REFRESH_DEBOUNCE_MS = 200;
 const BACKGROUND_REFRESH_MIN_INTERVAL_MS = 30_000;
@@ -691,10 +691,10 @@ export function ScheduleView({
   }, [isLoading]);
 
   const handleBoardNavigate = useCallback((href: string) => {
-    // The source for prev/next derivation is the active view's slot. If
-    // it's empty (true first load), we fall back to the SSR shell so
-    // resolveTargetFromHref still has coordinates; the derive call will
-    // miss and we'll go through router.push naturally.
+    // The source for derivation is the active view's slot. If it's
+    // empty (true first load), we fall back to the SSR shell so
+    // resolveTargetFromHref still has coordinates; the derive call
+    // will miss and we'll go through router.push naturally.
     const sourcePayload = activePayload ?? initialBoardWindowPayload;
     const cachedSource = boardWindowCache[buildBoardWindowCacheKey(sourcePayload)] ?? sourcePayload;
     const target = resolveTargetFromHref(href, {
@@ -707,12 +707,17 @@ export function ScheduleView({
       return;
     }
 
-    // Today is a soft navigation that converges URL, router state, RSC
-    // payload, and the active slot through Next.js. We do NOT clear
-    // the per-view slots here — they keep the user's last valid board
-    // visible while the new target's data arrives. The pulse token is
-    // bumped synchronously and survives the soft nav because
-    // ScheduleView's component instance persists.
+    // Today bumps the pulse token but is otherwise resolved through the
+    // same in-window derivation path as prev/next below. We **must not**
+    // use `router.push` as the primary nav for Today because earlier
+    // prev/next clicks used `pushStateHref` (window.history.pushState
+    // only), which advances the URL bar without advancing Next.js's
+    // internal router state. A subsequent `router.push` to today's URL
+    // can then be silently short-circuited by Next.js when it thinks
+    // the route is already current — resulting in the URL never
+    // updating and the active slot never refreshing. Routing Today
+    // through the deriveX + pushStateHref path keeps the URL bar,
+    // router state, and active slot in lock-step.
     const isTodayNavigation = isTodayClickTarget(
       target,
       sourcePayload.todayKey,
@@ -720,17 +725,22 @@ export function ScheduleView({
     );
     if (isTodayNavigation) {
       setTodayPulseToken((t) => t + 1);
-      router.push(href);
-      return;
     }
 
-    // Resolve same-view prev/next via direct lookup in the cached
+    // Resolve same-view prev/next/Today via direct lookup in the cached
     // weekWindow / monthWindow. Targets outside the precomputed window
     // (or cross-view toggles) fall through to router.push so SSR can
     // produce a fresh window centered on the target.
+    const normalizedTargetWeekStart = target.viewMode === "list"
+      ? normalizeWeekStartForCacheLookup({
+          weekStart: target.weekStart,
+          timezone: sourcePayload.timezone,
+        })
+      : target.weekStart;
+
     let nextPayload: BoardWindowPayload | null = null;
     if (activeView === "list" && target.viewMode === "list") {
-      nextPayload = deriveWeekPayloadForTarget(cachedSource, target.weekStart);
+      nextPayload = deriveWeekPayloadForTarget(cachedSource, normalizedTargetWeekStart);
     } else if (activeView === "month" && target.viewMode === "month") {
       nextPayload = deriveMonthPayloadForTarget(cachedSource, target.monthKey);
     }
