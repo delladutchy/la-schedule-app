@@ -25,6 +25,7 @@ interface Props {
   canGoNext?: boolean;
   showWeekends?: boolean;
   onNavigate?: (href: string) => void;
+  onDateFocus?: (date: string) => void;
   onMutationSuccess?: () => void;
   todayPulseToken?: number;
 }
@@ -305,6 +306,7 @@ export function MonthBoard({
   canGoNext = false,
   showWeekends = true,
   onNavigate,
+  onDateFocus,
   onMutationSuccess,
   todayPulseToken = 0,
 }: Props) {
@@ -421,6 +423,14 @@ export function MonthBoard({
     setBookingError(null);
     setConfirmDeleteEventId(null);
     setDeleteError(null);
+  };
+
+  const focusDateFromBarDetails = (details: BookedLabel["details"]): void => {
+    const first = details[0];
+    if (!first) return;
+    const focusDate = first.startDate ?? first.startUtc?.slice(0, 10);
+    if (!focusDate) return;
+    onDateFocus?.(focusDate);
   };
 
   const openEditBookingPanel = (detail: BookedLabel["details"][number]) => {
@@ -868,6 +878,7 @@ export function MonthBoard({
                           style={monthBarGridStyle(bar.startDayIndex, bar.endDayIndex, compactLaneIndex)}
                           aria-label={safeAria}
                           onClick={() => {
+                            focusDateFromBarDetails(bar.details);
                             closeBookingPanel();
                             if (activeDetailPanel?.barKey === bar.key) {
                               setActiveDetailPanel(null);
@@ -921,11 +932,18 @@ export function MonthBoard({
                         role="gridcell"
                         aria-label={`${d.date}: ${d.status === "booked" ? (bookedLabel?.label ?? "Busy") : "Available"}`}
                         tabIndex={canBookDay ? 0 : undefined}
-                        onClick={canBookDay ? () => openBookingPanel(d.date) : undefined}
+                        onClick={() => {
+                          if (!d.isCurrentMonth) return;
+                          onDateFocus?.(d.date);
+                          if (canBookDay) {
+                            openBookingPanel(d.date);
+                          }
+                        }}
                         onKeyDown={canBookDay
                           ? (event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
+                                onDateFocus?.(d.date);
                                 openBookingPanel(d.date);
                               }
                             }

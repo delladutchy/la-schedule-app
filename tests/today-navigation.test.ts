@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  deriveFocusedDateForMonthKey,
+  deriveFocusedDateForWeekTarget,
+  deriveListStartFromFocusedDate,
+  deriveMonthKeyFromFocusedDate,
   isTodayClickTarget,
   normalizeWeekStartForCacheLookup,
 } from "@/lib/today-navigation";
@@ -122,5 +126,66 @@ describe("normalizeWeekStartForCacheLookup", () => {
       weekStart: "not-a-date",
       timezone,
     })).toBe("not-a-date");
+  });
+});
+
+describe("focused date navigation helpers", () => {
+  const timezone = "America/New_York";
+
+  it("Week of June 8 -> Month resolves to June month key", () => {
+    expect(deriveMonthKeyFromFocusedDate({
+      focusedDate: "2026-06-08",
+      timezone,
+      fallbackMonthKey: "2026-05",
+    })).toBe("2026-06");
+  });
+
+  it("Month June + selected June 12 -> Week keeps June 12 as week start target input", () => {
+    expect(deriveListStartFromFocusedDate({
+      focusedDate: "2026-06-12",
+      fallbackStartDate: "2026-06-01",
+    })).toBe("2026-06-12");
+  });
+
+  it("today reset in Week returns the current date key", () => {
+    expect(deriveListStartFromFocusedDate({
+      focusedDate: "2026-05-12",
+      fallbackStartDate: "2026-05-01",
+    })).toBe("2026-05-12");
+  });
+
+  it("today reset in Month resolves current month key", () => {
+    expect(deriveMonthKeyFromFocusedDate({
+      focusedDate: "2026-05-12",
+      timezone,
+      fallbackMonthKey: "2026-04",
+    })).toBe("2026-05");
+  });
+
+  it("week prev/next preserves weekday context when shifting target week", () => {
+    expect(deriveFocusedDateForWeekTarget({
+      focusedDate: "2026-06-12", // Friday
+      targetWeekStart: "2026-06-15",
+      sourceWeekStart: "2026-06-08",
+      timezone,
+    })).toBe("2026-06-19"); // Friday next week
+  });
+
+  it("month prev/next preserves day-of-month when possible", () => {
+    expect(deriveFocusedDateForMonthKey({
+      monthKey: "2026-07",
+      timezone,
+      fallbackDate: "2026-07-01",
+      dayOfMonth: 12,
+    })).toBe("2026-07-12");
+  });
+
+  it("month prev/next clamps overflowing day-of-month to month end", () => {
+    expect(deriveFocusedDateForMonthKey({
+      monthKey: "2026-02",
+      timezone,
+      fallbackDate: "2026-02-01",
+      dayOfMonth: 31,
+    })).toBe("2026-02-28");
   });
 });

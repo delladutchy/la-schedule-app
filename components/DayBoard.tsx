@@ -31,6 +31,7 @@ interface Props {
   canGoNext?: boolean;
   showWeekends?: boolean;
   onNavigate?: (href: string) => void;
+  onDateFocus?: (date: string) => void;
   onMutationSuccess?: () => void;
   todayPulseToken?: number;
 }
@@ -278,6 +279,7 @@ export function DayBoard({
   canGoNext = false,
   showWeekends = true,
   onNavigate,
+  onDateFocus,
   onMutationSuccess,
   todayPulseToken = 0,
 }: Props) {
@@ -825,19 +827,20 @@ export function DayBoard({
                   key={d.date}
                   className={`board-day ${d.status}${canBookRow ? " board-day--bookable" : ""}${row.bookedLabel?.isPrivateUnavailable ? " booked-private" : ""}${d.isToday ? " today" : ""}${d.isToday && todayPulseActive ? " today-pulse" : ""}`}
                   tabIndex={canBookRow ? 0 : undefined}
-                  onClick={canBookRow
-                    ? () => {
+                  onClick={() => {
+                    onDateFocus?.(d.date);
+                    if (!canBookRow) return;
+                    closeDetailPanel();
+                    openBookingPanel(d.date);
+                  }}
+                  onKeyDown={canBookRow
+                    ? (event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onDateFocus?.(d.date);
                         closeDetailPanel();
                         openBookingPanel(d.date);
                       }
-                    : undefined}
-                  onKeyDown={canBookRow
-                    ? (event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          closeDetailPanel();
-                          openBookingPanel(d.date);
-                        }
                       }
                     : undefined}
                 >
@@ -864,6 +867,7 @@ export function DayBoard({
                         className="board-day-badge booked board-day-pill-button"
                         title={row.bookedLabel?.title}
                         onClick={() => {
+                          onDateFocus?.(d.date);
                           closeBookingPanel();
                           setConfirmDeleteEventId(null);
                           setDeleteError(null);

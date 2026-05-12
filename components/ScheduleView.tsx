@@ -19,7 +19,14 @@ import {
   writeCache as writePersistedCache,
 } from "@/lib/board-window-cache";
 import { isPayloadAnImprovement } from "@/lib/schedule-view-state";
-import { isTodayClickTarget, normalizeWeekStartForCacheLookup } from "@/lib/today-navigation";
+import {
+  deriveFocusedDateForMonthKey,
+  deriveFocusedDateForWeekTarget,
+  deriveListStartFromFocusedDate,
+  deriveMonthKeyFromFocusedDate,
+  isTodayClickTarget,
+  normalizeWeekStartForCacheLookup,
+} from "@/lib/today-navigation";
 
 const BACKGROUND_REFRESH_DEBOUNCE_MS = 200;
 const BACKGROUND_REFRESH_MIN_INTERVAL_MS = 30_000;
@@ -314,6 +321,18 @@ function deriveMonthPayloadForTarget(
   };
 }
 
+function deriveInitialFocusedDate(payload: BoardWindowPayload, activeView: "list" | "month"): string {
+  if (activeView === "list") {
+    return payload.selected.weekStart;
+  }
+  return deriveFocusedDateForMonthKey({
+    monthKey: payload.selected.monthKey,
+    timezone: payload.timezone,
+    fallbackDate: payload.todayKey,
+    dayOfMonth: 1,
+  });
+}
+
 interface Props {
   viewMode: "list" | "month";
   listToggleStart: string;
@@ -389,6 +408,8 @@ export function ScheduleView({
   // month slot and vice versa.
   const [listPayload, setListPayload] = useState<BoardWindowPayload | null>(null);
   const [monthPayload, setMonthPayload] = useState<BoardWindowPayload | null>(null);
+  const [focusedDate, setFocusedDate] = useState<string>(() =>
+    deriveInitialFocusedDate(initialBoardWindowPayload, viewMode));
   const [todayPulseToken, setTodayPulseToken] = useState(0);
   const lastBackgroundRefreshAtRef = useRef(0);
 
@@ -636,12 +657,19 @@ export function ScheduleView({
   const effectiveWeekCanGoNext = listPayload?.selected.weekNav.canGoNext ?? weekCanGoNext;
   const effectiveMonthCanGoPrev = monthPayload?.selected.monthNav.canGoPrev ?? monthCanGoPrev;
   const effectiveMonthCanGoNext = monthPayload?.selected.monthNav.canGoNext ?? monthCanGoNext;
-  const effectiveListToggleStart = effectiveViewMode === "month"
-    ? `${effectiveMonth.monthKey}-01`
-    : (listPayload?.selected.weekStart ?? listToggleStart);
-  const effectiveMonthToggleKey = effectiveViewMode === "list"
-    ? (listPayload?.selected.weekStart.slice(0, 7) ?? monthToggleKey)
-    : (monthPayload?.selected.monthKey ?? monthToggleKey);
+  const effectiveListToggleStart = deriveListStartFromFocusedDate({
+    focusedDate,
+    fallbackStartDate: effectiveViewMode === "month"
+      ? `${effectiveMonth.monthKey}-01`
+      : (listPayload?.selected.weekStart ?? listToggleStart),
+  });
+  const effectiveMonthToggleKey = deriveMonthKeyFromFocusedDate({
+    focusedDate,
+    timezone: activePayload?.timezone ?? initialBoardWindowPayload.timezone,
+    fallbackMonthKey: effectiveViewMode === "list"
+      ? (listPayload?.selected.weekStart.slice(0, 7) ?? monthToggleKey)
+      : (monthPayload?.selected.monthKey ?? monthToggleKey),
+  });
   const effectiveWeekPrevHref = listPayload
     ? `/?view=list&start=${listPayload.selected.weekNav.prevStart}`
     : weekPrevHref;
@@ -727,10 +755,12 @@ export function ScheduleView({
       setTodayPulseToken((t) => t + 1);
     }
 
-    // Resolve same-view prev/next/Today via direct lookup in the cached
-    // weekWindow / monthWindow. Targets outside the precomputed window
-    // (or cross-view toggles) fall through to router.push so SSR can
-    // produce a fresh window centered on the target.
+    const currentFocusDayOfMonth = (() => {
+      const dt = focusedDate
+        ? DateTime.fromISO(focusedDate, { zone: sourcePayload.timezone })
+        : null;
+      return dt?.isValid ? dt.day : undefined;
+    })();
     const normalizedTargetWeekStart = target.viewMode === "list"
       ? normalizeWeekStartForCacheLookup({
           weekStart: target.weekStart,
@@ -738,6 +768,28 @@ export function ScheduleView({
         })
       : target.weekStart;
 
+    if (isTodayNavigation) {
+      setFocusedDate(sourcePayload.todayKey);
+    } else if (target.viewMode === "list") {
+      setFocusedDate(deriveFocusedDateForWeekTarget({
+        focusedDate,
+        targetWeekStart: normalizedTargetWeekStart,
+        sourceWeekStart: sourcePayload.selected.weekStart,
+        timezone: sourcePayload.timezone,
+      }));
+    } else {
+      setFocusedDate(deriveFocusedDateForMonthKey({
+        monthKey: target.monthKey,
+        timezone: sourcePayload.timezone,
+        fallbackDate: sourcePayload.todayKey,
+        dayOfMonth: currentFocusDayOfMonth ?? 1,
+      }));
+    }
+
+    // Resolve same-view prev/next/Today via direct lookup in the cached
+    // weekWindow / monthWindow. Targets outside the precomputed window
+    // (or cross-view toggles) fall through to router.push so SSR can
+    // produce a fresh window centered on the target.
     let nextPayload: BoardWindowPayload | null = null;
     if (activeView === "list" && target.viewMode === "list") {
       nextPayload = deriveWeekPayloadForTarget(cachedSource, normalizedTargetWeekStart);
@@ -760,7 +812,11 @@ export function ScheduleView({
       setMonthPayload(nextPayload);
     }
     pushStateHref(href);
-  }, [activePayload, activeView, boardWindowCache, initialBoardWindowPayload, router]);
+  }, [activePayload, activeView, boardWindowCache, focusedDate, initialBoardWindowPayload, router]);
+
+  const handleDateFocus = useCallback((date: string) => {
+    setFocusedDate(date);
+  }, []);
 
   const navLinkClickHandler = useCallback((href: string) =>
     (event: MouseEvent<HTMLAnchorElement>) => {
@@ -795,6 +851,7 @@ export function ScheduleView({
             aria-label="Week view"
             prefetch={true}
             scroll={false}
+            onClick={navLinkClickHandler(listToggleHref)}
           >
             Week
           </Link>
@@ -804,6 +861,7 @@ export function ScheduleView({
             aria-label="Month view"
             prefetch={true}
             scroll={false}
+            onClick={navLinkClickHandler(monthToggleHref)}
           >
             Month
           </Link>
@@ -885,6 +943,7 @@ export function ScheduleView({
               canGoNext={effectiveWeekCanGoNext}
               showWeekends={showWeekends}
               onNavigate={handleBoardNavigate}
+              onDateFocus={handleDateFocus}
               onMutationSuccess={invalidatePersistedCache}
               todayPulseToken={todayPulseToken}
             />
@@ -981,6 +1040,7 @@ export function ScheduleView({
               canGoNext={effectiveMonthCanGoNext}
               showWeekends={showWeekends}
               onNavigate={handleBoardNavigate}
+              onDateFocus={handleDateFocus}
               onMutationSuccess={invalidatePersistedCache}
               todayPulseToken={todayPulseToken}
             />
