@@ -476,16 +476,23 @@ export function ScheduleView({
 
   const focusedDateTimezone =
     listPayload?.timezone ?? monthPayload?.timezone ?? initialBoardWindowPayload.timezone;
-  const routeTargetWeekStart = normalizeWeekStartForCacheLookup({
-    weekStart: initialBoardWindowPayload.selected.weekStart,
-    timezone: initialBoardWindowPayload.timezone,
+  const focusedTargetWeekStart = normalizeWeekStartForCacheLookup({
+    weekStart: deriveListStartFromFocusedDate({
+      focusedDate,
+      fallbackStartDate: listToggleStart,
+    }),
+    timezone: focusedDateTimezone,
   });
-  const routeTargetMonthKey = initialBoardWindowPayload.selected.monthKey;
+  const focusedTargetMonthKey = deriveMonthKeyFromFocusedDate({
+    focusedDate,
+    timezone: focusedDateTimezone,
+    fallbackMonthKey: monthToggleKey,
+  });
 
   const renderableListPayload = resolveRenderableViewPayload({
     viewMode: "list",
-    targetWeekStart: routeTargetWeekStart,
-    targetMonthKey: routeTargetMonthKey,
+    targetWeekStart: focusedTargetWeekStart,
+    targetMonthKey: focusedTargetMonthKey,
     directPayload: listPayload,
     listPayload,
     monthPayload,
@@ -494,8 +501,8 @@ export function ScheduleView({
   });
   const renderableMonthPayload = resolveRenderableViewPayload({
     viewMode: "month",
-    targetWeekStart: routeTargetWeekStart,
-    targetMonthKey: routeTargetMonthKey,
+    targetWeekStart: focusedTargetWeekStart,
+    targetMonthKey: focusedTargetMonthKey,
     directPayload: monthPayload,
     listPayload,
     monthPayload,
@@ -560,8 +567,8 @@ export function ScheduleView({
       [buildBoardWindowCacheKey(fresher)]: fresher,
     }));
       const target = {
-        weekStart: routeTargetWeekStart,
-        monthKey: routeTargetMonthKey,
+        weekStart: focusedTargetWeekStart,
+        monthKey: focusedTargetMonthKey,
       };
       if (fresher.selected.view === "list") {
         setListPayload((prev) => (
@@ -579,8 +586,8 @@ export function ScheduleView({
   }, [
     initialBoardWindowPayload,
     persistedBucket,
-    routeTargetWeekStart,
-    routeTargetMonthKey,
+    focusedTargetWeekStart,
+    focusedTargetMonthKey,
   ]);
 
   // Write-through: every real payload that drives the UI is persisted under
@@ -637,8 +644,8 @@ export function ScheduleView({
         [buildBoardWindowCacheKey(incoming)]: incoming,
       }));
       const target = {
-        weekStart: routeTargetWeekStart,
-        monthKey: routeTargetMonthKey,
+        weekStart: focusedTargetWeekStart,
+        monthKey: focusedTargetMonthKey,
       };
       if (incoming.selected.view === "list") {
         setListPayload((prev) => (
@@ -669,8 +676,8 @@ export function ScheduleView({
       // dropped by the `cancelled` guard above.
       const baseParams = {
         viewMode: activeView,
-        start: routeTargetWeekStart,
-        month: routeTargetMonthKey,
+        start: focusedTargetWeekStart,
+        month: focusedTargetMonthKey,
         signal: controller.signal,
         editorToken: navigationEditorToken,
       };
@@ -746,8 +753,8 @@ export function ScheduleView({
     initialBoardWindowPayload,
     navigationEditorToken,
     activeView,
-    routeTargetWeekStart,
-    routeTargetMonthKey,
+    focusedTargetWeekStart,
+    focusedTargetMonthKey,
     hasRenderableActivePayload,
   ]);
 
