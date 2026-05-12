@@ -13,12 +13,14 @@ import {
   buildViewKey as buildPersistedViewKey,
   clearCache as clearPersistedCache,
   editorIdToBucket,
-  isHydrationPayloadCompatible,
   pickFreshestForView,
   readCache as readPersistedCache,
   writeCache as writePersistedCache,
 } from "@/lib/board-window-cache";
-import { isPayloadAnImprovement } from "@/lib/schedule-view-state";
+import {
+  isPayloadAnImprovement,
+  isPayloadRenderableForViewTarget,
+} from "@/lib/schedule-view-state";
 import {
   deriveFocusedDateForMonthKey,
   deriveFocusedDateForWeekTarget,
@@ -321,6 +323,63 @@ function deriveMonthPayloadForTarget(
   };
 }
 
+function resolveRenderableViewPayload(opts: {
+  viewMode: "list" | "month";
+  targetWeekStart: string;
+  targetMonthKey: string;
+  directPayload: BoardWindowPayload | null;
+  listPayload: BoardWindowPayload | null;
+  monthPayload: BoardWindowPayload | null;
+  initialBoardWindowPayload: BoardWindowPayload;
+  boardWindowCache: BoardWindowCache;
+}): BoardWindowPayload | null {
+  if (isPayloadRenderableForViewTarget({
+    viewMode: opts.viewMode,
+    target: {
+      weekStart: opts.targetWeekStart,
+      monthKey: opts.targetMonthKey,
+    },
+    payload: opts.directPayload,
+  })) {
+    return opts.directPayload;
+  }
+
+  const sourceCandidates: BoardWindowPayload[] = [];
+  const pushCandidate = (payload: BoardWindowPayload | null) => {
+    if (!payload) return;
+    sourceCandidates.push(payload);
+  };
+  pushCandidate(opts.listPayload);
+  pushCandidate(opts.monthPayload);
+  pushCandidate(opts.initialBoardWindowPayload);
+  for (const payload of Object.values(opts.boardWindowCache)) {
+    sourceCandidates.push(payload);
+  }
+
+  const seen = new Set<string>();
+  for (const source of sourceCandidates) {
+    const key = buildBoardWindowCacheKey(source);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const derived = opts.viewMode === "list"
+      ? deriveWeekPayloadForTarget(source, opts.targetWeekStart)
+      : deriveMonthPayloadForTarget(source, opts.targetMonthKey);
+    if (!derived) continue;
+    if (isPayloadRenderableForViewTarget({
+      viewMode: opts.viewMode,
+      target: {
+        weekStart: opts.targetWeekStart,
+        monthKey: opts.targetMonthKey,
+      },
+      payload: derived,
+    })) {
+      return derived;
+    }
+  }
+
+  return null;
+}
+
 function deriveInitialFocusedDate(payload: BoardWindowPayload, activeView: "list" | "month"): string {
   if (activeView === "list") {
     return payload.selected.weekStart;
@@ -413,9 +472,45 @@ export function ScheduleView({
   const [todayPulseToken, setTodayPulseToken] = useState(0);
   const lastBackgroundRefreshAtRef = useRef(0);
 
+  const focusedDateTimezone =
+    listPayload?.timezone ?? monthPayload?.timezone ?? initialBoardWindowPayload.timezone;
+  const focusedTargetWeekStart = normalizeWeekStartForCacheLookup({
+    weekStart: deriveListStartFromFocusedDate({
+      focusedDate,
+      fallbackStartDate: listToggleStart,
+    }),
+    timezone: focusedDateTimezone,
+  });
+  const focusedTargetMonthKey = deriveMonthKeyFromFocusedDate({
+    focusedDate,
+    timezone: focusedDateTimezone,
+    fallbackMonthKey: monthToggleKey,
+  });
+
+  const renderableListPayload = resolveRenderableViewPayload({
+    viewMode: "list",
+    targetWeekStart: focusedTargetWeekStart,
+    targetMonthKey: focusedTargetMonthKey,
+    directPayload: listPayload,
+    listPayload,
+    monthPayload,
+    initialBoardWindowPayload,
+    boardWindowCache,
+  });
+  const renderableMonthPayload = resolveRenderableViewPayload({
+    viewMode: "month",
+    targetWeekStart: focusedTargetWeekStart,
+    targetMonthKey: focusedTargetMonthKey,
+    directPayload: monthPayload,
+    listPayload,
+    monthPayload,
+    initialBoardWindowPayload,
+    boardWindowCache,
+  });
+
   const activeView: "list" | "month" = viewMode;
   const activePayload: BoardWindowPayload | null =
-    activeView === "list" ? listPayload : monthPayload;
+    activeView === "list" ? renderableListPayload : renderableMonthPayload;
 
   useEffect(() => {
     if (!isMikeEditor) {
@@ -651,36 +746,40 @@ export function ScheduleView({
   // `selected.view` override `activeView` — that's the inversion that
   // caused Week/Month toggles to show stale-view content.
   const effectiveViewMode = activeView;
-  const effectiveWeekRows = listPayload?.selectedBoards.weekRows ?? weekRows;
-  const effectiveMonth = monthPayload?.selectedBoards.month ?? month;
-  const effectiveWeekCanGoPrev = listPayload?.selected.weekNav.canGoPrev ?? weekCanGoPrev;
-  const effectiveWeekCanGoNext = listPayload?.selected.weekNav.canGoNext ?? weekCanGoNext;
-  const effectiveMonthCanGoPrev = monthPayload?.selected.monthNav.canGoPrev ?? monthCanGoPrev;
-  const effectiveMonthCanGoNext = monthPayload?.selected.monthNav.canGoNext ?? monthCanGoNext;
+  const effectiveWeekRows = renderableListPayload?.selectedBoards.weekRows ?? weekRows;
+  const effectiveMonth = renderableMonthPayload?.selectedBoards.month ?? month;
+  const effectiveWeekCanGoPrev =
+    renderableListPayload?.selected.weekNav.canGoPrev ?? weekCanGoPrev;
+  const effectiveWeekCanGoNext =
+    renderableListPayload?.selected.weekNav.canGoNext ?? weekCanGoNext;
+  const effectiveMonthCanGoPrev =
+    renderableMonthPayload?.selected.monthNav.canGoPrev ?? monthCanGoPrev;
+  const effectiveMonthCanGoNext =
+    renderableMonthPayload?.selected.monthNav.canGoNext ?? monthCanGoNext;
   const effectiveListToggleStart = deriveListStartFromFocusedDate({
     focusedDate,
     fallbackStartDate: effectiveViewMode === "month"
       ? `${effectiveMonth.monthKey}-01`
-      : (listPayload?.selected.weekStart ?? listToggleStart),
+      : (renderableListPayload?.selected.weekStart ?? listToggleStart),
   });
   const effectiveMonthToggleKey = deriveMonthKeyFromFocusedDate({
     focusedDate,
     timezone: activePayload?.timezone ?? initialBoardWindowPayload.timezone,
     fallbackMonthKey: effectiveViewMode === "list"
-      ? (listPayload?.selected.weekStart.slice(0, 7) ?? monthToggleKey)
-      : (monthPayload?.selected.monthKey ?? monthToggleKey),
+      ? (renderableListPayload?.selected.weekStart.slice(0, 7) ?? monthToggleKey)
+      : (renderableMonthPayload?.selected.monthKey ?? monthToggleKey),
   });
-  const effectiveWeekPrevHref = listPayload
-    ? `/?view=list&start=${listPayload.selected.weekNav.prevStart}`
+  const effectiveWeekPrevHref = renderableListPayload
+    ? `/?view=list&start=${renderableListPayload.selected.weekNav.prevStart}`
     : weekPrevHref;
-  const effectiveWeekNextHref = listPayload
-    ? `/?view=list&start=${listPayload.selected.weekNav.nextStart}`
+  const effectiveWeekNextHref = renderableListPayload
+    ? `/?view=list&start=${renderableListPayload.selected.weekNav.nextStart}`
     : weekNextHref;
-  const effectiveMonthPrevHref = monthPayload
-    ? `/?view=month&month=${monthPayload.selected.monthNav.prevMonth}`
+  const effectiveMonthPrevHref = renderableMonthPayload
+    ? `/?view=month&month=${renderableMonthPayload.selected.monthNav.prevMonth}`
     : monthPrevHref;
-  const effectiveMonthNextHref = monthPayload
-    ? `/?view=month&month=${monthPayload.selected.monthNav.nextMonth}`
+  const effectiveMonthNextHref = renderableMonthPayload
+    ? `/?view=month&month=${renderableMonthPayload.selected.monthNav.nextMonth}`
     : monthNextHref;
   const effectiveTodayKey = activePayload?.todayKey ?? todayKey;
   const effectiveTodayMonthKey = activePayload?.todayMonthKey ?? todayMonthKey;

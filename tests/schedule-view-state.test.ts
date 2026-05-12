@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { BoardWindowPayload } from "@/lib/board-window";
-import { isPayloadAnImprovement } from "@/lib/schedule-view-state";
+import {
+  isPayloadAnImprovement,
+  isPayloadRenderableForViewTarget,
+} from "@/lib/schedule-view-state";
 
 function makePayload(opts: {
   view: "list" | "month";
@@ -129,5 +132,71 @@ describe("isPayloadAnImprovement", () => {
     const current = makePayload({ view: "list", weekWindowCount: 9 });
     const incoming = makePayload({ view: "list", weekWindowCount: 9 });
     expect(isPayloadAnImprovement({ incoming, current, target })).toBe(false);
+  });
+});
+
+describe("isPayloadRenderableForViewTarget", () => {
+  it("rejects stale list payloads that do not match the active week target", () => {
+    const staleListPayload = makePayload({
+      view: "list",
+      weekStart: "2026-05-04",
+      monthKey: "2026-05",
+    });
+    expect(isPayloadRenderableForViewTarget({
+      viewMode: "list",
+      target: {
+        weekStart: "2026-11-09",
+        monthKey: "2026-11",
+      },
+      payload: staleListPayload,
+    })).toBe(false);
+  });
+
+  it("rejects stale month payloads that do not match the active month target", () => {
+    const staleMonthPayload = makePayload({
+      view: "month",
+      weekStart: "2026-05-04",
+      monthKey: "2026-05",
+    });
+    expect(isPayloadRenderableForViewTarget({
+      viewMode: "month",
+      target: {
+        weekStart: "2026-11-09",
+        monthKey: "2026-11",
+      },
+      payload: staleMonthPayload,
+    })).toBe(false);
+  });
+
+  it("accepts a target-matching week payload for list rendering", () => {
+    const targetPayload = makePayload({
+      view: "list",
+      weekStart: "2026-11-09",
+      monthKey: "2026-11",
+    });
+    expect(isPayloadRenderableForViewTarget({
+      viewMode: "list",
+      target: {
+        weekStart: "2026-11-09",
+        monthKey: "2026-11",
+      },
+      payload: targetPayload,
+    })).toBe(true);
+  });
+
+  it("accepts a target-matching month payload for month rendering", () => {
+    const targetPayload = makePayload({
+      view: "month",
+      weekStart: "2026-11-09",
+      monthKey: "2026-11",
+    });
+    expect(isPayloadRenderableForViewTarget({
+      viewMode: "month",
+      target: {
+        weekStart: "2026-11-09",
+        monthKey: "2026-11",
+      },
+      payload: targetPayload,
+    })).toBe(true);
   });
 });

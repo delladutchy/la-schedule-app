@@ -5,6 +5,19 @@ export interface PayloadTargetCoordinates {
   monthKey: string;
 }
 
+export function isPayloadRenderableForViewTarget(opts: {
+  viewMode: "list" | "month";
+  target: PayloadTargetCoordinates;
+  payload: BoardWindowPayload | null;
+}): boolean {
+  if (!opts.payload) return false;
+  if (opts.payload.selected.view !== opts.viewMode) return false;
+  if (opts.viewMode === "list") {
+    return opts.payload.selected.weekStart === opts.target.weekStart;
+  }
+  return opts.payload.selected.monthKey === opts.target.monthKey;
+}
+
 /**
  * Decide whether `incoming` is a strict improvement over `current` for the
  * **same view slot**. Callers route responses to the matching slot by
