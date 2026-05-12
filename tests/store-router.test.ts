@@ -110,6 +110,17 @@ describe("lib/store router", () => {
     }
   });
 
+  it("falls back to Netlify Blobs when Supabase reads return no row", async () => {
+    process.env.SUPABASE_READS_ENABLED = "true";
+    readCurrentSnapshotFromSupabase.mockResolvedValueOnce(null);
+
+    const store = await import("@/lib/store");
+    const readResult = await store.readCurrentSnapshot("availability-snapshots", { consistency: "strong" });
+    expect(readResult).toEqual(baseSnapshot);
+    expect(readCurrentSnapshotFromSupabase).toHaveBeenCalledWith("availability-snapshots", { consistency: "strong" });
+    expect(readCurrentSnapshotFromBlobs).toHaveBeenCalledWith("availability-snapshots", { consistency: "strong" });
+  });
+
   it("Supabase write failures do not break Netlify primary writes", async () => {
     process.env.SUPABASE_WRITES_ENABLED = "true";
     writeCurrentSnapshotToSupabase.mockRejectedValueOnce({
