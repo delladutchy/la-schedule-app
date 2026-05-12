@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DateTime } from "luxon";
 import {
   deriveFocusedDateForMonthKey,
   deriveFocusedDateForWeekTarget,
@@ -212,5 +213,27 @@ describe("focused date navigation helpers", () => {
       timezone,
       preferredDate: "2026-10-30",
     })).toBe("2026-11-02");
+  });
+
+  it("uses today as anchor when visible month is the current month and no preferred date exists", () => {
+    expect(deriveWeekAnchorDateForMonth({
+      monthKey: "2026-05",
+      timezone,
+      todayKey: "2026-05-12",
+    })).toBe("2026-05-12");
+  });
+
+  it("for every month of 2026, returns an in-month anchor whose week starts in that month", () => {
+    for (let month = 1; month <= 12; month += 1) {
+      const monthKey = `2026-${String(month).padStart(2, "0")}`;
+      const anchor = deriveWeekAnchorDateForMonth({
+        monthKey,
+        timezone,
+      });
+      const anchorDt = DateTime.fromISO(anchor, { zone: timezone });
+      expect(anchorDt.isValid).toBe(true);
+      expect(anchorDt.toFormat("yyyy-LL")).toBe(monthKey);
+      expect(anchorDt.startOf("week").toFormat("yyyy-LL")).toBe(monthKey);
+    }
   });
 });

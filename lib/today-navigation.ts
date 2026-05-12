@@ -74,6 +74,7 @@ export function deriveWeekAnchorDateForMonth(opts: {
   monthKey: string;
   timezone: string;
   preferredDate?: string | null;
+  todayKey?: string;
 }): string {
   const monthStart = DateTime.fromFormat(opts.monthKey, "yyyy-LL", { zone: opts.timezone })
     .startOf("month");
@@ -89,6 +90,13 @@ export function deriveWeekAnchorDateForMonth(opts: {
     && preferredDate.toFormat("yyyy-LL") === opts.monthKey
   ) {
     return preferredDate.toFormat("yyyy-LL-dd");
+  }
+
+  const today = opts.todayKey
+    ? DateTime.fromISO(opts.todayKey, { zone: opts.timezone })
+    : null;
+  if (today?.isValid && today.toFormat("yyyy-LL") === opts.monthKey) {
+    return today.toFormat("yyyy-LL-dd");
   }
 
   for (let i = 0; i < 7; i += 1) {

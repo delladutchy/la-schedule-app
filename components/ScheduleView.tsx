@@ -787,10 +787,11 @@ export function ScheduleView({
       ? focusedDate
       : null;
   const effectiveListToggleStart = effectiveViewMode === "month"
-    ? deriveWeekAnchorDateForMonth({
+      ? deriveWeekAnchorDateForMonth({
         monthKey: effectiveMonth.monthKey,
         timezone: activePayload?.timezone ?? initialBoardWindowPayload.timezone,
         preferredDate: monthToWeekPreferredDate,
+        todayKey: activePayload?.todayKey ?? todayKey,
       })
     : deriveListStartFromFocusedDate({
         focusedDate,
@@ -906,12 +907,16 @@ export function ScheduleView({
       setFocusedDate(sourcePayload.todayKey);
     } else if (target.viewMode === "list") {
       setHasExplicitFocusedDate(false);
-      setFocusedDate(deriveFocusedDateForWeekTarget({
-        focusedDate,
-        targetWeekStart: normalizedTargetWeekStart,
-        sourceWeekStart: sourcePayload.selected.weekStart,
-        timezone: sourcePayload.timezone,
-      }));
+      if (activeView !== "list") {
+        setFocusedDate(target.weekStart);
+      } else {
+        setFocusedDate(deriveFocusedDateForWeekTarget({
+          focusedDate,
+          targetWeekStart: normalizedTargetWeekStart,
+          sourceWeekStart: sourcePayload.selected.weekStart,
+          timezone: sourcePayload.timezone,
+        }));
+      }
     } else {
       setHasExplicitFocusedDate(false);
       setFocusedDate(deriveFocusedDateForMonthKey({
