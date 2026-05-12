@@ -18,13 +18,7 @@ import {
   readCache as readPersistedCache,
   writeCache as writePersistedCache,
 } from "@/lib/board-window-cache";
-import {
-  isBackgroundPayloadCompatibleWithView,
-  pickFallbackPayloadForNewView,
-  shouldPreferIncomingForTargetMatch,
-  shouldRetainDerivedPayloadOnSyntheticSwap,
-  type LastSeenPayloadsByView,
-} from "@/lib/schedule-view-state";
+import { isPayloadAnImprovement } from "@/lib/schedule-view-state";
 import { isTodayClickTarget } from "@/lib/today-navigation";
 
 const BACKGROUND_REFRESH_DEBOUNCE_MS = 200;
@@ -387,30 +381,20 @@ export function ScheduleView({
   const [boardWindowCache, setBoardWindowCache] = useState<BoardWindowCache>(() => ({
     [buildBoardWindowCacheKey(initialBoardWindowPayload)]: initialBoardWindowPayload,
   }));
-  const [derivedPayload, setDerivedPayload] = useState<BoardWindowPayload | null>(null);
+  // Per-view displayed payload slots. `activeView` (from the URL via the
+  // `viewMode` prop) decides which slot drives rendering; the other slot
+  // is preserved so cross-view toggles can paint instantly from session
+  // memory. Background responses route to their matching slot by
+  // `incoming.selected.view`, so a list response can never overwrite the
+  // month slot and vice versa.
+  const [listPayload, setListPayload] = useState<BoardWindowPayload | null>(null);
+  const [monthPayload, setMonthPayload] = useState<BoardWindowPayload | null>(null);
   const [todayPulseToken, setTodayPulseToken] = useState(0);
   const lastBackgroundRefreshAtRef = useRef(0);
-  // Per-view memory of the most recently seen real payload, used as a
-  // fallback during Week ↔ Month toggles so we don't flash the skeleton
-  // when a usable payload for the new view exists from earlier this
-  // session. The ref-based store survives view toggles (component stays
-  // mounted) but resets on full unmount/page reload — localStorage
-  // hydration still handles cold starts.
-  const lastSeenByViewRef = useRef<LastSeenPayloadsByView>({ list: null, month: null });
-  const currentViewTargetRef = useRef<{
-    viewMode: "list" | "month";
-    weekStart: string;
-    monthKey: string;
-  }>({
-    viewMode,
-    weekStart: initialBoardWindowPayload.selected.weekStart,
-    monthKey: initialBoardWindowPayload.selected.monthKey,
-  });
-  currentViewTargetRef.current = {
-    viewMode: derivedPayload?.selected.view ?? viewMode,
-    weekStart: derivedPayload?.selected.weekStart ?? initialBoardWindowPayload.selected.weekStart,
-    monthKey: derivedPayload?.selected.monthKey ?? initialBoardWindowPayload.selected.monthKey,
-  };
+
+  const activeView: "list" | "month" = viewMode;
+  const activePayload: BoardWindowPayload | null =
+    activeView === "list" ? listPayload : monthPayload;
 
   useEffect(() => {
     if (!isMikeEditor) {
@@ -444,49 +428,16 @@ export function ScheduleView({
         ? prev
         : { ...prev, [cacheKey]: initialBoardWindowPayload }
     ));
-    setDerivedPayload((prev) => {
-      if (shouldRetainDerivedPayloadOnSyntheticSwap({
-        previousDerived: prev,
-        nextInitialPayload: initialBoardWindowPayload,
-        initialPayloadIsSynthetic,
-      })) {
-        return prev;
-      }
-      // Cross-view swap: render the most recently seen payload for the
-      // target view immediately so the user sees a populated board instead
-      // of the skeleton. The helper only returns a fallback on a genuine
-      // cross-view swap (prev non-null AND different view) — when
-      // `prev === null` the caller has deliberately reset (e.g., Today
-      // button clears state before `router.push`), and we must let the
-      // skeleton / cache hydration / mount fetch path resolve the new
-      // URL target outright.
-      return pickFallbackPayloadForNewView({
-        initialPayloadIsSynthetic,
-        newView: initialBoardWindowPayload.selected.view,
-        previousDerived: prev,
-        lastSeenByView: lastSeenByViewRef.current,
-      });
-    });
-  }, [initialBoardWindowPayload, initialPayloadIsSynthetic]);
+    // Intentionally NO setListPayload(null) / setMonthPayload(null) here.
+    // The per-view slots persist across navigations — including Today
+    // resets and cross-view toggles — so the user keeps seeing real data
+    // while the next URL's data is fetched. Skeleton appears only when
+    // the slot for the active view has truly never been populated.
+  }, [initialBoardWindowPayload]);
 
-  // Remember the most recently seen real payload per view so a later
-  // cross-view toggle can hydrate from it without flashing a skeleton.
-  // Only real payloads update this — the synthetic SSR sentinel is
-  // intentionally skipped.
-  useEffect(() => {
-    if (!derivedPayload) return;
-    const view = derivedPayload.selected.view;
-    if (view !== "list" && view !== "month") return;
-    if (lastSeenByViewRef.current[view] === derivedPayload) return;
-    lastSeenByViewRef.current = {
-      ...lastSeenByViewRef.current,
-      [view]: derivedPayload,
-    };
-  }, [derivedPayload]);
-
-  // Hydrate persisted cache for this editor on mount, and only swap state
-  // when the cached payload is strictly newer than the SSR one for the
-  // same view. SSR data is always authoritative on first paint.
+  // Hydrate persisted cache on mount and on URL change. Routes the cached
+  // entry to its matching slot by `cached.selected.view`, so a list cache
+  // entry can never bleed into the month slot.
   useEffect(() => {
     const ssrViewKey = buildPersistedViewKey(initialBoardWindowPayload);
     const entry = readPersistedCache(persistedBucket);
@@ -496,7 +447,23 @@ export function ScheduleView({
       ...prev,
       [buildBoardWindowCacheKey(fresher)]: fresher,
     }));
-    setDerivedPayload(fresher);
+    const target = {
+      weekStart: initialBoardWindowPayload.selected.weekStart,
+      monthKey: initialBoardWindowPayload.selected.monthKey,
+    };
+    if (fresher.selected.view === "list") {
+      setListPayload((prev) => (
+        isPayloadAnImprovement({ incoming: fresher, current: prev, target })
+          ? fresher
+          : prev
+      ));
+    } else if (fresher.selected.view === "month") {
+      setMonthPayload((prev) => (
+        isPayloadAnImprovement({ incoming: fresher, current: prev, target })
+          ? fresher
+          : prev
+      ));
+    }
   }, [initialBoardWindowPayload, persistedBucket]);
 
   // Write-through: every real payload that drives the UI is persisted under
@@ -510,9 +477,14 @@ export function ScheduleView({
   }, [persistedBucket, initialBoardWindowPayload, initialPayloadIsSynthetic]);
 
   useEffect(() => {
-    if (!derivedPayload) return;
-    writePersistedCache(persistedBucket, derivedPayload);
-  }, [persistedBucket, derivedPayload]);
+    if (!listPayload) return;
+    writePersistedCache(persistedBucket, listPayload);
+  }, [persistedBucket, listPayload]);
+
+  useEffect(() => {
+    if (!monthPayload) return;
+    writePersistedCache(persistedBucket, monthPayload);
+  }, [persistedBucket, monthPayload]);
 
   // Background revalidation: after first paint, refresh /api/board/window
   // for the active selection and reconcile if the server has fresher data.
@@ -533,53 +505,38 @@ export function ScheduleView({
     let cancelled = false;
     const controller = new AbortController();
 
-    const applyIfBetter = (incoming: BoardWindowPayload): void => {
+    // Route incoming payloads to their matching slot by
+    // `incoming.selected.view`. A list response can never overwrite the
+    // month slot, and vice versa — view safety is structural, not
+    // checked by a compatibility predicate. Within a slot,
+    // `isPayloadAnImprovement` arbitrates timestamps, URL-target
+    // matching, and wide-window richness so a fresh response replaces
+    // a stale-coord fallback but a same-coord response only upgrades
+    // when it has more data.
+    const applyResponse = (incoming: BoardWindowPayload): void => {
       if (cancelled) return;
-      const target = currentViewTargetRef.current;
-      if (!isBackgroundPayloadCompatibleWithView({
-        currentViewMode: target.viewMode,
-        payload: incoming,
-      })) {
-        return;
-      }
       setBoardWindowCache((prev) => ({
         ...prev,
         [buildBoardWindowCacheKey(incoming)]: incoming,
       }));
-      setDerivedPayload((prev) => {
-        const baseline = prev ?? initialBoardWindowPayload;
-        if (incoming.generatedAtUtc > baseline.generatedAtUtc) return incoming;
-        if (incoming.generatedAtUtc < baseline.generatedAtUtc) return prev;
-        // Same age → first, prefer whichever payload actually matches the
-        // URL's target {weekStart, monthKey}. This handles the cross-view
-        // toggle case where `baseline` is a same-view fallback for the
-        // user's previous coordinates, and the fresh fetch is for the
-        // new URL's coordinates. Without this check the older "more
-        // wide-window data" tiebreak below could keep the stale-coord
-        // fallback visible.
-        if (shouldPreferIncomingForTargetMatch({
-          incoming,
-          baseline,
-          target: {
-            weekStart: initialBoardWindowPayload.selected.weekStart,
-            monthKey: initialBoardWindowPayload.selected.monthKey,
-          },
-        })) {
-          return incoming;
-        }
-        // Same age, same target match → prefer the response with more
-        // wide-window data so the full follow-up replaces the
-        // selected-only stage 1 result, and a stale selected response
-        // never overwrites a full one.
-        const incomingWeeks = incoming.weekWindow.weeks.length;
-        const baselineWeeks = baseline.weekWindow.weeks.length;
-        const incomingMonths = incoming.monthWindow.months.length;
-        const baselineMonths = baseline.monthWindow.months.length;
-        if (incomingWeeks > baselineWeeks || incomingMonths > baselineMonths) {
-          return incoming;
-        }
-        return prev;
-      });
+      const target = {
+        weekStart: initialBoardWindowPayload.selected.weekStart,
+        monthKey: initialBoardWindowPayload.selected.monthKey,
+      };
+      if (incoming.selected.view === "list") {
+        setListPayload((prev) => (
+          isPayloadAnImprovement({ incoming, current: prev, target })
+            ? incoming
+            : prev
+        ));
+      } else if (incoming.selected.view === "month") {
+        setMonthPayload((prev) => (
+          isPayloadAnImprovement({ incoming, current: prev, target })
+            ? incoming
+            : prev
+        ));
+      }
+      // Any other view value (defensive) is silently dropped.
     };
 
     const refresh = async (reason: "mount" | "visible") => {
@@ -589,11 +546,14 @@ export function ScheduleView({
         return;
       }
       lastBackgroundRefreshAtRef.current = now;
-      const target = currentViewTargetRef.current;
+      // The URL's coordinates are the source of truth for what to fetch.
+      // Both mount and visibility refreshes target what the user is
+      // currently navigated to; in-flight responses for old URLs are
+      // dropped by the `cancelled` guard above.
       const baseParams = {
-        viewMode: target.viewMode,
-        start: target.weekStart,
-        month: target.monthKey,
+        viewMode: initialBoardWindowPayload.selected.view,
+        start: initialBoardWindowPayload.selected.weekStart,
+        month: initialBoardWindowPayload.selected.monthKey,
         signal: controller.signal,
         editorToken: navigationEditorToken,
       };
@@ -604,15 +564,15 @@ export function ScheduleView({
         // arrives shortly after and quietly upgrades the cached payload.
         const fastPromise = fetchBoardWindowPayload({ ...baseParams, scope: "selected" });
         const fullPromise = fetchBoardWindowPayload({ ...baseParams });
-        fastPromise.then((fast) => { if (fast) applyIfBetter(fast); }).catch(() => { /* aborted */ });
+        fastPromise.then((fast) => { if (fast) applyResponse(fast); }).catch(() => { /* aborted */ });
         const full = await fullPromise;
-        if (full) applyIfBetter(full);
+        if (full) applyResponse(full);
         return;
       }
 
       // Visibility refresh: single full fetch.
       const fresh = await fetchBoardWindowPayload(baseParams);
-      if (fresh) applyIfBetter(fresh);
+      if (fresh) applyResponse(fresh);
     };
 
     const ssrGeneratedMs = Date.parse(initialBoardWindowPayload.generatedAtUtc);
@@ -665,33 +625,37 @@ export function ScheduleView({
     clearPersistedCache(persistedBucket);
   }, [persistedBucket]);
 
-  const effectiveViewMode = derivedPayload?.selected.view ?? viewMode;
-  const effectiveWeekRows = derivedPayload?.selectedBoards.weekRows ?? weekRows;
-  const effectiveMonth = derivedPayload?.selectedBoards.month ?? month;
-  const effectiveWeekCanGoPrev = derivedPayload?.selected.weekNav.canGoPrev ?? weekCanGoPrev;
-  const effectiveWeekCanGoNext = derivedPayload?.selected.weekNav.canGoNext ?? weekCanGoNext;
-  const effectiveMonthCanGoPrev = derivedPayload?.selected.monthNav.canGoPrev ?? monthCanGoPrev;
-  const effectiveMonthCanGoNext = derivedPayload?.selected.monthNav.canGoNext ?? monthCanGoNext;
+  // The URL is the source of truth for the active view; the slot for that
+  // view supplies the data. We deliberately do NOT let the slot's
+  // `selected.view` override `activeView` — that's the inversion that
+  // caused Week/Month toggles to show stale-view content.
+  const effectiveViewMode = activeView;
+  const effectiveWeekRows = listPayload?.selectedBoards.weekRows ?? weekRows;
+  const effectiveMonth = monthPayload?.selectedBoards.month ?? month;
+  const effectiveWeekCanGoPrev = listPayload?.selected.weekNav.canGoPrev ?? weekCanGoPrev;
+  const effectiveWeekCanGoNext = listPayload?.selected.weekNav.canGoNext ?? weekCanGoNext;
+  const effectiveMonthCanGoPrev = monthPayload?.selected.monthNav.canGoPrev ?? monthCanGoPrev;
+  const effectiveMonthCanGoNext = monthPayload?.selected.monthNav.canGoNext ?? monthCanGoNext;
   const effectiveListToggleStart = effectiveViewMode === "month"
     ? `${effectiveMonth.monthKey}-01`
-    : (derivedPayload?.selected.weekStart ?? listToggleStart);
+    : (listPayload?.selected.weekStart ?? listToggleStart);
   const effectiveMonthToggleKey = effectiveViewMode === "list"
-    ? (derivedPayload?.selected.weekStart.slice(0, 7) ?? monthToggleKey)
-    : (derivedPayload?.selected.monthKey ?? monthToggleKey);
-  const effectiveWeekPrevHref = derivedPayload
-    ? `/?view=list&start=${derivedPayload.selected.weekNav.prevStart}`
+    ? (listPayload?.selected.weekStart.slice(0, 7) ?? monthToggleKey)
+    : (monthPayload?.selected.monthKey ?? monthToggleKey);
+  const effectiveWeekPrevHref = listPayload
+    ? `/?view=list&start=${listPayload.selected.weekNav.prevStart}`
     : weekPrevHref;
-  const effectiveWeekNextHref = derivedPayload
-    ? `/?view=list&start=${derivedPayload.selected.weekNav.nextStart}`
+  const effectiveWeekNextHref = listPayload
+    ? `/?view=list&start=${listPayload.selected.weekNav.nextStart}`
     : weekNextHref;
-  const effectiveMonthPrevHref = derivedPayload
-    ? `/?view=month&month=${derivedPayload.selected.monthNav.prevMonth}`
+  const effectiveMonthPrevHref = monthPayload
+    ? `/?view=month&month=${monthPayload.selected.monthNav.prevMonth}`
     : monthPrevHref;
-  const effectiveMonthNextHref = derivedPayload
-    ? `/?view=month&month=${derivedPayload.selected.monthNav.nextMonth}`
+  const effectiveMonthNextHref = monthPayload
+    ? `/?view=month&month=${monthPayload.selected.monthNav.nextMonth}`
     : monthNextHref;
-  const effectiveTodayKey = derivedPayload?.todayKey ?? todayKey;
-  const effectiveTodayMonthKey = derivedPayload?.todayMonthKey ?? todayMonthKey;
+  const effectiveTodayKey = activePayload?.todayKey ?? todayKey;
+  const effectiveTodayMonthKey = activePayload?.todayMonthKey ?? todayMonthKey;
   const listToggleHref = withEditorToken(`/?view=list&start=${effectiveListToggleStart}`, navigationEditorToken);
   const monthToggleHref = withEditorToken(`/?view=month&month=${effectiveMonthToggleKey}`, navigationEditorToken);
   const weekPrevNavHref = withEditorToken(effectiveWeekPrevHref, navigationEditorToken);
@@ -701,13 +665,13 @@ export function ScheduleView({
   const monthTodayHref = withEditorToken(`/?view=month&month=${effectiveTodayMonthKey}`, navigationEditorToken);
   const monthNextNavHref = withEditorToken(effectiveMonthNextHref, navigationEditorToken);
 
-  // Loading state: shell is up but no real data has arrived yet. True only
-  // for the static-shell SSR path AND before any cache/fetch resolves. Once
-  // localStorage cache or /api/board/window populates `derivedPayload`, this
-  // flips to false for the rest of the navigation — view toggles with a
-  // cache hit never re-enter the skeleton because React batches the cache
-  // useEffect's setDerivedPayload alongside the SSR-payload-changed reset.
-  const isLoading = initialPayloadIsSynthetic && !derivedPayload;
+  // Loading state: shell is up but no real data for the **active view**
+  // has ever arrived. Once the active view's slot is populated — by
+  // localStorage cache hydration, a background fetch, or a prev/next
+  // derivation — this flips to false and never goes back. Cross-view
+  // toggles never re-enter the skeleton if the user has visited that
+  // view before in this session (its slot persists).
+  const isLoading = initialPayloadIsSynthetic && !activePayload;
   const isWeekendsHidden = isMikeEditor && !showWeekends;
   const skeletonVisibleDayCount = isWeekendsHidden ? 5 : 7;
 
@@ -727,10 +691,14 @@ export function ScheduleView({
   }, [isLoading]);
 
   const handleBoardNavigate = useCallback((href: string) => {
-    const sourcePayload = derivedPayload ?? initialBoardWindowPayload;
+    // The source for prev/next derivation is the active view's slot. If
+    // it's empty (true first load), we fall back to the SSR shell so
+    // resolveTargetFromHref still has coordinates; the derive call will
+    // miss and we'll go through router.push naturally.
+    const sourcePayload = activePayload ?? initialBoardWindowPayload;
     const cachedSource = boardWindowCache[buildBoardWindowCacheKey(sourcePayload)] ?? sourcePayload;
     const target = resolveTargetFromHref(href, {
-      viewMode: sourcePayload.selected.view,
+      viewMode: activeView,
       weekStart: sourcePayload.selected.weekStart,
       monthKey: sourcePayload.selected.monthKey,
     });
@@ -739,32 +707,31 @@ export function ScheduleView({
       return;
     }
 
-    // Today is a guaranteed reset. Now that the SW correctly distinguishes
-    // RSC fetches from document navigations, router.push works in PWA
-    // mode and we can use a soft navigation. URL, router state, RSC
-    // payload, derivedPayload, and UI all converge in one Next.js soft
-    // nav. The pulse token is bumped synchronously and survives the
-    // soft nav because ScheduleView's component instance persists.
+    // Today is a soft navigation that converges URL, router state, RSC
+    // payload, and the active slot through Next.js. We do NOT clear
+    // the per-view slots here — they keep the user's last valid board
+    // visible while the new target's data arrives. The pulse token is
+    // bumped synchronously and survives the soft nav because
+    // ScheduleView's component instance persists.
     const isTodayNavigation = isTodayClickTarget(
       target,
       sourcePayload.todayKey,
       sourcePayload.todayMonthKey,
     );
     if (isTodayNavigation) {
-      setDerivedPayload(null);
       setTodayPulseToken((t) => t + 1);
       router.push(href);
       return;
     }
 
-    // Resolve target via direct lookup in the cached weekWindow / monthWindow.
-    // This handles prev/next/swipe and any same-view jump that lands inside
-    // the precomputed window. Targets outside the window fall through to
-    // router.push so SSR can produce a fresh window centered on the target.
+    // Resolve same-view prev/next via direct lookup in the cached
+    // weekWindow / monthWindow. Targets outside the precomputed window
+    // (or cross-view toggles) fall through to router.push so SSR can
+    // produce a fresh window centered on the target.
     let nextPayload: BoardWindowPayload | null = null;
-    if (sourcePayload.selected.view === "list" && target.viewMode === "list") {
+    if (activeView === "list" && target.viewMode === "list") {
       nextPayload = deriveWeekPayloadForTarget(cachedSource, target.weekStart);
-    } else if (sourcePayload.selected.view === "month" && target.viewMode === "month") {
+    } else if (activeView === "month" && target.viewMode === "month") {
       nextPayload = deriveMonthPayloadForTarget(cachedSource, target.monthKey);
     }
 
@@ -777,9 +744,13 @@ export function ScheduleView({
       ...prev,
       [buildBoardWindowCacheKey(nextPayload)]: nextPayload,
     }));
-    setDerivedPayload(nextPayload);
+    if (nextPayload.selected.view === "list") {
+      setListPayload(nextPayload);
+    } else if (nextPayload.selected.view === "month") {
+      setMonthPayload(nextPayload);
+    }
     pushStateHref(href);
-  }, [boardWindowCache, derivedPayload, initialBoardWindowPayload, router]);
+  }, [activePayload, activeView, boardWindowCache, initialBoardWindowPayload, router]);
 
   const navLinkClickHandler = useCallback((href: string) =>
     (event: MouseEvent<HTMLAnchorElement>) => {

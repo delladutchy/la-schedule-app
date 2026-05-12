@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { BoardWindowPayload } from "@/lib/board-window";
-import {
-  isBackgroundPayloadCompatibleWithView,
-  pickFallbackPayloadForNewView,
-  shouldPreferIncomingForTargetMatch,
-  shouldRetainDerivedPayloadOnSyntheticSwap,
-} from "@/lib/schedule-view-state";
+import { isPayloadAnImprovement } from "@/lib/schedule-view-state";
 
 function makePayload(opts: {
   view: "list" | "month";
   weekStart?: string;
   monthKey?: string;
+  generatedAtUtc?: string;
+  weekWindowCount?: number;
+  monthWindowCount?: number;
 }): BoardWindowPayload {
+  const weekStart = opts.weekStart ?? "2026-05-04";
+  const monthKey = opts.monthKey ?? "2026-05";
   return {
     status: "ok",
     snapshotStatus: "ok",
-    generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    generatedAtUtc: opts.generatedAtUtc ?? "2026-05-04T12:00:00.000Z",
     snapshotWindowStartUtc: "2026-05-04T04:00:00.000Z",
     snapshotWindowEndUtc: "2026-08-04T04:00:00.000Z",
     timezone: "America/New_York",
@@ -24,10 +24,10 @@ function makePayload(opts: {
     todayMonthKey: "2026-05",
     selected: {
       view: opts.view,
-      weekStart: opts.weekStart ?? "2026-05-04",
-      monthKey: opts.monthKey ?? "2026-05",
+      weekStart,
+      monthKey,
       weekNav: {
-        weekStart: opts.weekStart ?? "2026-05-04",
+        weekStart,
         prevStart: "2026-04-27",
         nextStart: "2026-05-11",
         hasPrev: true,
@@ -36,7 +36,7 @@ function makePayload(opts: {
         canGoNext: true,
       },
       monthNav: {
-        monthKey: opts.monthKey ?? "2026-05",
+        monthKey,
         prevMonth: "2026-04",
         nextMonth: "2026-06",
         hasPrev: true,
@@ -47,187 +47,87 @@ function makePayload(opts: {
     },
     selectedBoards: {
       weekRows: [],
-      month: { monthKey: opts.monthKey ?? "2026-05", label: "May 2026", weeks: [] },
+      month: { monthKey, label: "May 2026", weeks: [] },
     },
     weekWindow: {
-      startWeek: opts.weekStart ?? "2026-05-04",
+      startWeek: weekStart,
       endWeek: "2026-06-29",
-      weekCount: 0,
-      weeks: [],
+      weekCount: opts.weekWindowCount ?? 0,
+      weeks: Array.from({ length: opts.weekWindowCount ?? 0 }, () => ({
+        weekOf: weekStart,
+        label: "Week of May 4",
+        days: [],
+      })),
     },
     monthWindow: {
-      startMonth: opts.monthKey ?? "2026-05",
+      startMonth: monthKey,
       endMonth: "2026-09",
-      monthCount: 0,
-      months: [],
+      monthCount: opts.monthWindowCount ?? 0,
+      months: Array.from({ length: opts.monthWindowCount ?? 0 }, () => ({
+        monthKey,
+        label: "May 2026",
+        weeks: [],
+      })),
     },
   };
 }
 
-describe("shouldRetainDerivedPayloadOnSyntheticSwap", () => {
-  it("retains existing visible payload for same-view synthetic SSR swaps", () => {
-    const previous = makePayload({ view: "month", weekStart: "2026-05-04", monthKey: "2026-05" });
-    const nextInitial = makePayload({ view: "month", weekStart: "2026-05-11", monthKey: "2026-05" });
-    expect(shouldRetainDerivedPayloadOnSyntheticSwap({
-      previousDerived: previous,
-      nextInitialPayload: nextInitial,
-      initialPayloadIsSynthetic: true,
-    })).toBe(true);
-  });
-
-  it("does not retain payload when switching views", () => {
-    const previous = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
-    const nextInitial = makePayload({ view: "month", weekStart: "2026-05-11", monthKey: "2026-05" });
-    expect(shouldRetainDerivedPayloadOnSyntheticSwap({
-      previousDerived: previous,
-      nextInitialPayload: nextInitial,
-      initialPayloadIsSynthetic: true,
-    })).toBe(false);
-  });
-
-  it("does not retain payload for non-synthetic SSR swaps", () => {
-    const previous = makePayload({ view: "month" });
-    const nextInitial = makePayload({ view: "month" });
-    expect(shouldRetainDerivedPayloadOnSyntheticSwap({
-      previousDerived: previous,
-      nextInitialPayload: nextInitial,
-      initialPayloadIsSynthetic: false,
-    })).toBe(false);
-  });
-});
-
-describe("isBackgroundPayloadCompatibleWithView", () => {
-  it("rejects mismatched view payloads", () => {
-    const payload = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
-    expect(isBackgroundPayloadCompatibleWithView({
-      currentViewMode: "month",
-      payload,
-    })).toBe(false);
-  });
-
-  it("accepts month payloads that match the active month view", () => {
-    const payload = makePayload({ view: "month", weekStart: "2026-05-11", monthKey: "2026-05" });
-    expect(isBackgroundPayloadCompatibleWithView({
-      currentViewMode: "month",
-      payload,
-    })).toBe(true);
-  });
-
-  it("accepts list payloads that match the active list view", () => {
-    const payload = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-06" });
-    expect(isBackgroundPayloadCompatibleWithView({
-      currentViewMode: "list",
-      payload,
-    })).toBe(true);
-  });
-});
-
-describe("pickFallbackPayloadForNewView", () => {
-  it("uses the remembered list payload when toggling Month → Week", () => {
-    const previousMonth = makePayload({ view: "month", weekStart: "2026-05-04", monthKey: "2026-05" });
-    const previousList = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
-    expect(pickFallbackPayloadForNewView({
-      initialPayloadIsSynthetic: true,
-      newView: "list",
-      previousDerived: previousMonth,
-      lastSeenByView: { list: previousList, month: previousMonth },
-    })).toBe(previousList);
-  });
-
-  it("uses the remembered month payload when toggling Week → Month", () => {
-    const previousList = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
-    const previousMonth = makePayload({ view: "month", weekStart: "2026-05-04", monthKey: "2026-05" });
-    expect(pickFallbackPayloadForNewView({
-      initialPayloadIsSynthetic: true,
-      newView: "month",
-      previousDerived: previousList,
-      lastSeenByView: { list: previousList, month: previousMonth },
-    })).toBe(previousMonth);
-  });
-
-  it("returns null when no payload has been seen for the new view", () => {
-    const previousList = makePayload({ view: "list" });
-    expect(pickFallbackPayloadForNewView({
-      initialPayloadIsSynthetic: true,
-      newView: "month",
-      previousDerived: previousList,
-      lastSeenByView: { list: previousList, month: null },
-    })).toBeNull();
-  });
-
-  it("returns null on non-synthetic SSR paths even if a payload is remembered", () => {
-    const previousList = makePayload({ view: "list" });
-    expect(pickFallbackPayloadForNewView({
-      initialPayloadIsSynthetic: false,
-      newView: "list",
-      previousDerived: makePayload({ view: "month" }),
-      lastSeenByView: { list: previousList, month: null },
-    })).toBeNull();
-  });
-
-  it("does not seed a fallback when previousDerived is null (Today reset / first mount)", () => {
-    // handleBoardNavigate's Today branch deliberately clears derivedPayload
-    // to null before router.push so the new URL's target wins outright.
-    // If we hydrated lastSeen here, the old-coord payload would shadow the
-    // new today-target render until the mount fetch arrives — exactly the
-    // regression this guard prevents.
-    const lastSeenList = makePayload({ view: "list", weekStart: "2026-05-18", monthKey: "2026-05" });
-    expect(pickFallbackPayloadForNewView({
-      initialPayloadIsSynthetic: true,
-      newView: "list",
-      previousDerived: null,
-      lastSeenByView: { list: lastSeenList, month: null },
-    })).toBeNull();
-  });
-
-  it("does not double-handle same-view swaps (shouldRetain covers those)", () => {
-    const previousList = makePayload({ view: "list", weekStart: "2026-05-18", monthKey: "2026-05" });
-    const lastSeenList = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
-    expect(pickFallbackPayloadForNewView({
-      initialPayloadIsSynthetic: true,
-      newView: "list",
-      previousDerived: previousList,
-      lastSeenByView: { list: lastSeenList, month: null },
-    })).toBeNull();
-  });
-
-  it("defensively rejects a remembered entry whose view does not match its slot", () => {
-    const corrupted = makePayload({ view: "month", weekStart: "2026-05-04", monthKey: "2026-05" });
-    expect(pickFallbackPayloadForNewView({
-      initialPayloadIsSynthetic: true,
-      newView: "list",
-      previousDerived: makePayload({ view: "month" }),
-      // Should never happen with the in-component tracker, but guarantees
-      // a cross-view payload can never leak through the fallback path.
-      lastSeenByView: { list: corrupted, month: null },
-    })).toBeNull();
-  });
-});
-
-describe("shouldPreferIncomingForTargetMatch", () => {
+describe("isPayloadAnImprovement", () => {
   const target = { weekStart: "2026-05-04", monthKey: "2026-05" };
 
-  it("prefers incoming when it matches target and baseline does not", () => {
+  it("accepts any incoming when current is null (first hydration)", () => {
+    const incoming = makePayload({ view: "list" });
+    expect(isPayloadAnImprovement({ incoming, current: null, target })).toBe(true);
+  });
+
+  it("prefers a strictly newer generatedAtUtc", () => {
+    const current = makePayload({
+      view: "list",
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    const incoming = makePayload({
+      view: "list",
+      generatedAtUtc: "2026-05-04T12:10:00.000Z",
+    });
+    expect(isPayloadAnImprovement({ incoming, current, target })).toBe(true);
+  });
+
+  it("rejects a strictly older generatedAtUtc", () => {
+    const current = makePayload({
+      view: "list",
+      generatedAtUtc: "2026-05-04T12:10:00.000Z",
+    });
+    const incoming = makePayload({
+      view: "list",
+      generatedAtUtc: "2026-05-04T12:00:00.000Z",
+    });
+    expect(isPayloadAnImprovement({ incoming, current, target })).toBe(false);
+  });
+
+  it("prefers same-age incoming that matches URL target when current does not", () => {
+    // Simulates: user navigated to a new week via router.push, the
+    // existing slot still holds the previous week's payload, and the
+    // fresh fetch for the new week arrives same-age (same snapshot).
+    const current = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
     const incoming = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
-    const baseline = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
-    expect(shouldPreferIncomingForTargetMatch({ incoming, baseline, target })).toBe(true);
+    expect(isPayloadAnImprovement({ incoming, current, target })).toBe(true);
   });
 
-  it("does not switch when both payloads match the target", () => {
-    const incoming = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
-    const baseline = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
-    expect(shouldPreferIncomingForTargetMatch({ incoming, baseline, target })).toBe(false);
-  });
-
-  it("does not switch when neither payload matches the target", () => {
-    const incoming = makePayload({ view: "list", weekStart: "2026-06-01", monthKey: "2026-06" });
-    const baseline = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
-    expect(shouldPreferIncomingForTargetMatch({ incoming, baseline, target })).toBe(false);
-  });
-
-  it("does not switch when only baseline matches the target", () => {
+  it("keeps current when only current matches the target (defensive)", () => {
+    const current = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
     const incoming = makePayload({ view: "list", weekStart: "2026-05-11", monthKey: "2026-05" });
-    const baseline = makePayload({ view: "list", weekStart: "2026-05-04", monthKey: "2026-05" });
-    expect(shouldPreferIncomingForTargetMatch({ incoming, baseline, target })).toBe(false);
+    expect(isPayloadAnImprovement({ incoming, current, target })).toBe(false);
+  });
+
+  it("prefers same-age incoming with more wide-window data (stage-1→stage-2 upgrade)", () => {
+    const current = makePayload({ view: "list", weekWindowCount: 0 });
+    const incoming = makePayload({ view: "list", weekWindowCount: 9 });
+    expect(isPayloadAnImprovement({ incoming, current, target })).toBe(true);
+  });
+
+  it("keeps current when same-age incoming has no advantage (no flicker)", () => {
+    const current = makePayload({ view: "list", weekWindowCount: 9 });
+    const incoming = makePayload({ view: "list", weekWindowCount: 9 });
+    expect(isPayloadAnImprovement({ incoming, current, target })).toBe(false);
   });
 });
