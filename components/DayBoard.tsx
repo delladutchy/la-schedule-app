@@ -499,28 +499,55 @@ export function DayBoard({
     const summary = parseLaJobSummary(detail.summary);
     const parsedDescription = parseGigDescription(detail.description);
     const startMonthKey = DateTime.fromISO(startDate, { zone: "utc" }).toFormat("yyyy-LL");
+    const editBookingMode = resolveBookingModeFromDetail(detail, isMikeEditor, overtureCalendarId);
+
+    const globalCallTimeOption = parsedDescription.callTime && isCallTimeOption(parsedDescription.callTime)
+      ? parsedDescription.callTime
+      : parsedDescription.callTime
+        ? "Other"
+        : "TBD";
+    const globalCallTimeOther = parsedDescription.callTime && !isCallTimeOption(parsedDescription.callTime)
+      ? parsedDescription.callTime
+      : "";
+
+    const rehydratedDayOverrides: BookingDayOverrideMap = {};
+    if (parsedDescription.dayDetails) {
+      for (const [date, dayDetail] of Object.entries(parsedDescription.dayDetails)) {
+        const savedTime = dayDetail.startTime?.trim() ?? "";
+        const savedNotes = dayDetail.notes?.trim() ?? "";
+        const dayCallTimeOption = savedTime && isCallTimeOption(savedTime)
+          ? savedTime
+          : savedTime
+            ? "Other"
+            : "TBD";
+        const dayCallTimeOther = savedTime && !isCallTimeOption(savedTime) ? savedTime : "";
+        const differsFromGlobal = dayCallTimeOption !== globalCallTimeOption
+          || dayCallTimeOther !== globalCallTimeOther;
+        if (differsFromGlobal || savedNotes) {
+          rehydratedDayOverrides[date] = {
+            callTimeOption: dayCallTimeOption,
+            callTimeOther: dayCallTimeOther,
+            notes: savedNotes,
+          };
+        }
+      }
+    }
 
     setActiveBookingPanel({
       mode: "edit",
       eventId: detail.eventId,
       date: startDate,
-      bookingMode: resolveBookingModeFromDetail(detail, isMikeEditor, overtureCalendarId),
+      bookingMode: editBookingMode,
     });
-    setBookingLaNumber(summary.jobNumber?.replace(/\D/g, "") ?? "");
-    setBookingJobName(summary.jobName);
+    setBookingLaNumber(editBookingMode === "overture" ? "" : (summary.jobNumber?.replace(/\D/g, "") ?? ""));
+    setBookingJobName(editBookingMode === "overture" ? (parsedDescription.jobTitle?.trim() ?? "") : summary.jobName);
     setBookingEndDate(endDate);
     setBookingPickerMonthKey(startMonthKey);
     setBookingPickerExpanded(false);
-    setBookingCallTimeOption(parsedDescription.callTime && isCallTimeOption(parsedDescription.callTime)
-      ? parsedDescription.callTime
-      : parsedDescription.callTime
-        ? "Other"
-        : "TBD");
-    setBookingCallTimeOther(parsedDescription.callTime && !isCallTimeOption(parsedDescription.callTime)
-      ? parsedDescription.callTime
-      : "");
+    setBookingCallTimeOption(globalCallTimeOption);
+    setBookingCallTimeOther(globalCallTimeOther);
     setBookingNotes(parsedDescription.jobNotes ?? "");
-    setBookingDayOverrides({});
+    setBookingDayOverrides(rehydratedDayOverrides);
     setBookingExistingDescriptionRaw(detail.description ?? "");
     setBookingError(null);
     setConfirmDeleteEventId(null);
@@ -640,13 +667,17 @@ export function DayBoard({
           overrides: dailyOverrides,
         })
       : undefined;
+    const overtureJobTitle = activeBookingPanel.bookingMode === "overture" && bookingJobName.trim()
+      ? bookingJobName.trim()
+      : undefined;
     const description = activeBookingPanel.mode === "edit"
       ? mergeGigDescriptionWithDailyDetailsBlock(bookingExistingDescriptionRaw, {
           callTime,
           jobNotes: bookingNotes,
           dayDetails,
+          jobTitle: overtureJobTitle,
         })
-      : buildGigDescription(callTime, bookingNotes, dayDetails);
+      : buildGigDescription(callTime, bookingNotes, dayDetails, overtureJobTitle);
 
     try {
       const endpoint = activeBookingPanel.mode === "edit"
@@ -969,6 +1000,10 @@ export function DayBoard({
   })();
   const activeDetailJobTitle = (() => {
     if (!activePrimaryDetail || !activeDetailPanel) return null;
+    if (activeDetailIsOverture) {
+      if (!activePrimaryDetailCanViewNotes) return null;
+      return parseGigDescription(activePrimaryDetail.description).jobTitle?.trim() || null;
+    }
     const t = stripJobPrefix(activePrimaryDetail.summary, activeDetailPanel.headerJobNumber);
     return t && t.toLowerCase() !== activeDetailPanel.header.toLowerCase() ? t : null;
   })();
@@ -1305,19 +1340,11 @@ export function DayBoard({
                 ) : activeSelectedDate ? (
                   <p className="board-day-modal-event-date">{formatCompactDate(activeSelectedDate)}</p>
                 ) : null}
-                {activeDetailIsMultiDay && activeSelectedDate ? (
-                  <p className="board-day-modal-event-meta">
-                    {formatCompactDate(activeSelectedDate)}
-                    {activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.selectedStartTime
-                      ? ` · ${activeSelectedDayMeta.selectedStartTime}`
-                      : ""}
-                  </p>
-                ) : null}
                 {!activeDetailIsMultiDay && activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.selectedStartTime ? (
                   <p className="board-day-modal-event-meta">
                     {activeSelectedDayMeta.selectedStartTime}
                   </p>
-                ) : activePrimaryDetail.timeRangeLabel ? (
+                ) : !activeDetailIsMultiDay && activePrimaryDetail.timeRangeLabel ? (
                   <p className="board-day-modal-event-meta">
                     {activePrimaryDetail.timeRangeLabel}
                   </p>
@@ -1327,28 +1354,26 @@ export function DayBoard({
                     {activePrimaryDetail.dateRangeLabel}
                   </p>
                 ) : null}
-                {activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.selectedDayNotes ? (
+                {!activeDetailIsMultiDay && activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.selectedDayNotes ? (
                   <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
                     {activeSelectedDayMeta.selectedDayNotes}
                   </p>
                 ) : null}
                 {activeDetailIsMultiDay && activeDetailDayRows.length > 0 ? (
                   <ul className="board-day-modal-day-breakdown">
-                    {activeDetailDayRows
-                      .filter((row) => row.date !== activeSelectedDate)
-                      .map((row) => (
-                        <li key={row.date}>
-                          <p className="board-day-modal-event-meta">
-                            {formatCompactDate(row.date)}
-                            {row.startTime ? ` · ${row.startTime}` : ""}
+                    {activeDetailDayRows.map((row) => (
+                      <li key={row.date}>
+                        <p className="board-day-modal-day-name">{formatCompactDate(row.date)}</p>
+                        {row.startTime ? (
+                          <p className="board-day-modal-event-meta">{row.startTime}</p>
+                        ) : null}
+                        {row.dayNotes ? (
+                          <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
+                            {row.dayNotes}
                           </p>
-                          {row.dayNotes ? (
-                            <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
-                              {row.dayNotes}
-                            </p>
-                          ) : null}
-                        </li>
-                      ))}
+                        ) : null}
+                      </li>
+                    ))}
                   </ul>
                 ) : null}
                 {activePrimaryDetailCanViewNotes && activeDetailOverallNotes ? (
@@ -1504,17 +1529,37 @@ export function DayBoard({
                 </div>
               ) : null}
               {isOvertureBookingMode ? (
-                <p className="board-day-modal-event-meta board-day-modal-overture-brand board-day-modal-overture-brand--booking">
-                  <img
-                    src="/brand/overture-logo.png"
-                    alt="Overture"
-                    width={150}
-                    height={44}
-                    fetchPriority="high"
-                    decoding="async"
-                    className="board-day-modal-overture-logo board-day-modal-overture-logo--booking"
+                <>
+                  <p className="board-day-modal-event-meta board-day-modal-overture-brand board-day-modal-overture-brand--booking">
+                    <img
+                      src="/brand/overture-logo.png"
+                      alt="Overture"
+                      width={150}
+                      height={44}
+                      fetchPriority="high"
+                      decoding="async"
+                      className="board-day-modal-overture-logo board-day-modal-overture-logo--booking"
+                    />
+                  </p>
+                  <label className="month-booking-label" htmlFor="week-booking-overture-title">
+                    Job Title
+                  </label>
+                  <input
+                    id="week-booking-overture-title"
+                    name="overture-job-title"
+                    className="month-booking-input"
+                    autoComplete="off"
+                    autoCapitalize="words"
+                    value={bookingJobName}
+                    onChange={(event) => {
+                      setBookingJobName(event.target.value);
+                      if (bookingError) setBookingError(null);
+                    }}
+                    placeholder="Event name"
+                    maxLength={200}
+                    disabled={bookingModalIsLocked}
                   />
-                </p>
+                </>
               ) : (
                 <>
                   <label

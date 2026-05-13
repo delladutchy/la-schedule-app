@@ -124,6 +124,7 @@ export function parseLaJobSummary(summaryRaw: string): ParsedGigSummary {
 
 export interface ParsedGigDescription {
   callTime?: string;
+  jobTitle?: string;
   jobNotes?: string;
   dayDetails?: Record<string, {
     startTime?: string;
@@ -275,6 +276,7 @@ export function parseGigDescription(descriptionRaw?: string): ParsedGigDescripti
     try {
       const parsedJson = JSON.parse(block.blockPayloadRaw) as {
         callTime?: unknown;
+        jobTitle?: unknown;
         jobNotes?: unknown;
         dayDetails?: unknown;
       };
@@ -294,9 +296,11 @@ export function parseGigDescription(descriptionRaw?: string): ParsedGigDescripti
         }
       }
       const callTime = typeof parsedJson.callTime === "string" ? parsedJson.callTime.trim() : "";
+      const jobTitle = typeof parsedJson.jobTitle === "string" ? parsedJson.jobTitle.trim() : "";
       const jobNotes = typeof parsedJson.jobNotes === "string" ? parsedJson.jobNotes.trim() : "";
       return {
         ...(callTime ? { callTime } : {}),
+        ...(jobTitle ? { jobTitle } : {}),
         ...(jobNotes ? { jobNotes } : {}),
         ...(Object.keys(dayDetails).length > 0 ? { dayDetails } : {}),
       };
@@ -335,6 +339,7 @@ export interface GigDayDetailOverride {
 
 export interface GigDailyDetailsMetadata {
   callTime?: string;
+  jobTitle?: string;
   jobNotes?: string;
   dayDetails?: GigDayDetail[];
 }
@@ -401,8 +406,10 @@ export function buildGigDescription(
   callTimeRaw?: string,
   jobNotesRaw?: string,
   dayDetails: GigDayDetail[] = [],
+  jobTitleRaw?: string,
 ): string | undefined {
   const callTime = callTimeRaw?.trim();
+  const jobTitle = jobTitleRaw?.trim();
   const jobNotes = jobNotesRaw?.trim();
   const normalizedDayDetails = dayDetails
     .map((detail) => ({
@@ -426,6 +433,7 @@ export function buildGigDescription(
 
   const payload = {
     ...(callTime ? { callTime } : {}),
+    ...(jobTitle ? { jobTitle } : {}),
     ...(jobNotes ? { jobNotes } : {}),
     ...(Object.keys(normalizedDetailsObject).length > 0 ? { dayDetails: normalizedDetailsObject } : {}),
   };
@@ -446,6 +454,7 @@ export function mergeGigDescriptionWithDailyDetailsBlock(
     metadata.callTime,
     metadata.jobNotes,
     metadata.dayDetails ?? [],
+    metadata.jobTitle,
   );
   const parsed = parseDescriptionBlock(existingDescription);
 

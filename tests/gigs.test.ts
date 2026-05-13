@@ -213,6 +213,34 @@ describe("parseGigDescription/buildGigDescription", () => {
     const parsed = parseGigDescription(malformed);
     expect(parsed.jobNotes).toContain(APP_DAILY_DETAILS_BLOCK_START);
   });
+
+  it("round-trips jobTitle for Overture events", () => {
+    const built = buildGigDescription("TBD", undefined, [], "Fancy Gig Name");
+    expect(built).toContain(APP_DAILY_DETAILS_BLOCK_START);
+    const parsed = parseGigDescription(built);
+    expect(parsed.jobTitle).toBe("Fancy Gig Name");
+    expect(parsed.callTime).toBe("TBD");
+    expect(parsed.jobNotes).toBeUndefined();
+  });
+
+  it("omits jobTitle from payload when not provided", () => {
+    const built = buildGigDescription("8:00 AM", "Notes only");
+    const parsed = parseGigDescription(built);
+    expect(parsed.jobTitle).toBeUndefined();
+  });
+
+  it("round-trips jobTitle alongside dayDetails", () => {
+    const built = buildGigDescription(
+      "TBD",
+      "Overall notes",
+      [{ date: "2026-06-01", startTime: "7:00 AM", notes: "Load-in early" }],
+      "My Event",
+    );
+    const parsed = parseGigDescription(built);
+    expect(parsed.jobTitle).toBe("My Event");
+    expect(parsed.dayDetails?.["2026-06-01"]?.startTime).toBe("7:00 AM");
+    expect(parsed.jobNotes).toBe("Overall notes");
+  });
 });
 
 describe("mergeGigDescriptionWithDailyDetailsBlock", () => {
@@ -267,6 +295,21 @@ describe("mergeGigDescriptionWithDailyDetailsBlock", () => {
     expect(merged?.indexOf(APP_DAILY_DETAILS_BLOCK_START)).toBeLessThan(
       merged?.lastIndexOf(APP_DAILY_DETAILS_BLOCK_START) ?? -1,
     );
+  });
+
+  it("preserves jobTitle through merge round-trip", () => {
+    const original = [
+      APP_DAILY_DETAILS_BLOCK_START,
+      JSON.stringify({ callTime: "TBD", jobTitle: "Old Title" }, null, 2),
+      APP_DAILY_DETAILS_BLOCK_END,
+    ].join("\n");
+    const merged = mergeGigDescriptionWithDailyDetailsBlock(original, {
+      callTime: "8:00 AM",
+      jobTitle: "New Title",
+    });
+    const parsed = parseGigDescription(merged ?? "");
+    expect(parsed.jobTitle).toBe("New Title");
+    expect(parsed.callTime).toBe("8:00 AM");
   });
 });
 

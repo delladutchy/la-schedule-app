@@ -1141,6 +1141,14 @@ body {
   padding-top: 0;
 }
 
+.board-day-modal-day-name {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+}
+
 .board-day-modal-event-title {
   margin: 0;
   font-size: 12px;
