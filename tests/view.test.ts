@@ -16,6 +16,7 @@ import {
   resolveMonthNavigation,
   buildWeekConnectorParts,
   connectorKeyForDay,
+  buildWeekRenderRows,
   summarizeBookedDayLabel,
 } from "@/lib/view";
 
@@ -526,6 +527,213 @@ describe("trimWeekRowsForScheduleList", () => {
 
     expect(out[0]?.days).toHaveLength(7);
     expect(out[0]?.days[0]?.date).toBe("2026-04-27");
+  });
+});
+
+describe("buildWeekRenderRows", () => {
+  const TZ = "America/New_York";
+
+  it("groups consecutive booked days when the same LA job number appears in separate visible blocks", () => {
+    const snap = makeSnapshot({
+      busy: [
+        { startUtc: "2026-05-19T04:00:00.000Z", endUtc: "2026-05-22T04:00:00.000Z" },
+        { startUtc: "2026-05-22T04:00:00.000Z", endUtc: "2026-05-24T04:00:00.000Z" },
+      ],
+      namedEvents: [
+        {
+          startUtc: "2026-05-19T04:00:00.000Z",
+          endUtc: "2026-05-22T04:00:00.000Z",
+          summary: "LA 70924 Wilmington Flower Market",
+          eventId: "evt-la70924-a",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+        {
+          startUtc: "2026-05-22T04:00:00.000Z",
+          endUtc: "2026-05-24T04:00:00.000Z",
+          summary: "LA#70924 Wilmington Flower Market",
+          eventId: "evt-la70924-b",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+      ],
+    });
+    const weeks = buildDayBoard({
+      snapshot: snap,
+      startDate: "2026-05-18",
+      weeks: 1,
+      timezone: TZ,
+      workdayStartHour: 9,
+      workdayEndHour: 18,
+      todayKey: "2026-05-18",
+    });
+
+    const firstWeek = weeks[0];
+    expect(firstWeek).toBeTruthy();
+
+    const rows = buildWeekRenderRows({
+      week: firstWeek as NonNullable<typeof firstWeek>,
+      timezone: "utc",
+      groupSameJobNumbers: true,
+    });
+    const grouped = rows.find((row) => row.kind === "job-group");
+    expect(grouped).toBeTruthy();
+    expect(grouped?.jobNumber).toBe("LA#70924");
+    expect(grouped?.dateRangeLabel).toBe("May 19–23");
+    expect(grouped?.days.map((day) => day.day.date)).toEqual([
+      "2026-05-19",
+      "2026-05-20",
+      "2026-05-21",
+      "2026-05-22",
+      "2026-05-23",
+    ]);
+    const groupedEventIds = grouped?.days.flatMap((day) => day.bookedLabel.details.map((detail) => detail.eventId));
+    expect(groupedEventIds).toContain("evt-la70924-a");
+    expect(groupedEventIds).toContain("evt-la70924-b");
+  });
+
+  it("does not group different LA job numbers", () => {
+    const snap = makeSnapshot({
+      busy: [
+        { startUtc: "2026-05-19T04:00:00.000Z", endUtc: "2026-05-20T04:00:00.000Z" },
+        { startUtc: "2026-05-20T04:00:00.000Z", endUtc: "2026-05-21T04:00:00.000Z" },
+      ],
+      namedEvents: [
+        {
+          startUtc: "2026-05-19T04:00:00.000Z",
+          endUtc: "2026-05-20T04:00:00.000Z",
+          summary: "LA#10001 Job A",
+          eventId: "evt-la10001",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+        {
+          startUtc: "2026-05-20T04:00:00.000Z",
+          endUtc: "2026-05-21T04:00:00.000Z",
+          summary: "LA#10002 Job B",
+          eventId: "evt-la10002",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+      ],
+    });
+    const weeks = buildDayBoard({
+      snapshot: snap,
+      startDate: "2026-05-18",
+      weeks: 1,
+      timezone: TZ,
+      workdayStartHour: 9,
+      workdayEndHour: 18,
+      todayKey: "2026-05-18",
+    });
+
+    const rows = buildWeekRenderRows({
+      week: weeks[0] as NonNullable<(typeof weeks)[number]>,
+      timezone: "utc",
+      groupSameJobNumbers: true,
+    });
+    expect(rows.every((row) => row.kind === "day")).toBe(true);
+  });
+
+  it("keeps single-day LA jobs as normal day rows", () => {
+    const snap = makeSnapshot({
+      busy: [
+        { startUtc: "2026-05-21T04:00:00.000Z", endUtc: "2026-05-22T04:00:00.000Z" },
+      ],
+      namedEvents: [
+        {
+          startUtc: "2026-05-21T04:00:00.000Z",
+          endUtc: "2026-05-22T04:00:00.000Z",
+          summary: "LA#55555 One Day Job",
+          eventId: "evt-la55555",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+      ],
+    });
+    const weeks = buildDayBoard({
+      snapshot: snap,
+      startDate: "2026-05-18",
+      weeks: 1,
+      timezone: TZ,
+      workdayStartHour: 9,
+      workdayEndHour: 18,
+      todayKey: "2026-05-18",
+    });
+    const rows = buildWeekRenderRows({
+      week: weeks[0] as NonNullable<(typeof weeks)[number]>,
+      timezone: "utc",
+      groupSameJobNumbers: true,
+    });
+    const groupedCount = rows.filter((row) => row.kind === "job-group").length;
+    expect(groupedCount).toBe(0);
+    const bookedDayRows = rows
+      .filter((row): row is Extract<(typeof rows)[number], { kind: "day" }> => row.kind === "day")
+      .filter((row) => row.day.status === "booked");
+    expect(bookedDayRows).toHaveLength(1);
+  });
+
+  it("preserves available days as standalone available rows", () => {
+    const weeks = buildDayBoard({
+      snapshot: makeSnapshot(),
+      startDate: "2026-05-18",
+      weeks: 1,
+      timezone: TZ,
+      workdayStartHour: 9,
+      workdayEndHour: 18,
+      todayKey: "2026-05-18",
+    });
+    const rows = buildWeekRenderRows({
+      week: weeks[0] as NonNullable<(typeof weeks)[number]>,
+      timezone: "utc",
+      groupSameJobNumbers: true,
+    });
+    const availableDayRows = rows
+      .filter((row): row is Extract<(typeof rows)[number], { kind: "day" }> => row.kind === "day")
+      .filter((row) => row.day.status === "available");
+    expect(availableDayRows).toHaveLength(7);
+  });
+
+  it("is reversible: disabling grouping returns only day rows", () => {
+    const snap = makeSnapshot({
+      busy: [
+        { startUtc: "2026-05-19T04:00:00.000Z", endUtc: "2026-05-22T04:00:00.000Z" },
+        { startUtc: "2026-05-22T04:00:00.000Z", endUtc: "2026-05-24T04:00:00.000Z" },
+      ],
+      namedEvents: [
+        {
+          startUtc: "2026-05-19T04:00:00.000Z",
+          endUtc: "2026-05-22T04:00:00.000Z",
+          summary: "LA#70924 Job",
+          eventId: "evt-la70924-a",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+        {
+          startUtc: "2026-05-22T04:00:00.000Z",
+          endUtc: "2026-05-24T04:00:00.000Z",
+          summary: "LA#70924 Job",
+          eventId: "evt-la70924-b",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+      ],
+    });
+    const weeks = buildDayBoard({
+      snapshot: snap,
+      startDate: "2026-05-18",
+      weeks: 1,
+      timezone: TZ,
+      workdayStartHour: 9,
+      workdayEndHour: 18,
+      todayKey: "2026-05-18",
+    });
+    const rows = buildWeekRenderRows({
+      week: weeks[0] as NonNullable<(typeof weeks)[number]>,
+      timezone: "utc",
+      groupSameJobNumbers: false,
+    });
+    expect(rows.every((row) => row.kind === "day")).toBe(true);
   });
 });
 

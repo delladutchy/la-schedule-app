@@ -4,10 +4,8 @@ import { useEffect, useRef, useState, type TouchEventHandler } from "react";
 import { useRouter } from "next/navigation";
 import { DateTime } from "luxon";
 import {
-  buildWeekConnectorParts,
-  connectorKeyForDay,
-  summarizeBookedDayLabel,
-  type DayConnectorPart,
+  buildWeekRenderRows,
+  type BookedDaySummary,
   type WeekGroup,
 } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
@@ -44,6 +42,8 @@ const STAGED_LOADING_COPY: ReadonlyArray<{ delay: number; text: string }> = [
   { delay: 5000, text: "Google Calendar is taking a little longer…" },
 ];
 
+const GROUP_SAME_JOB_NUMBERS_ENABLED = process.env.NEXT_PUBLIC_GROUP_SAME_JOB_NUMBERS === "true";
+
 function useStagedLoadingCopy(isActive: boolean): string {
   const [stage, setStage] = useState(0);
 
@@ -64,7 +64,7 @@ function useStagedLoadingCopy(isActive: boolean): string {
   return STAGED_LOADING_COPY[stage]?.text ?? STAGED_LOADING_COPY[0]!.text;
 }
 
-type BookedLabel = ReturnType<typeof summarizeBookedDayLabel>;
+type BookedLabel = BookedDaySummary;
 
 interface ActiveDetailPanel {
   rowKey: string;
@@ -611,22 +611,52 @@ export function DayBoard({
     </div>
   ) : null;
   const hasRows = visibleWeeks.some((wk) => wk.days.length > 0);
-  const weekRows = visibleWeeks.map((wk) => {
-    const dayRows = wk.days.map((d) => {
-      const bookedLabel = d.status === "booked"
-        ? summarizeBookedDayLabel(d.eventNames, d.eventDetails, d.bookedDisplay)
-        : null;
-      const connectorKey = connectorKeyForDay(d);
-      return { day: d, bookedLabel, connectorKey };
+
+  const openDetailPanelForRow = (rowKey: string, bookedLabel: BookedLabel, date: string): void => {
+    onDateFocus?.(date);
+    closeBookingPanel();
+    setConfirmDeleteEventId(null);
+    setDeleteError(null);
+    if (activeDetailPanel?.rowKey === rowKey) {
+      setActiveDetailPanel(null);
+      return;
+    }
+
+    const header = bookedLabel.jobNumber
+      ?? bookedLabel.details[0]?.summary
+      ?? bookedLabel.label
+      ?? "Busy";
+
+    setActiveDetailPanel({
+      rowKey,
+      header,
+      ...(bookedLabel.jobNumber
+        ? { headerJobNumber: bookedLabel.jobNumber }
+        : {}),
+      details: bookedLabel.details,
     });
-    const connectorKeys = dayRows.map((row) => row.connectorKey);
-    return {
-      wk,
-      dayRows,
-      connectorKeys,
-    };
-  });
-  const weekConnectorParts = buildWeekConnectorParts(weekRows.map((week) => week.connectorKeys));
+  };
+
+  const buildGroupedDayInlineMeta = (bookedLabel: BookedLabel): string | null => {
+    const timeLabels = [...new Set(
+      bookedLabel.details
+        .map((detail) => detail.timeRangeLabel?.trim())
+        .filter((label): label is string => !!label),
+    )];
+    if (timeLabels.length === 0) return null;
+    const [first, ...rest] = timeLabels;
+    if (!first) return null;
+    return rest.length > 0 ? `${first} +${rest.length}` : first;
+  };
+
+  const weekRows = visibleWeeks.map((wk) => ({
+    wk,
+    rows: buildWeekRenderRows({
+      week: wk,
+      timezone: "utc",
+      groupSameJobNumbers: GROUP_SAME_JOB_NUMBERS_ENABLED,
+    }),
+  }));
   const editorModeActive = !!(editorToken || resolvedEditorId);
   const isOvertureBookingMode = activeBookingPanel?.bookingMode === "overture";
   const showBookingModeSelector = !!(
@@ -790,7 +820,7 @@ export function DayBoard({
       onTouchCancel={onTouchCancel}
     >
       {weekendMarker}
-      {weekRows.map((week, weekIndex) => (
+      {weekRows.map((week) => (
         <section
           key={week.wk.weekOf}
           className="board-week"
@@ -798,7 +828,69 @@ export function DayBoard({
         >
           <h2 className="board-week-label period-label-animate">{week.wk.label}</h2>
           <ul className="board-days">
-            {week.dayRows.map((row, idx) => {
+            {week.rows.map((row, rowIndex) => {
+              if (row.kind === "job-group") {
+                const groupKey = `${week.wk.weekOf}-${row.jobNumber}-${row.days[0]?.day.date ?? rowIndex}`;
+                return (
+                  <li key={groupKey} className="board-day-group">
+                    <div className="board-day-group-header">
+                      <span className="board-day-group-job">{row.jobNumber}</span>
+                      <span className="board-day-group-range">{row.dateRangeLabel}</span>
+                    </div>
+                    <ul className="board-day-group-days">
+                      {row.days.map((groupDay, groupDayIndex) => {
+                        const d = groupDay.day;
+                        const bookedLabel = groupDay.bookedLabel;
+                        const rowKey = `${week.wk.weekOf}-${d.date}`;
+                        const todayDayNumber = String(Number(d.date.slice(8, 10)));
+                        const todayLabelPrefix =
+                          d.isToday && d.label.endsWith(todayDayNumber)
+                            ? d.label.slice(0, -todayDayNumber.length)
+                            : null;
+                        const inlineMeta = buildGroupedDayInlineMeta(bookedLabel);
+                        return (
+                          <li
+                            key={`${d.date}-${groupDayIndex}`}
+                            className={`board-day board-day--group-child booked${d.isToday ? " today" : ""}${d.isToday && todayPulseActive ? " today-pulse" : ""}`}
+                            tabIndex={0}
+                            onClick={() => {
+                              openDetailPanelForRow(rowKey, bookedLabel, d.date);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openDetailPanelForRow(rowKey, bookedLabel, d.date);
+                              }
+                            }}
+                          >
+                            <span className="board-day-label">
+                              {todayLabelPrefix ? (
+                                <span className="board-day-label-today">
+                                  <span>{todayLabelPrefix}</span>
+                                  <span className="board-day-today" aria-label="Today">
+                                    {todayDayNumber}
+                                  </span>
+                                </span>
+                              ) : (
+                                d.label
+                              )}
+                            </span>
+                            <span className="board-day-right">
+                              {inlineMeta ? (
+                                <span className="board-day-group-meta">{inlineMeta}</span>
+                              ) : (
+                                <span className="board-day-group-meta board-day-group-meta--muted">Booked</span>
+                              )}
+                            </span>
+                            <span className="board-day-connector board-day-connector--none" aria-hidden="true" />
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </li>
+                );
+              }
+
               const d = row.day;
               const canBookRow = editorModeActive && d.status === "available";
               const rowKey = `${week.wk.weekOf}-${d.date}`;
@@ -807,7 +899,8 @@ export function DayBoard({
                 d.isToday && d.label.endsWith(todayDayNumber)
                   ? d.label.slice(0, -todayDayNumber.length)
                   : null;
-              const connectorPart: DayConnectorPart = weekConnectorParts[weekIndex]?.[idx] ?? "none";
+              const connectorPart = row.connectorPart;
+              const bookedLabel = row.bookedLabel;
               return (
                 <li
                   key={d.date}
@@ -827,7 +920,7 @@ export function DayBoard({
                         closeDetailPanel();
                         openBookingPanel(d.date);
                       }
-                      }
+                    }
                     : undefined}
                 >
                   <span className="board-day-label">
@@ -845,43 +938,24 @@ export function DayBoard({
                   <span className="board-day-right">
                     {d.status === "available" ? (
                       <span className="board-day-badge available">Available</span>
-                    ) : row.bookedLabel?.isPrivateUnavailable ? (
+                    ) : bookedLabel?.isPrivateUnavailable ? (
                       <span className="board-day-unavailable-text">Unavailable</span>
-                    ) : (
+                    ) : bookedLabel ? (
                       <button
                         type="button"
                         className="board-day-badge booked board-day-pill-button"
-                        title={row.bookedLabel?.title}
+                        title={bookedLabel.title}
                         onClick={() => {
-                          onDateFocus?.(d.date);
-                          closeBookingPanel();
-                          setConfirmDeleteEventId(null);
-                          setDeleteError(null);
-                          if (activeDetailPanel?.rowKey === rowKey) {
-                            setActiveDetailPanel(null);
-                            return;
-                          }
-
-                          const header = row.bookedLabel?.jobNumber
-                            ?? row.bookedLabel?.details[0]?.summary
-                            ?? row.bookedLabel?.label
-                            ?? "Busy";
-
-                          setActiveDetailPanel({
-                            rowKey,
-                            header,
-                            ...(row.bookedLabel?.jobNumber
-                              ? { headerJobNumber: row.bookedLabel.jobNumber }
-                              : {}),
-                            details: row.bookedLabel?.details ?? [],
-                          });
+                          openDetailPanelForRow(rowKey, bookedLabel, d.date);
                         }}
                         aria-haspopup="dialog"
                         aria-expanded={activeDetailPanel?.rowKey === rowKey}
                         aria-controls="week-job-detail-modal"
                       >
-                        {row.bookedLabel?.label ?? "Busy"}
+                        {bookedLabel.label ?? "Busy"}
                       </button>
+                    ) : (
+                      <span className="board-day-badge booked">Busy</span>
                     )}
                   </span>
                   <span
