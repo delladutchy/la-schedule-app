@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { DayStatus, Snapshot } from "@/lib/types";
-import { buildBookedDayInlineMetaForDate, filterWeekRowsByWeekendVisibility } from "@/components/DayBoard";
+import {
+  buildBookedDayInlineMetaForDate,
+  buildWeekBookedBadgeDisplay,
+  filterWeekRowsByWeekendVisibility,
+} from "@/components/DayBoard";
 import {
   filterMonthWeeksForVisibleCurrentMonthDays,
   clipBarToVisibleDayIndexes,
@@ -774,6 +778,71 @@ describe("buildBookedDayInlineMetaForDate", () => {
       "details",
     );
     expect(buildBookedDayInlineMetaForDate(booked, "2026-05-28")).toBeNull();
+  });
+});
+
+describe("buildWeekBookedBadgeDisplay", () => {
+  it("shows job label only on first day of a connected multi-day range", () => {
+    const booked = summarizeBookedDayLabel(
+      ["LA#71761 — Test Job"],
+      [{
+        summary: "LA#71761 — Test Job",
+        startUtc: "2026-05-28T04:00:00.000Z",
+        endUtc: "2026-05-31T04:00:00.000Z",
+        dateRangeLabel: "May 28–30",
+        description: [
+          "Call Time: 8:00 AM",
+          "Daily Details:",
+          "- 2026-05-28 | Start: 8:00 AM",
+          "- 2026-05-29 | Start: 9:00 AM",
+          "- 2026-05-30 | Start: 10:00 AM",
+        ].join("\n"),
+        displayMode: "details",
+      }],
+      "details",
+    );
+
+    expect(buildWeekBookedBadgeDisplay({
+      bookedLabel: booked,
+      date: "2026-05-28",
+      connectorPart: "start",
+    })).toEqual({
+      primary: "LA#71761",
+      secondary: "8:00 AM",
+    });
+
+    expect(buildWeekBookedBadgeDisplay({
+      bookedLabel: booked,
+      date: "2026-05-29",
+      connectorPart: "middle",
+    })).toEqual({
+      primary: "9:00 AM",
+      secondary: null,
+    });
+  });
+
+  it("keeps single-day badge text format unchanged", () => {
+    const booked = summarizeBookedDayLabel(
+      ["LA#11111 — Legacy Job"],
+      [{
+        summary: "LA#11111 — Legacy Job",
+        startUtc: "2026-05-28T04:00:00.000Z",
+        endUtc: "2026-05-29T04:00:00.000Z",
+        dateRangeLabel: "May 28",
+        description: "Call Time: 7:00 AM",
+        displayMode: "details",
+      }],
+      "details",
+    );
+
+    expect(buildWeekBookedBadgeDisplay({
+      bookedLabel: booked,
+      date: "2026-05-28",
+      connectorPart: "none",
+    })).toEqual({
+      primary: "LA#11111 7:00 AM",
+      secondary: null,
+    });
   });
 });
 

@@ -1030,6 +1030,19 @@ body {
   outline-offset: 2px;
 }
 
+.board-day-pill-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.2;
+}
+
+.board-day-pill-sub {
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .board-day-modal-backdrop {
   position: fixed;
   inset: 0;
