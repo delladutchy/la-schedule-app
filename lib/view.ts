@@ -730,6 +730,30 @@ export function summarizeBookedDayLabel(
   };
 }
 
+export type BookedDaySummary = ReturnType<typeof summarizeBookedDayLabel>;
+
+export interface WeekDayRenderRow {
+  kind: "day";
+  day: DayStatus;
+  bookedLabel: BookedDaySummary | null;
+  connectorKey: string | null;
+  connectorPart: DayConnectorPart;
+}
+
+export interface WeekGroupedJobDay {
+  day: DayStatus;
+  bookedLabel: BookedDaySummary;
+}
+
+export interface WeekGroupedJobRenderRow {
+  kind: "job-group";
+  jobNumber: string;
+  dateRangeLabel: string;
+  days: WeekGroupedJobDay[];
+}
+
+export type WeekRenderRow = WeekDayRenderRow | WeekGroupedJobRenderRow;
+
 interface BuildMonthEventBarsOptions {
   days: MonthDayStatus[];
   events: NamedEventInterval[];
@@ -920,6 +944,136 @@ export function buildWeekConnectorParts(
   connectorKeysByWeek: Array<Array<string | null>>,
 ): Array<Array<DayConnectorPart>> {
   return connectorKeysByWeek.map((keys) => keys.map((_, idx) => connectorPartForIndex(keys, idx)));
+}
+
+function normalizeLaJobNumberForGrouping(value: string): string | null {
+  const match = value.match(/\bLA\s*#?\s*(\d{3,})\b/i);
+  if (!match) return null;
+  return `LA#${match[1]}`;
+}
+
+function resolveGroupableJobNumber(bookedLabel: BookedDaySummary | null): string | null {
+  if (!bookedLabel || bookedLabel.isPrivateUnavailable) return null;
+  const normalizedHeader = bookedLabel.jobNumber
+    ? normalizeLaJobNumberForGrouping(bookedLabel.jobNumber)
+    : null;
+  if (!normalizedHeader) return null;
+
+  const details = bookedLabel.details;
+  if (details.length === 0) return null;
+
+  for (const detail of details) {
+    if ((detail.displayMode ?? "details") === "private") return null;
+    const normalizedDetail = normalizeLaJobNumberForGrouping(detail.jobNumber ?? detail.summary);
+    if (!normalizedDetail || normalizedDetail !== normalizedHeader) {
+      return null;
+    }
+  }
+
+  return normalizedHeader;
+}
+
+function formatGroupedWeekDateRange(
+  startDate: string,
+  endDate: string,
+  timezone: string,
+): string {
+  const start = DateTime.fromISO(startDate, { zone: timezone });
+  const end = DateTime.fromISO(endDate, { zone: timezone });
+  if (!start.isValid || !end.isValid || end < start) {
+    return `${startDate} – ${endDate}`;
+  }
+
+  if (start.hasSame(end, "day")) {
+    return start.toFormat("LLL d");
+  }
+  if (start.year === end.year && start.month === end.month) {
+    return `${start.toFormat("LLL d")}–${end.toFormat("d")}`;
+  }
+  if (start.year === end.year) {
+    return `${start.toFormat("LLL d")} – ${end.toFormat("LLL d")}`;
+  }
+  return `${start.toFormat("LLL d, yyyy")} – ${end.toFormat("LLL d, yyyy")}`;
+}
+
+export interface BuildWeekRenderRowsOptions {
+  week: WeekGroup;
+  timezone: string;
+  groupSameJobNumbers?: boolean;
+}
+
+/**
+ * Builds render rows for week/list view and optionally groups consecutive
+ * day rows that share one high-confidence LA job number identity.
+ */
+export function buildWeekRenderRows(opts: BuildWeekRenderRowsOptions): WeekRenderRow[] {
+  const baseRows: WeekDayRenderRow[] = opts.week.days.map((day) => {
+    const bookedLabel = day.status === "booked"
+      ? summarizeBookedDayLabel(day.eventNames, day.eventDetails, day.bookedDisplay)
+      : null;
+    const connectorKey = connectorKeyForDay(day);
+    return {
+      kind: "day",
+      day,
+      bookedLabel,
+      connectorKey,
+      connectorPart: "none",
+    };
+  });
+  const connectorParts = buildWeekConnectorParts([
+    baseRows.map((row) => row.connectorKey),
+  ])[0] ?? [];
+  for (let i = 0; i < baseRows.length; i += 1) {
+    const row = baseRows[i];
+    if (!row) continue;
+    row.connectorPart = connectorParts[i] ?? "none";
+  }
+
+  if (!opts.groupSameJobNumbers) return baseRows;
+
+  const groupedRows: WeekRenderRow[] = [];
+
+  for (let index = 0; index < baseRows.length; index += 1) {
+    const current = baseRows[index];
+    if (!current) continue;
+
+    const groupJobNumber = resolveGroupableJobNumber(current.bookedLabel);
+    if (!groupJobNumber) {
+      groupedRows.push(current);
+      continue;
+    }
+
+    const groupedDays: WeekGroupedJobDay[] = [];
+    let cursor = index;
+    while (cursor < baseRows.length) {
+      const candidate = baseRows[cursor];
+      if (!candidate || !candidate.bookedLabel) break;
+      const candidateJobNumber = resolveGroupableJobNumber(candidate.bookedLabel);
+      if (candidateJobNumber !== groupJobNumber) break;
+      groupedDays.push({
+        day: candidate.day,
+        bookedLabel: candidate.bookedLabel,
+      });
+      cursor += 1;
+    }
+
+    if (groupedDays.length < 2) {
+      groupedRows.push(current);
+      continue;
+    }
+
+    const startDate = groupedDays[0]?.day.date ?? current.day.date;
+    const endDate = groupedDays[groupedDays.length - 1]?.day.date ?? current.day.date;
+    groupedRows.push({
+      kind: "job-group",
+      jobNumber: groupJobNumber,
+      dateRangeLabel: formatGroupedWeekDateRange(startDate, endDate, opts.timezone),
+      days: groupedDays,
+    });
+    index = cursor - 1;
+  }
+
+  return groupedRows;
 }
 
 /**
