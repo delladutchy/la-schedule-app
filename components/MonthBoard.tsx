@@ -153,6 +153,10 @@ function formatShortDate(isoDate: string): string {
   return DateTime.fromISO(isoDate, { zone: "utc" }).toFormat("LLL d");
 }
 
+function formatDayAbbrev(isoDate: string): string {
+  return DateTime.fromISO(isoDate, { zone: "utc" }).toFormat("ccc");
+}
+
 interface MonthPopupDayDetailRow {
   date: string;
   startTime: string | null;
@@ -1293,7 +1297,8 @@ export function MonthBoard({
                   <ul className="board-day-modal-day-breakdown">
                     {activeDetailDayRows.map((row) => (
                       <li key={row.date}>
-                        <p className="board-day-modal-day-name">{formatCompactDate(row.date)}</p>
+                        <p className="board-day-modal-day-name">{formatDayAbbrev(row.date)}</p>
+                        <p className="board-day-modal-day-date">{formatShortDate(row.date)}</p>
                         {row.startTime ? (
                           <p className="board-day-modal-event-meta">{row.startTime}</p>
                         ) : null}
