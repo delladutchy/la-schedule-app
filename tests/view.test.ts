@@ -844,6 +844,34 @@ describe("buildWeekBookedBadgeDisplay", () => {
       secondary: null,
     });
   });
+
+  it("does not render generic Busy for a middle day inside the same connected LA span", () => {
+    const booked = summarizeBookedDayLabel(
+      ["LA#70924 — Test Job"],
+      [{
+        summary: "LA#70924 — Test Job",
+        startUtc: "2026-05-19T04:00:00.000Z",
+        endUtc: "2026-05-23T04:00:00.000Z",
+        dateRangeLabel: "May 19–22",
+        description: [
+          "Daily Details:",
+          "- 2026-05-19 | Start: 6:00 AM",
+          "- 2026-05-22 | Start: 7:00 AM",
+        ].join("\n"),
+        displayMode: "details",
+      }],
+      "details",
+    );
+
+    expect(buildWeekBookedBadgeDisplay({
+      bookedLabel: booked,
+      date: "2026-05-20",
+      connectorPart: "middle",
+    })).toEqual({
+      primary: "LA#70924",
+      secondary: null,
+    });
+  });
 });
 
 describe("buildMonthBoard", () => {

@@ -288,7 +288,7 @@ export function buildWeekBookedBadgeDisplay(opts: {
 
   if (opts.connectorPart === "middle" || opts.connectorPart === "end") {
     return {
-      primary: inlineMeta ?? "Busy",
+      primary: inlineMeta ?? (opts.bookedLabel.label ?? "Busy"),
       secondary: null,
     };
   }
