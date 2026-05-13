@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { DayStatus, Snapshot } from "@/lib/types";
-import { filterWeekRowsByWeekendVisibility } from "@/components/DayBoard";
+import { buildBookedDayInlineMetaForDate, filterWeekRowsByWeekendVisibility } from "@/components/DayBoard";
 import {
   filterMonthWeeksForVisibleCurrentMonthDays,
   clipBarToVisibleDayIndexes,
@@ -734,6 +734,46 @@ describe("buildWeekRenderRows", () => {
       groupSameJobNumbers: false,
     });
     expect(rows.every((row) => row.kind === "day")).toBe(true);
+  });
+});
+
+describe("buildBookedDayInlineMetaForDate", () => {
+  it("returns day-specific start time from daily details metadata", () => {
+    const booked = summarizeBookedDayLabel(
+      ["LA#71761 — Test Job"],
+      [{
+        summary: "LA#71761 — Test Job",
+        startUtc: "2026-05-28T04:00:00.000Z",
+        endUtc: "2026-05-30T04:00:00.000Z",
+        dateRangeLabel: "May 28–29",
+        description: [
+          "Call Time: 8:00 AM",
+          "Daily Details:",
+          "- 2026-05-28 | Start: 8:00 AM",
+          "- 2026-05-29 | Start: 9:00 AM",
+        ].join("\n"),
+        displayMode: "details",
+      }],
+      "details",
+    );
+
+    expect(buildBookedDayInlineMetaForDate(booked, "2026-05-28")).toBe("8:00 AM");
+    expect(buildBookedDayInlineMetaForDate(booked, "2026-05-29")).toBe("9:00 AM");
+  });
+
+  it("falls back safely when no per-day start time exists", () => {
+    const booked = summarizeBookedDayLabel(
+      ["LA#11111 — Legacy Job"],
+      [{
+        summary: "LA#11111 — Legacy Job",
+        startUtc: "2026-05-28T04:00:00.000Z",
+        endUtc: "2026-05-29T04:00:00.000Z",
+        dateRangeLabel: "May 28",
+        displayMode: "details",
+      }],
+      "details",
+    );
+    expect(buildBookedDayInlineMetaForDate(booked, "2026-05-28")).toBeNull();
   });
 });
 

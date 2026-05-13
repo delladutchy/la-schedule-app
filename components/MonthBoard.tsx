@@ -6,8 +6,11 @@ import { DateTime } from "luxon";
 import { summarizeBookedDayLabel, type MonthBoardData } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
 import {
+  buildGigDayDetailsForRange,
   buildGigDescription,
   buildLaJobSummary,
+  enumerateIsoDatesInRange,
+  mergeGigDescriptionWithDailyDetailsBlock,
   parseGigDescription,
   parseLaJobSummary,
 } from "@/lib/gigs";
@@ -78,6 +81,14 @@ interface ActiveBookingPanel {
   date: string;
   bookingMode: "la" | "overture";
 }
+
+interface BookingDayOverride {
+  callTimeOption: string;
+  callTimeOther: string;
+  notes: string;
+}
+
+type BookingDayOverrideMap = Record<string, BookingDayOverride>;
 
 export function monthBarGridStyle(startDayIndex: number, endDayIndex: number, laneIndex: number): {
   gridColumn: string;
@@ -327,6 +338,8 @@ export function MonthBoard({
   const [bookingCallTimeOption, setBookingCallTimeOption] = useState("TBD");
   const [bookingCallTimeOther, setBookingCallTimeOther] = useState("");
   const [bookingNotes, setBookingNotes] = useState("");
+  const [bookingDayOverrides, setBookingDayOverrides] = useState<BookingDayOverrideMap>({});
+  const [bookingExistingDescriptionRaw, setBookingExistingDescriptionRaw] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isBookingSavePending, setIsBookingSavePending] = useState(false);
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState<string | null>(null);
@@ -387,6 +400,8 @@ export function MonthBoard({
     setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
+    setBookingDayOverrides({});
+    setBookingExistingDescriptionRaw("");
     setBookingError(null);
     setIsBookingSavePending(false);
     setConfirmDeleteEventId(null);
@@ -406,6 +421,8 @@ export function MonthBoard({
     setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
+    setBookingDayOverrides({});
+    setBookingExistingDescriptionRaw("");
     setBookingError(null);
     setConfirmDeleteEventId(null);
     setDeleteError(null);
@@ -450,6 +467,8 @@ export function MonthBoard({
       ? parsedDescription.callTime
       : "");
     setBookingNotes(parsedDescription.jobNotes ?? "");
+    setBookingDayOverrides({});
+    setBookingExistingDescriptionRaw(detail.description ?? "");
     setBookingError(null);
     setConfirmDeleteEventId(null);
     setDeleteError(null);
@@ -463,6 +482,36 @@ export function MonthBoard({
     setBookingEndDate(sameDay);
     setBookingPickerMonthKey(DateTime.fromISO(sameDay, { zone: "utc" }).toFormat("yyyy-LL"));
     setBookingPickerExpanded(false);
+    if (bookingError) setBookingError(null);
+  };
+
+  const updateBookingDayOverride = (
+    date: string,
+    patch: Partial<BookingDayOverride>,
+  ) => {
+    setBookingDayOverrides((current) => {
+      const previous = current[date] ?? {
+        callTimeOption: bookingCallTimeOption,
+        callTimeOther: bookingCallTimeOther,
+        notes: bookingNotes,
+      };
+      return {
+        ...current,
+        [date]: {
+          ...previous,
+          ...patch,
+        },
+      };
+    });
+    if (bookingError) setBookingError(null);
+  };
+
+  const clearBookingDayOverride = (date: string) => {
+    setBookingDayOverrides((current) => {
+      const next = { ...current };
+      delete next[date];
+      return next;
+    });
     if (bookingError) setBookingError(null);
   };
 
@@ -496,15 +545,48 @@ export function MonthBoard({
 
     setBookingError(null);
     setIsBookingSavePending(true);
-    const callTime = bookingCallTimeOption === "Other"
-      ? bookingCallTimeOther.trim()
-      : bookingCallTimeOption.trim();
+    const callTime = resolveCallTimeFromInputs(bookingCallTimeOption, bookingCallTimeOther);
     if (bookingCallTimeOption === "Other" && !callTime) {
       setBookingError("Enter a custom Call Time or choose another option.");
       setIsBookingSavePending(false);
       return;
     }
-    const description = buildGigDescription(callTime, bookingNotes);
+    const selectedDates = enumerateIsoDatesInRange(startDate, endDate);
+    const dailyOverrides = selectedDates
+      .map((date) => {
+        const override = bookingDayOverrides[date];
+        if (!override) return null;
+        const overrideCallTime = resolveCallTimeFromInputs(override.callTimeOption, override.callTimeOther);
+        if (override.callTimeOption === "Other" && !overrideCallTime) {
+          return { date, invalid: true as const };
+        }
+        return {
+          date,
+          startTime: overrideCallTime,
+          notes: override.notes,
+        };
+      })
+      .filter((row): row is { date: string; startTime: string; notes: string } | { date: string; invalid: true } => row != null);
+    const invalidDailyOverride = dailyOverrides.find((detail) => "invalid" in detail);
+    if (invalidDailyOverride) {
+      setBookingError(`Enter a custom start time for ${formatCompactDate(invalidDailyOverride.date)} or choose another option.`);
+      setIsBookingSavePending(false);
+      return;
+    }
+    const dayDetails = buildGigDayDetailsForRange({
+      startDate,
+      endDateInclusive: endDate,
+      defaultStartTime: callTime,
+      defaultNotes: bookingNotes,
+      overrides: dailyOverrides,
+    });
+    const description = activeBookingPanel.mode === "edit"
+      ? mergeGigDescriptionWithDailyDetailsBlock(bookingExistingDescriptionRaw, {
+          callTime,
+          jobNotes: bookingNotes,
+          dayDetails,
+        })
+      : buildGigDescription(callTime, bookingNotes, dayDetails);
 
     try {
       const endpoint = activeBookingPanel.mode === "edit"
@@ -665,6 +747,12 @@ export function MonthBoard({
         return "Select end date";
       })()
     : "Select end date";
+  const bookingSelectedDates = bookingStartDate && parsedBookingEndDate
+    ? enumerateIsoDatesInRange(bookingStartDate, parsedBookingEndDate >= bookingStartDate ? parsedBookingEndDate : bookingStartDate)
+    : [];
+  const resolveCallTimeFromInputs = (option: string, other: string): string => (
+    option === "Other" ? other.trim() : option.trim()
+  );
   const canGoToPreviousBookingMonth = bookingStartMonth && bookingViewMonth
     ? bookingViewMonth > bookingStartMonth
     : false;
@@ -1471,6 +1559,86 @@ export function MonthBoard({
                 rows={4}
                 disabled={bookingModalIsLocked}
               />
+
+              {activeBookingPanel.mode === "create" && bookingSelectedDates.length > 0 ? (
+                <div className="month-booking-daily-details">
+                  <p className="month-booking-label">
+                    Daily Details
+                  </p>
+                  <p className="month-booking-help">
+                    Default start time and notes apply to every selected day. Override only the days that differ.
+                  </p>
+                  <div className="month-booking-daily-list">
+                    {bookingSelectedDates.map((date) => {
+                      const override = bookingDayOverrides[date];
+                      const dayCallTimeOption = override?.callTimeOption ?? bookingCallTimeOption;
+                      const dayCallTimeOther = override?.callTimeOther ?? bookingCallTimeOther;
+                      const dayNotes = override?.notes ?? bookingNotes;
+                      const hasOverride = !!override;
+                      return (
+                        <div key={date} className="month-booking-daily-row">
+                          <div className="month-booking-daily-row-header">
+                            <span>{formatCompactDate(date)}</span>
+                            {hasOverride ? (
+                              <button
+                                type="button"
+                                className="month-booking-daily-reset"
+                                onClick={() => clearBookingDayOverride(date)}
+                                disabled={bookingModalIsLocked}
+                              >
+                                Use default
+                              </button>
+                            ) : null}
+                          </div>
+                          <select
+                            className="month-booking-input month-booking-input--small"
+                            value={dayCallTimeOption}
+                            onChange={(event) => {
+                              updateBookingDayOverride(date, { callTimeOption: event.target.value });
+                            }}
+                            disabled={bookingModalIsLocked}
+                          >
+                            {CALL_TIME_OPTIONS.map((value) => (
+                              <option key={value} value={value}>
+                                {value}
+                              </option>
+                            ))}
+                            <option value="Other">Other</option>
+                          </select>
+                          {dayCallTimeOption === "Other" ? (
+                            <input
+                              className="month-booking-input month-booking-input--small"
+                              autoComplete="off"
+                              autoCorrect="off"
+                              autoCapitalize="off"
+                              spellCheck={false}
+                              value={dayCallTimeOther}
+                              onChange={(event) => {
+                                updateBookingDayOverride(date, { callTimeOther: event.target.value });
+                              }}
+                              placeholder="Custom start time"
+                              maxLength={120}
+                              disabled={bookingModalIsLocked}
+                            />
+                          ) : null}
+                          <input
+                            className="month-booking-input month-booking-input--small"
+                            autoComplete="off"
+                            autoCapitalize="sentences"
+                            value={dayNotes}
+                            onChange={(event) => {
+                              updateBookingDayOverride(date, { notes: event.target.value });
+                            }}
+                            placeholder="Optional day notes override"
+                            maxLength={4000}
+                            disabled={bookingModalIsLocked}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
 
               {bookingError ? (
                 <p className="month-booking-error" role="alert">{bookingError}</p>

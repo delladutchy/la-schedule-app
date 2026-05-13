@@ -7,6 +7,12 @@ import {
   parseLaJobSummary,
   parseGigDescription,
   buildGigDescription,
+  buildGigDayDetailsForRange,
+  resolveParsedGigDetailForDate,
+  enumerateIsoDatesInRange,
+  mergeGigDescriptionWithDailyDetailsBlock,
+  APP_DAILY_DETAILS_BLOCK_START,
+  APP_DAILY_DETAILS_BLOCK_END,
   isDateRangeAvailableInSnapshot,
   isDateRangeAvailableForEditInSnapshot,
 } from "@/lib/gigs";
@@ -153,7 +159,7 @@ describe("parseLaJobSummary", () => {
 describe("parseGigDescription/buildGigDescription", () => {
   it("round-trips call time and notes", () => {
     const built = buildGigDescription("8:00 AM", "Venue loading at north dock");
-    expect(built).toBe("Call Time: 8:00 AM\nJob Notes: Venue loading at north dock");
+    expect(built).toContain(APP_DAILY_DETAILS_BLOCK_START);
     expect(parseGigDescription(built)).toEqual({
       callTime: "8:00 AM",
       jobNotes: "Venue loading at north dock",
@@ -166,6 +172,120 @@ describe("parseGigDescription/buildGigDescription", () => {
       callTime: "TBD",
       jobNotes: "First line\nSecond line",
     });
+  });
+
+  it("supports per-day start time and notes details", () => {
+    const built = buildGigDescription(
+      "8:00 AM",
+      "Global notes",
+      [
+        { date: "2026-05-28", startTime: "8:00 AM" },
+        { date: "2026-05-29", startTime: "9:00 AM", notes: "Load-in at side door" },
+      ],
+    );
+    expect(built).toContain(APP_DAILY_DETAILS_BLOCK_START);
+    const parsed = parseGigDescription(built);
+    expect(parsed.dayDetails).toEqual({
+      "2026-05-28": { startTime: "8:00 AM" },
+      "2026-05-29": { startTime: "9:00 AM", notes: "Load-in at side door" },
+    });
+    expect(resolveParsedGigDetailForDate(parsed, "2026-05-28")).toEqual({
+      startTime: "8:00 AM",
+      notes: "Global notes",
+    });
+    expect(resolveParsedGigDetailForDate(parsed, "2026-05-29")).toEqual({
+      startTime: "9:00 AM",
+      notes: "Load-in at side door",
+    });
+  });
+
+  it("parses legacy human description format when app block is absent", () => {
+    const parsed = parseGigDescription("Call Time: 9:00 AM\nJob Notes: Bring radios");
+    expect(parsed).toEqual({
+      callTime: "9:00 AM",
+      jobNotes: "Bring radios",
+    });
+  });
+
+  it("keeps malformed app block text safe by falling back to legacy parse", () => {
+    const malformed = `${APP_DAILY_DETAILS_BLOCK_START}\n{not json}\n${APP_DAILY_DETAILS_BLOCK_END}`;
+    const parsed = parseGigDescription(malformed);
+    expect(parsed.jobNotes).toContain(APP_DAILY_DETAILS_BLOCK_START);
+  });
+});
+
+describe("mergeGigDescriptionWithDailyDetailsBlock", () => {
+  it("preserves human-written description verbatim and appends block when none exists", () => {
+    const human = "Line 1\nLine 2\nCall producer at 7.";
+    const merged = mergeGigDescriptionWithDailyDetailsBlock(human, {
+      callTime: "8:00 AM",
+      jobNotes: "Bring radios",
+      dayDetails: [{ date: "2026-05-29", startTime: "8:00 AM" }],
+    });
+    expect(merged?.startsWith(human)).toBe(true);
+    expect(merged).toContain(APP_DAILY_DETAILS_BLOCK_START);
+  });
+
+  it("replaces only app-owned block and keeps surrounding text exactly", () => {
+    const original = [
+      "HUMAN TOP",
+      APP_DAILY_DETAILS_BLOCK_START,
+      JSON.stringify({ callTime: "8:00 AM" }, null, 2),
+      APP_DAILY_DETAILS_BLOCK_END,
+      "HUMAN BOTTOM",
+    ].join("\n");
+    const merged = mergeGigDescriptionWithDailyDetailsBlock(original, {
+      callTime: "9:00 AM",
+    });
+    expect(merged).toContain("HUMAN TOP");
+    expect(merged).toContain("HUMAN BOTTOM");
+    expect(merged).toContain("\"callTime\": \"9:00 AM\"");
+    expect(merged).not.toContain("\"callTime\": \"8:00 AM\"");
+  });
+
+  it("does not delete malformed block content and appends a new safe block", () => {
+    const malformed = `Human notes\n${APP_DAILY_DETAILS_BLOCK_START}\n{bad json`;
+    const merged = mergeGigDescriptionWithDailyDetailsBlock(malformed, {
+      callTime: "10:00 AM",
+    });
+    expect(merged).toContain(malformed);
+    expect(merged).toContain(APP_DAILY_DETAILS_BLOCK_START);
+    expect(merged?.indexOf(APP_DAILY_DETAILS_BLOCK_START)).toBeLessThan(
+      merged?.lastIndexOf(APP_DAILY_DETAILS_BLOCK_START) ?? -1,
+    );
+  });
+});
+
+describe("buildGigDayDetailsForRange", () => {
+  it("creates daily rows for each date in range", () => {
+    expect(enumerateIsoDatesInRange("2026-05-28", "2026-05-30")).toEqual([
+      "2026-05-28",
+      "2026-05-29",
+      "2026-05-30",
+    ]);
+  });
+
+  it("applies default start time to all selected days", () => {
+    const out = buildGigDayDetailsForRange({
+      startDate: "2026-05-28",
+      endDateInclusive: "2026-05-30",
+      defaultStartTime: "8:00 AM",
+    });
+    expect(out.map((row) => row.startTime)).toEqual(["8:00 AM", "8:00 AM", "8:00 AM"]);
+  });
+
+  it("preserves per-day start time override", () => {
+    const out = buildGigDayDetailsForRange({
+      startDate: "2026-05-28",
+      endDateInclusive: "2026-05-30",
+      defaultStartTime: "8:00 AM",
+      overrides: [{ date: "2026-05-29", startTime: "9:00 AM" }],
+    });
+    expect(out).toEqual([
+      { date: "2026-05-28", startTime: "8:00 AM" },
+      { date: "2026-05-29", startTime: "9:00 AM" },
+      { date: "2026-05-30", startTime: "8:00 AM" },
+    ]);
   });
 });
 
