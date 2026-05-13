@@ -527,7 +527,7 @@ export function MonthBoard({
       const previous = current[date] ?? {
         callTimeOption: bookingCallTimeOption,
         callTimeOther: bookingCallTimeOther,
-        notes: bookingNotes,
+        notes: "",
       };
       return {
         ...current,
@@ -617,7 +617,7 @@ export function MonthBoard({
           startDate,
           endDateInclusive: endDate,
           defaultStartTime: callTime,
-          defaultNotes: bookingNotes,
+          defaultNotes: undefined,
           overrides: dailyOverrides,
         })
       : undefined;
@@ -792,7 +792,13 @@ export function MonthBoard({
     ? enumerateIsoDatesInRange(bookingStartDate, parsedBookingEndDate >= bookingStartDate ? parsedBookingEndDate : bookingStartDate)
     : [];
   const bookingHasMultiDayRange = bookingSelectedDates.length > 1;
-  const overallJobNotesLabel = bookingHasMultiDayRange ? "Overall Job Notes" : "Job Notes";
+  const overallJobNotesLabel = bookingHasMultiDayRange ? "Additional Notes" : "Job Notes";
+  const defaultStartTimeLabel = bookingHasMultiDayRange ? "Default Start Time" : "Call Time";
+  const bookingHeaderLabel = isOvertureBookingMode
+    ? "Overture"
+    : bookingLaNumber.trim()
+      ? `LA#${bookingLaNumber.trim()}`
+      : bookingJobName.trim() || "New Job";
   const resolveCallTimeFromInputs = (option: string, other: string): string => (
     option === "Other" ? other.trim() : option.trim()
   );
@@ -838,6 +844,10 @@ export function MonthBoard({
   const activeDetailRangeLabel = activeDetailRangeBounds
     ? formatMonthPopupRange(activeDetailRangeBounds.startDate, activeDetailRangeBounds.endDateInclusive)
     : activeDetailPanel?.details[0]?.dateRangeLabel ?? null;
+  const activeDetailIsMultiDay = !!(
+    activeDetailRangeBounds
+    && activeDetailRangeBounds.startDate !== activeDetailRangeBounds.endDateInclusive
+  );
   const activeDetailDayRows: MonthPopupDayDetailRow[] = (() => {
     if (!activeDetailPanel || !activeDetailRangeBounds) return [];
     const rows: MonthPopupDayDetailRow[] = [];
@@ -858,8 +868,8 @@ export function MonthBoard({
         if (!startTime && resolved.startTime?.trim()) {
           startTime = resolved.startTime.trim();
         }
-        if (!dayNotes && resolved.notes?.trim()) {
-          dayNotes = resolved.notes.trim();
+        if (!dayNotes && parsed.dayDetails?.[date]?.notes?.trim()) {
+          dayNotes = parsed.dayDetails[date]?.notes?.trim() ?? null;
         }
         if (startTime && dayNotes) break;
       }
@@ -1212,7 +1222,9 @@ export function MonthBoard({
             </button>
 
             <h3 id="month-job-detail-title" className="board-day-modal-title">
-              {activeDetailIsOverture ? (
+              {activeDetailIsMultiDay ? (
+                activeDetailPanel.header
+              ) : activeDetailIsOverture ? (
                 <img
                   src="/brand/overture-logo.png"
                   alt="Overture"
@@ -1253,13 +1265,8 @@ export function MonthBoard({
                         <p className="board-day-modal-event-meta">
                           <span className="board-day-modal-event-label">Day</span>{" "}
                           {formatCompactDate(row.date)}
+                          {row.startTime ? ` · ${row.startTime}` : ""}
                         </p>
-                        {row.startTime ? (
-                          <p className="board-day-modal-event-meta">
-                            <span className="board-day-modal-event-label">Start</span>{" "}
-                            {row.startTime}
-                          </p>
-                        ) : null}
                         {row.dayNotes ? (
                           <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
                             <span className="board-day-modal-event-label">Day Notes</span>{" "}
@@ -1272,7 +1279,7 @@ export function MonthBoard({
                 ) : null}
                 {activeDetailOverallNotes ? (
                   <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
-                    <span className="board-day-modal-event-label">Overall Job Notes</span>{" "}
+                    <span className="board-day-modal-event-label">Additional Notes</span>{" "}
                     {activeDetailOverallNotes}
                   </p>
                 ) : null}
@@ -1378,6 +1385,12 @@ export function MonthBoard({
             <p className="board-day-modal-event-date">{bookingDateLabel}</p>
 
             <div className="month-booking-form">
+              {bookingHasMultiDayRange ? (
+                <div className="month-booking-summary-card">
+                  <p className="month-booking-summary-title">{bookingHeaderLabel}</p>
+                  <p className="month-booking-summary-range">{bookingRangeLabel}</p>
+                </div>
+              ) : null}
               {showBookingModeSelector ? (
                 <div className="month-booking-mode">
                   <p className="month-booking-label">Booking Type</p>
@@ -1589,7 +1602,7 @@ export function MonthBoard({
               </div>
 
               <label className="month-booking-label" htmlFor="booking-call-time">
-                Call Time
+                {defaultStartTimeLabel}
               </label>
               <select
                 id="booking-call-time"
@@ -1634,14 +1647,14 @@ export function MonthBoard({
               {bookingHasMultiDayRange ? (
                 <div className="month-booking-daily-details">
                   <p className="month-booking-label">
-                    Days
+                    Daily Schedule
                   </p>
                   <div className="month-booking-daily-list">
                     {bookingSelectedDates.map((date) => {
                       const override = bookingDayOverrides[date];
                       const dayCallTimeOption = override?.callTimeOption ?? bookingCallTimeOption;
                       const dayCallTimeOther = override?.callTimeOther ?? bookingCallTimeOther;
-                      const dayNotes = override?.notes ?? bookingNotes;
+                      const dayNotes = override?.notes ?? "";
                       const hasOverride = !!override;
                       return (
                         <div key={date} className="month-booking-daily-row">

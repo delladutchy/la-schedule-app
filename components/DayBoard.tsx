@@ -209,6 +209,20 @@ function formatShortDate(isoDate: string): string {
   return DateTime.fromISO(isoDate, { zone: "utc" }).toFormat("LLL d");
 }
 
+function formatPopupDateRange(startDate: string, endDate: string): string {
+  const start = DateTime.fromISO(startDate, { zone: "utc" });
+  const end = DateTime.fromISO(endDate, { zone: "utc" });
+  if (!start.isValid || !end.isValid || end < start) return `${startDate} – ${endDate}`;
+  if (start.hasSame(end, "day")) return start.toFormat("LLL d");
+  if (start.year === end.year && start.month === end.month) {
+    return `${start.toFormat("LLL d")}–${end.toFormat("d")}`;
+  }
+  if (start.year === end.year) {
+    return `${start.toFormat("LLL d")} – ${end.toFormat("LLL d")}`;
+  }
+  return `${start.toFormat("LLL d, yyyy")} – ${end.toFormat("LLL d, yyyy")}`;
+}
+
 interface BookingCalendarDay {
   isoDate: string;
   dayNumber: string;
@@ -317,12 +331,12 @@ export function resolveSelectedDayPopupMeta(
 } {
   const parsed = parseGigDescription(detail.description);
   const selected = resolveParsedGigDetailForDate(parsed, selectedDate);
-  const selectedNotes = selected.notes?.trim() || null;
+  const selectedNotes = parsed.dayDetails?.[selectedDate]?.notes?.trim() || null;
   const globalNotes = parsed.jobNotes?.trim() || null;
   return {
     selectedStartTime: selected.startTime?.trim() || null,
     selectedDayNotes: selectedNotes,
-    globalJobNotes: globalNotes && globalNotes !== selectedNotes ? globalNotes : null,
+    globalJobNotes: globalNotes || null,
   };
 }
 
@@ -532,7 +546,7 @@ export function DayBoard({
       const previous = current[date] ?? {
         callTimeOption: bookingCallTimeOption,
         callTimeOther: bookingCallTimeOther,
-        notes: bookingNotes,
+        notes: "",
       };
       return {
         ...current,
@@ -622,7 +636,7 @@ export function DayBoard({
           startDate,
           endDateInclusive: endDate,
           defaultStartTime: callTime,
-          defaultNotes: bookingNotes,
+          defaultNotes: undefined,
           overrides: dailyOverrides,
         })
       : undefined;
@@ -857,7 +871,13 @@ export function DayBoard({
     ? enumerateIsoDatesInRange(bookingStartDate, parsedBookingEndDate >= bookingStartDate ? parsedBookingEndDate : bookingStartDate)
     : [];
   const bookingHasMultiDayRange = bookingSelectedDates.length > 1;
-  const overallJobNotesLabel = bookingHasMultiDayRange ? "Overall Job Notes" : "Job Notes";
+  const overallJobNotesLabel = bookingHasMultiDayRange ? "Additional Notes" : "Job Notes";
+  const defaultStartTimeLabel = bookingHasMultiDayRange ? "Default Start Time" : "Call Time";
+  const bookingHeaderLabel = isOvertureBookingMode
+    ? "Overture"
+    : bookingLaNumber.trim()
+      ? `LA#${bookingLaNumber.trim()}`
+      : bookingJobName.trim() || "New Job";
   const resolveCallTimeFromInputs = (option: string, other: string): string => (
     option === "Other" ? other.trim() : option.trim()
   );
@@ -899,6 +919,60 @@ export function DayBoard({
   const activeSelectedDayMeta = activePrimaryDetail && activeSelectedDate
     ? resolveSelectedDayPopupMeta(activePrimaryDetail, activeSelectedDate)
     : null;
+  const activeDetailRangeBounds = activeDetailPanel
+    ? activeDetailPanel.details
+      .map((detail) => {
+        const startDate = detail.startDate ?? detail.startUtc?.slice(0, 10);
+        const endDateInclusive = detail.endDateInclusive ?? detail.endUtc?.slice(0, 10) ?? startDate;
+        if (!startDate || !endDateInclusive || endDateInclusive < startDate) return null;
+        return { startDate, endDateInclusive };
+      })
+      .filter((value): value is { startDate: string; endDateInclusive: string } => value != null)
+      .reduce<{ startDate: string; endDateInclusive: string } | null>((acc, current) => {
+        if (!acc) return current;
+        return {
+          startDate: current.startDate < acc.startDate ? current.startDate : acc.startDate,
+          endDateInclusive: current.endDateInclusive > acc.endDateInclusive
+            ? current.endDateInclusive
+            : acc.endDateInclusive,
+        };
+      }, null)
+    : null;
+  const activeDetailIsMultiDay = !!(
+    activeDetailRangeBounds
+    && activeDetailRangeBounds.startDate !== activeDetailRangeBounds.endDateInclusive
+  );
+  const activeDetailRangeLabel = activeDetailRangeBounds
+    ? formatPopupDateRange(activeDetailRangeBounds.startDate, activeDetailRangeBounds.endDateInclusive)
+    : activePrimaryDetail?.dateRangeLabel ?? null;
+  const activeDetailDayRows = (() => {
+    if (!activeDetailPanel || !activeDetailRangeBounds) return [] as Array<{ date: string; startTime: string | null; dayNotes: string | null }>;
+    return enumerateIsoDatesInRange(
+      activeDetailRangeBounds.startDate,
+      activeDetailRangeBounds.endDateInclusive,
+    ).map((date) => {
+      let startTime: string | null = null;
+      let dayNotes: string | null = null;
+      for (const detail of activeDetailPanel.details) {
+        if (!detailIncludesDate(detail, date)) continue;
+        if (!canViewDetailNotes(detail, normalizedEditorId, editorCalendarId, overtureCalendarId)) continue;
+        const parsed = parseGigDescription(detail.description);
+        const resolved = resolveParsedGigDetailForDate(parsed, date);
+        if (!startTime && resolved.startTime?.trim()) startTime = resolved.startTime.trim();
+        if (!dayNotes && parsed.dayDetails?.[date]?.notes?.trim()) dayNotes = parsed.dayDetails[date]?.notes?.trim() ?? null;
+      }
+      return { date, startTime, dayNotes };
+    });
+  })();
+  const activeDetailOverallNotes = (() => {
+    if (!activeDetailPanel) return null;
+    for (const detail of activeDetailPanel.details) {
+      if (!canViewDetailNotes(detail, normalizedEditorId, editorCalendarId, overtureCalendarId)) continue;
+      const notes = parseGigDescription(detail.description).jobNotes?.trim();
+      if (notes) return notes;
+    }
+    return null;
+  })();
   const canManageActiveDetail = editorModeActive
     && !!activeEditableDetail;
   const showDeleteConfirm = !!confirmDeleteEventId
@@ -1194,7 +1268,9 @@ export function DayBoard({
             </button>
 
             <h3 id="week-job-detail-title" className="board-day-modal-title">
-              {activeDetailIsOverture ? (
+              {activeDetailIsMultiDay ? (
+                activeDetailPanel.header
+              ) : activeDetailIsOverture ? (
                 <img
                   src="/brand/overture-logo.png"
                   alt="Overture"
@@ -1227,10 +1303,21 @@ export function DayBoard({
                 <p className="board-day-modal-event-title">
                   {stripJobPrefix(activePrimaryDetail.summary, activeDetailPanel.headerJobNumber)}
                 </p>
-                {activeSelectedDate ? (
+                {activeDetailRangeLabel ? (
+                  <p className="board-day-modal-event-date">{activeDetailRangeLabel}</p>
+                ) : activeSelectedDate ? (
                   <p className="board-day-modal-event-date">{formatCompactDate(activeSelectedDate)}</p>
                 ) : null}
-                {activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.selectedStartTime ? (
+                {activeDetailIsMultiDay && activeSelectedDate ? (
+                  <p className="board-day-modal-event-meta">
+                    <span className="board-day-modal-event-label">Day</span>{" "}
+                    {formatCompactDate(activeSelectedDate)}
+                    {activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.selectedStartTime
+                      ? ` · ${activeSelectedDayMeta.selectedStartTime}`
+                      : ""}
+                  </p>
+                ) : null}
+                {!activeDetailIsMultiDay && activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.selectedStartTime ? (
                   <p className="board-day-modal-event-meta">
                     <span className="board-day-modal-event-label">Start</span>{" "}
                     {activeSelectedDayMeta.selectedStartTime}
@@ -1241,7 +1328,7 @@ export function DayBoard({
                     {activePrimaryDetail.timeRangeLabel}
                   </p>
                 ) : null}
-                {activePrimaryDetail.dateRangeLabel ? (
+                {!activeDetailIsMultiDay && activePrimaryDetail.dateRangeLabel ? (
                   <p className="board-day-modal-event-meta">
                     <span className="board-day-modal-event-label">Range</span>{" "}
                     {activePrimaryDetail.dateRangeLabel}
@@ -1253,10 +1340,31 @@ export function DayBoard({
                     {activeSelectedDayMeta.selectedDayNotes}
                   </p>
                 ) : null}
-                {activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.globalJobNotes ? (
+                {activeDetailIsMultiDay && activeDetailDayRows.length > 0 ? (
+                  <ul className="board-day-modal-day-breakdown">
+                    {activeDetailDayRows
+                      .filter((row) => row.date !== activeSelectedDate)
+                      .map((row) => (
+                        <li key={row.date}>
+                          <p className="board-day-modal-event-meta">
+                            <span className="board-day-modal-event-label">Day</span>{" "}
+                            {formatCompactDate(row.date)}
+                            {row.startTime ? ` · ${row.startTime}` : ""}
+                          </p>
+                          {row.dayNotes ? (
+                            <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
+                              <span className="board-day-modal-event-label">Day Notes</span>{" "}
+                              {row.dayNotes}
+                            </p>
+                          ) : null}
+                        </li>
+                      ))}
+                  </ul>
+                ) : null}
+                {activePrimaryDetailCanViewNotes && activeDetailOverallNotes ? (
                   <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
-                    <span className="board-day-modal-event-label">Overall Job Notes</span>{" "}
-                    {activeSelectedDayMeta.globalJobNotes}
+                    <span className="board-day-modal-event-label">Additional Notes</span>{" "}
+                    {activeDetailOverallNotes}
                   </p>
                 ) : null}
                 {activeDetailPanel.details.length > 1 ? (
@@ -1368,6 +1476,12 @@ export function DayBoard({
             <p className="board-day-modal-event-date">{bookingDateLabel}</p>
 
             <div className="month-booking-form">
+              {bookingHasMultiDayRange ? (
+                <div className="month-booking-summary-card">
+                  <p className="month-booking-summary-title">{bookingHeaderLabel}</p>
+                  <p className="month-booking-summary-range">{bookingRangeLabel}</p>
+                </div>
+              ) : null}
               {showBookingModeSelector ? (
                 <div className="month-booking-mode">
                   <p className="month-booking-label">Booking Type</p>
@@ -1579,7 +1693,7 @@ export function DayBoard({
               </div>
 
               <label className="month-booking-label" htmlFor="week-booking-call-time">
-                Call Time
+                {defaultStartTimeLabel}
               </label>
               <select
                 id="week-booking-call-time"
@@ -1624,14 +1738,14 @@ export function DayBoard({
               {bookingHasMultiDayRange ? (
                 <div className="month-booking-daily-details">
                   <p className="month-booking-label">
-                    Days
+                    Daily Schedule
                   </p>
                   <div className="month-booking-daily-list">
                     {bookingSelectedDates.map((date) => {
                       const override = bookingDayOverrides[date];
                       const dayCallTimeOption = override?.callTimeOption ?? bookingCallTimeOption;
                       const dayCallTimeOther = override?.callTimeOther ?? bookingCallTimeOther;
-                      const dayNotes = override?.notes ?? bookingNotes;
+                      const dayNotes = override?.notes ?? "";
                       const hasOverride = !!override;
                       return (
                         <div key={date} className="month-booking-daily-row">
