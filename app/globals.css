@@ -2459,6 +2459,7 @@ body {
   border-radius: 10px;
   background: color-mix(in srgb, var(--surface) 96%, var(--bg));
   padding: 10px;
+  margin-top: -4px;
 }
 
 .month-booking-daily-list {

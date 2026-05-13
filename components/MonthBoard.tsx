@@ -85,6 +85,7 @@ interface ActiveBookingPanel {
 interface BookingDayOverride {
   callTimeOption: string;
   callTimeOther: string;
+  notes: string;
 }
 
 type BookingDayOverrideMap = Record<string, BookingDayOverride>;
@@ -492,6 +493,7 @@ export function MonthBoard({
       const previous = current[date] ?? {
         callTimeOption: bookingCallTimeOption,
         callTimeOther: bookingCallTimeOther,
+        notes: bookingNotes,
       };
       return {
         ...current,
@@ -563,9 +565,10 @@ export function MonthBoard({
         return {
           date,
           startTime: overrideCallTime,
+          notes: override.notes,
         };
       })
-      .filter((row): row is { date: string; startTime: string } | { date: string; invalid: true } => row != null)
+      .filter((row): row is { date: string; startTime: string; notes: string } | { date: string; invalid: true } => row != null)
       : [];
     const invalidDailyOverride = bookingHasMultiDayRange
       ? dailyOverrides.find((detail) => "invalid" in detail)
@@ -1575,6 +1578,7 @@ export function MonthBoard({
                       const override = bookingDayOverrides[date];
                       const dayCallTimeOption = override?.callTimeOption ?? bookingCallTimeOption;
                       const dayCallTimeOther = override?.callTimeOther ?? bookingCallTimeOther;
+                      const dayNotes = override?.notes ?? bookingNotes;
                       const hasOverride = !!override;
                       return (
                         <div key={date} className="month-booking-daily-row">
@@ -1622,6 +1626,18 @@ export function MonthBoard({
                               disabled={bookingModalIsLocked}
                             />
                           ) : null}
+                          <input
+                            className="month-booking-input month-booking-input--small"
+                            autoComplete="off"
+                            autoCapitalize="sentences"
+                            value={dayNotes}
+                            onChange={(event) => {
+                              updateBookingDayOverride(date, { notes: event.target.value });
+                            }}
+                            placeholder="Day notes (optional)"
+                            maxLength={4000}
+                            disabled={bookingModalIsLocked}
+                          />
                         </div>
                       );
                     })}

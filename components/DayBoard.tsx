@@ -88,6 +88,7 @@ interface ActiveBookingPanel {
 interface BookingDayOverride {
   callTimeOption: string;
   callTimeOther: string;
+  notes: string;
 }
 
 type BookingDayOverrideMap = Record<string, BookingDayOverride>;
@@ -278,33 +279,24 @@ export function buildBookedDayInlineMetaForDate(
 
 export function buildWeekBookedBadgeDisplay(opts: {
   bookedLabel: BookedLabel;
-  date: string;
   connectorPart: "none" | "start" | "middle" | "end";
 }): {
-  primary: string;
-  secondary: string | null;
+  primary: string | null;
 } {
-  const inlineMeta = buildBookedDayInlineMetaForDate(opts.bookedLabel, opts.date);
+  const label = opts.bookedLabel.label?.trim() ?? "";
+  const hasUsefulLabel = label.length > 0 && label.toLowerCase() !== "busy";
 
   if (opts.connectorPart === "middle" || opts.connectorPart === "end") {
+    if (hasUsefulLabel) {
+      return { primary: null };
+    }
     return {
-      primary: inlineMeta ?? (opts.bookedLabel.label ?? "Busy"),
-      secondary: null,
-    };
-  }
-
-  if (opts.connectorPart === "start") {
-    return {
-      primary: opts.bookedLabel.label ?? "Busy",
-      secondary: inlineMeta,
+      primary: label.length > 0 ? label : "Busy",
     };
   }
 
   return {
-    primary: inlineMeta
-      ? `${opts.bookedLabel.label ?? "Busy"} ${inlineMeta}`
-      : (opts.bookedLabel.label ?? "Busy"),
-    secondary: null,
+    primary: label.length > 0 ? label : "Busy",
   };
 }
 
@@ -313,6 +305,25 @@ function detailIncludesDate(detail: BookedLabel["details"][number], date: string
   const endDate = detail.endDateInclusive ?? detail.endUtc?.slice(0, 10) ?? startDate;
   if (!startDate || !endDate) return false;
   return date >= startDate && date <= endDate;
+}
+
+export function resolveSelectedDayPopupMeta(
+  detail: BookedLabel["details"][number],
+  selectedDate: string,
+): {
+  selectedStartTime: string | null;
+  selectedDayNotes: string | null;
+  globalJobNotes: string | null;
+} {
+  const parsed = parseGigDescription(detail.description);
+  const selected = resolveParsedGigDetailForDate(parsed, selectedDate);
+  const selectedNotes = selected.notes?.trim() || null;
+  const globalNotes = parsed.jobNotes?.trim() || null;
+  return {
+    selectedStartTime: selected.startTime?.trim() || null,
+    selectedDayNotes: selectedNotes,
+    globalJobNotes: globalNotes && globalNotes !== selectedNotes ? globalNotes : null,
+  };
 }
 
 /**
@@ -521,6 +532,7 @@ export function DayBoard({
       const previous = current[date] ?? {
         callTimeOption: bookingCallTimeOption,
         callTimeOther: bookingCallTimeOther,
+        notes: bookingNotes,
       };
       return {
         ...current,
@@ -592,9 +604,10 @@ export function DayBoard({
         return {
           date,
           startTime: overrideCallTime,
+          notes: override.notes,
         };
       })
-      .filter((row): row is { date: string; startTime: string } | { date: string; invalid: true } => row != null)
+      .filter((row): row is { date: string; startTime: string; notes: string } | { date: string; invalid: true } => row != null)
       : [];
     const invalidDailyOverride = bookingHasMultiDayRange
       ? dailyOverrides.find((detail) => "invalid" in detail)
@@ -873,9 +886,6 @@ export function DayBoard({
       ?? activeDetailPanel.details[0]
       ?? null
     : null;
-  const activePrimaryDetailParsed = activePrimaryDetail
-    ? parseGigDescription(activePrimaryDetail.description)
-    : null;
   const activePrimaryDetailCanViewNotes = !!(
     activePrimaryDetail
     && canViewDetailNotes(
@@ -885,8 +895,8 @@ export function DayBoard({
       overtureCalendarId,
     )
   );
-  const activeSelectedDayStartTime = activeSelectedDate && activePrimaryDetailParsed
-    ? resolveParsedGigDetailForDate(activePrimaryDetailParsed, activeSelectedDate).startTime ?? null
+  const activeSelectedDayMeta = activePrimaryDetail && activeSelectedDate
+    ? resolveSelectedDayPopupMeta(activePrimaryDetail, activeSelectedDate)
     : null;
   const canManageActiveDetail = editorModeActive
     && !!activeEditableDetail;
@@ -1078,29 +1088,39 @@ export function DayBoard({
               const bookedLabel = row.bookedLabel;
               const bookedBadgeDisplay = bookedLabel
                 ? buildWeekBookedBadgeDisplay({
-                    bookedLabel,
-                    date: d.date,
-                    connectorPart,
-                  })
+                  bookedLabel,
+                  connectorPart,
+                })
                 : null;
               return (
                 <li
                   key={d.date}
                   className={`board-day ${d.status}${canBookRow ? " board-day--bookable" : ""}${row.bookedLabel?.isPrivateUnavailable ? " booked-private" : ""}${d.isToday ? " today" : ""}${d.isToday && todayPulseActive ? " today-pulse" : ""}`}
-                  tabIndex={canBookRow ? 0 : undefined}
+                  tabIndex={(canBookRow || (!!bookedLabel && !bookedLabel.isPrivateUnavailable)) ? 0 : undefined}
                   onClick={() => {
                     onDateFocus?.(d.date);
-                    if (!canBookRow) return;
-                    closeDetailPanel();
-                    openBookingPanel(d.date);
+                    if (canBookRow) {
+                      closeDetailPanel();
+                      openBookingPanel(d.date);
+                      return;
+                    }
+                    if (bookedLabel && !bookedLabel.isPrivateUnavailable) {
+                      openDetailPanelForRow(rowKey, bookedLabel, d.date);
+                    }
                   }}
-                  onKeyDown={canBookRow
+                  onKeyDown={(canBookRow || (!!bookedLabel && !bookedLabel.isPrivateUnavailable))
                     ? (event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         onDateFocus?.(d.date);
-                        closeDetailPanel();
-                        openBookingPanel(d.date);
+                        if (canBookRow) {
+                          closeDetailPanel();
+                          openBookingPanel(d.date);
+                          return;
+                        }
+                        if (bookedLabel && !bookedLabel.isPrivateUnavailable) {
+                          openDetailPanelForRow(rowKey, bookedLabel, d.date);
+                        }
                       }
                     }
                     : undefined}
@@ -1123,26 +1143,11 @@ export function DayBoard({
                     ) : bookedLabel?.isPrivateUnavailable ? (
                       <span className="board-day-unavailable-text">Unavailable</span>
                     ) : bookedLabel ? (
-                      <button
-                        type="button"
-                        className="board-day-badge booked board-day-pill-button"
-                        title={bookedLabel.title}
-                        onClick={() => {
-                          openDetailPanelForRow(rowKey, bookedLabel, d.date);
-                        }}
-                        aria-haspopup="dialog"
-                        aria-expanded={activeDetailPanel?.rowKey === rowKey}
-                        aria-controls="week-job-detail-modal"
-                      >
-                        {bookedBadgeDisplay?.secondary ? (
-                          <span className="board-day-pill-stack">
-                            <span>{bookedBadgeDisplay.primary}</span>
-                            <span className="board-day-pill-sub">{bookedBadgeDisplay.secondary}</span>
-                          </span>
-                        ) : (
-                          bookedBadgeDisplay?.primary ?? (bookedLabel.label ?? "Busy")
-                        )}
-                      </button>
+                      bookedBadgeDisplay?.primary ? (
+                        <span className="board-day-badge booked" title={bookedLabel.title}>
+                          {bookedBadgeDisplay.primary}
+                        </span>
+                      ) : null
                     ) : (
                       <span className="board-day-badge booked">Busy</span>
                     )}
@@ -1224,10 +1229,10 @@ export function DayBoard({
                 {activeSelectedDate ? (
                   <p className="board-day-modal-event-date">{formatCompactDate(activeSelectedDate)}</p>
                 ) : null}
-                {activePrimaryDetailCanViewNotes && activeSelectedDayStartTime ? (
+                {activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.selectedStartTime ? (
                   <p className="board-day-modal-event-meta">
                     <span className="board-day-modal-event-label">Start</span>{" "}
-                    {activeSelectedDayStartTime}
+                    {activeSelectedDayMeta.selectedStartTime}
                   </p>
                 ) : activePrimaryDetail.timeRangeLabel ? (
                   <p className="board-day-modal-event-meta">
@@ -1241,10 +1246,16 @@ export function DayBoard({
                     {activePrimaryDetail.dateRangeLabel}
                   </p>
                 ) : null}
-                {activePrimaryDetailCanViewNotes && activePrimaryDetailParsed?.jobNotes ? (
+                {activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.selectedDayNotes ? (
+                  <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
+                    <span className="board-day-modal-event-label">Day Notes</span>{" "}
+                    {activeSelectedDayMeta.selectedDayNotes}
+                  </p>
+                ) : null}
+                {activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.globalJobNotes ? (
                   <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
                     <span className="board-day-modal-event-label">Notes</span>{" "}
-                    {activePrimaryDetailParsed.jobNotes}
+                    {activeSelectedDayMeta.globalJobNotes}
                   </p>
                 ) : null}
                 {activeDetailPanel.details.length > 1 ? (
@@ -1639,6 +1650,7 @@ export function DayBoard({
                       const override = bookingDayOverrides[date];
                       const dayCallTimeOption = override?.callTimeOption ?? bookingCallTimeOption;
                       const dayCallTimeOther = override?.callTimeOther ?? bookingCallTimeOther;
+                      const dayNotes = override?.notes ?? bookingNotes;
                       const hasOverride = !!override;
                       return (
                         <div key={date} className="month-booking-daily-row">
@@ -1686,6 +1698,18 @@ export function DayBoard({
                               disabled={bookingModalIsLocked}
                             />
                           ) : null}
+                          <input
+                            className="month-booking-input month-booking-input--small"
+                            autoComplete="off"
+                            autoCapitalize="sentences"
+                            value={dayNotes}
+                            onChange={(event) => {
+                              updateBookingDayOverride(date, { notes: event.target.value });
+                            }}
+                            placeholder="Day notes (optional)"
+                            maxLength={4000}
+                            disabled={bookingModalIsLocked}
+                          />
                         </div>
                       );
                     })}

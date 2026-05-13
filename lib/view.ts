@@ -773,8 +773,73 @@ interface MonthEventBarDraft {
   label: string;
   title?: string;
   jobNumber?: string;
+  laMergeKey?: string;
   isPrivateUnavailable: boolean;
   details: MonthEventBarDetail[];
+}
+
+function mergeMonthBarDetails(
+  left: MonthEventBarDetail[],
+  right: MonthEventBarDetail[],
+): MonthEventBarDetail[] {
+  const out: MonthEventBarDetail[] = [...left];
+  const seen = new Set(
+    out.map((detail) =>
+      `${detail.summary}|${detail.startUtc ?? ""}|${detail.endUtc ?? ""}|${detail.eventId ?? ""}|${detail.calendarId ?? ""}`),
+  );
+  for (const detail of right) {
+    const key = `${detail.summary}|${detail.startUtc ?? ""}|${detail.endUtc ?? ""}|${detail.eventId ?? ""}|${detail.calendarId ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(detail);
+  }
+  return out;
+}
+
+function mergeConsecutiveLaBars(weekBars: MonthEventBarDraft[]): MonthEventBarDraft[] {
+  const merged: MonthEventBarDraft[] = [];
+  for (const bar of weekBars) {
+    const previous = merged[merged.length - 1];
+    const canMerge = !!(
+      previous
+      && previous.laMergeKey
+      && bar.laMergeKey
+      && previous.laMergeKey === bar.laMergeKey
+      && !previous.isPrivateUnavailable
+      && !bar.isPrivateUnavailable
+      && bar.startDayIndex === previous.endDayIndex + 1
+    );
+    if (!canMerge || !previous) {
+      merged.push(bar);
+      continue;
+    }
+
+    previous.endDayIndex = bar.endDayIndex;
+    previous.segmentEndDate = bar.segmentEndDate;
+    previous.details = mergeMonthBarDetails(previous.details, bar.details);
+  }
+
+  return merged;
+}
+
+function resolveMonthBarLaMergeKey(labelMeta: ReturnType<typeof summarizeBookedDayLabel>): string | null {
+  if (labelMeta.isPrivateUnavailable) return null;
+
+  const normalizedHeader = labelMeta.jobNumber
+    ? normalizeLaJobNumberForGrouping(labelMeta.jobNumber)
+    : null;
+  if (!normalizedHeader) return null;
+  if (labelMeta.details.length === 0) return null;
+
+  for (const detail of labelMeta.details) {
+    if ((detail.displayMode ?? "details") === "private") return null;
+    const normalizedDetail = normalizeLaJobNumberForGrouping(detail.jobNumber ?? detail.summary);
+    if (!normalizedDetail || normalizedDetail !== normalizedHeader) {
+      return null;
+    }
+  }
+
+  return normalizedHeader;
 }
 
 function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][] {
@@ -833,6 +898,7 @@ function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][
     };
     const bookedDisplay: "details" | "private" = event.displayMode === "private" ? "private" : "details";
     const labelMeta = summarizeBookedDayLabel([safeSummary], [detail], bookedDisplay);
+    const laMergeKey = resolveMonthBarLaMergeKey(labelMeta) ?? undefined;
 
     let cursor = clippedStart;
     while (cursor <= clippedEnd) {
@@ -855,6 +921,7 @@ function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][
         label: labelMeta.label,
         ...(labelMeta.title ? { title: labelMeta.title } : {}),
         ...(labelMeta.jobNumber ? { jobNumber: labelMeta.jobNumber } : {}),
+        ...(laMergeKey ? { laMergeKey } : {}),
         isPrivateUnavailable: labelMeta.isPrivateUnavailable === true,
         details: labelMeta.details.map((row) => ({
           summary: row.summary,
@@ -883,8 +950,9 @@ function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][
       if (a.endDayIndex !== b.endDayIndex) return b.endDayIndex - a.endDayIndex;
       return a.key.localeCompare(b.key);
     });
+    const mergedConsecutive = mergeConsecutiveLaBars(sorted);
     const laneEnds: number[] = [];
-    return sorted.map((bar) => {
+    return mergedConsecutive.map((bar) => {
       let laneIndex = laneEnds.findIndex((end) => bar.startDayIndex > end);
       if (laneIndex === -1) laneIndex = laneEnds.length;
       laneEnds[laneIndex] = bar.endDayIndex;

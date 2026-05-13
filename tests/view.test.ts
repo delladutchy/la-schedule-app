@@ -4,6 +4,7 @@ import {
   buildBookedDayInlineMetaForDate,
   buildWeekBookedBadgeDisplay,
   filterWeekRowsByWeekendVisibility,
+  resolveSelectedDayPopupMeta,
 } from "@/components/DayBoard";
 import {
   filterMonthWeeksForVisibleCurrentMonthDays,
@@ -804,20 +805,16 @@ describe("buildWeekBookedBadgeDisplay", () => {
 
     expect(buildWeekBookedBadgeDisplay({
       bookedLabel: booked,
-      date: "2026-05-28",
       connectorPart: "start",
     })).toEqual({
       primary: "LA#71761",
-      secondary: "8:00 AM",
     });
 
     expect(buildWeekBookedBadgeDisplay({
       bookedLabel: booked,
-      date: "2026-05-29",
       connectorPart: "middle",
     })).toEqual({
-      primary: "9:00 AM",
-      secondary: null,
+      primary: null,
     });
   });
 
@@ -837,11 +834,9 @@ describe("buildWeekBookedBadgeDisplay", () => {
 
     expect(buildWeekBookedBadgeDisplay({
       bookedLabel: booked,
-      date: "2026-05-28",
       connectorPart: "none",
     })).toEqual({
-      primary: "LA#11111 7:00 AM",
-      secondary: null,
+      primary: "LA#11111",
     });
   });
 
@@ -865,11 +860,38 @@ describe("buildWeekBookedBadgeDisplay", () => {
 
     expect(buildWeekBookedBadgeDisplay({
       bookedLabel: booked,
-      date: "2026-05-20",
       connectorPart: "middle",
     })).toEqual({
-      primary: "LA#70924",
-      secondary: null,
+      primary: null,
+    });
+  });
+});
+
+describe("resolveSelectedDayPopupMeta", () => {
+  it("returns selected-day time and notes first, with separate global notes", () => {
+    const detail = summarizeBookedDayLabel(
+      ["LA#70924 — Test Job"],
+      [{
+        summary: "LA#70924 — Test Job",
+        startUtc: "2026-05-19T04:00:00.000Z",
+        endUtc: "2026-05-23T04:00:00.000Z",
+        dateRangeLabel: "May 19–22",
+        description: [
+          "Job Notes: Global note",
+          "Daily Details:",
+          "- 2026-05-20 | Start: 6:00 AM | Notes: Day note",
+        ].join("\n"),
+        displayMode: "details",
+      }],
+      "details",
+    ).details[0];
+
+    expect(detail).toBeTruthy();
+    const meta = resolveSelectedDayPopupMeta(detail!, "2026-05-20");
+    expect(meta).toEqual({
+      selectedStartTime: "6:00 AM",
+      selectedDayNotes: "Day note",
+      globalJobNotes: "Global note",
     });
   });
 });
@@ -981,6 +1003,121 @@ describe("buildMonthBoard", () => {
     expect(bars).toHaveLength(2);
     expect(bars[0]).toMatchObject({ startDayIndex: 4, endDayIndex: 6 });
     expect(bars[1]).toMatchObject({ startDayIndex: 0, endDayIndex: 1 });
+  });
+
+  it("visually merges consecutive month bars when LA job number normalizes the same", () => {
+    const snap = makeSnapshot({
+      busy: [
+        { startUtc: "2026-05-19T04:00:00.000Z", endUtc: "2026-05-21T04:00:00.000Z" },
+        { startUtc: "2026-05-21T04:00:00.000Z", endUtc: "2026-05-23T04:00:00.000Z" },
+      ],
+      namedEvents: [
+        {
+          startUtc: "2026-05-19T04:00:00.000Z",
+          endUtc: "2026-05-21T04:00:00.000Z",
+          summary: "LA 70924 Wilmington Flower Market",
+          eventId: "evt-la70924-a",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+        {
+          startUtc: "2026-05-21T04:00:00.000Z",
+          endUtc: "2026-05-23T04:00:00.000Z",
+          summary: "LA70924 WFM Alt Details",
+          eventId: "evt-la70924-b",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+      ],
+    });
+
+    const month = buildMonthBoard({
+      snapshot: snap,
+      month: "2026-05",
+      timezone: TZ,
+    });
+
+    const week = month.weeks.find((w) => w.days.some((d) => d.date === "2026-05-19"));
+    const bars = week?.bars.filter((bar) => bar.label === "LA#70924") ?? [];
+    expect(bars).toHaveLength(1);
+    expect(bars[0]).toMatchObject({ startDayIndex: 1, endDayIndex: 4 });
+    const mergedEventIds = bars[0]?.details.map((detail) => detail.eventId);
+    expect(mergedEventIds).toEqual(expect.arrayContaining(["evt-la70924-a", "evt-la70924-b"]));
+  });
+
+  it("does not merge non-consecutive month bars for the same LA number", () => {
+    const snap = makeSnapshot({
+      busy: [
+        { startUtc: "2026-05-19T04:00:00.000Z", endUtc: "2026-05-20T04:00:00.000Z" },
+        { startUtc: "2026-05-22T04:00:00.000Z", endUtc: "2026-05-23T04:00:00.000Z" },
+      ],
+      namedEvents: [
+        {
+          startUtc: "2026-05-19T04:00:00.000Z",
+          endUtc: "2026-05-20T04:00:00.000Z",
+          summary: "LA#70924 WFM",
+          eventId: "evt-la70924-gap-a",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+        {
+          startUtc: "2026-05-22T04:00:00.000Z",
+          endUtc: "2026-05-23T04:00:00.000Z",
+          summary: "LA 70924 WFM",
+          eventId: "evt-la70924-gap-b",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+      ],
+    });
+
+    const month = buildMonthBoard({
+      snapshot: snap,
+      month: "2026-05",
+      timezone: TZ,
+    });
+
+    const week = month.weeks.find((w) => w.days.some((d) => d.date === "2026-05-19"));
+    const bars = week?.bars.filter((bar) => bar.label === "LA#70924") ?? [];
+    expect(bars).toHaveLength(2);
+  });
+
+  it("falls back to existing behavior when no high-confidence LA number is present", () => {
+    const snap = makeSnapshot({
+      busy: [
+        { startUtc: "2026-05-19T04:00:00.000Z", endUtc: "2026-05-20T04:00:00.000Z" },
+        { startUtc: "2026-05-20T04:00:00.000Z", endUtc: "2026-05-21T04:00:00.000Z" },
+      ],
+      namedEvents: [
+        {
+          startUtc: "2026-05-19T04:00:00.000Z",
+          endUtc: "2026-05-20T04:00:00.000Z",
+          summary: "70924 Wilmington Flower Market",
+          eventId: "evt-plain-70924-a",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+        {
+          startUtc: "2026-05-20T04:00:00.000Z",
+          endUtc: "2026-05-21T04:00:00.000Z",
+          summary: "70924 WFM Alt Details",
+          eventId: "evt-plain-70924-b",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+      ],
+    });
+
+    const month = buildMonthBoard({
+      snapshot: snap,
+      month: "2026-05",
+      timezone: TZ,
+    });
+
+    const week = month.weeks.find((w) => w.days.some((d) => d.date === "2026-05-19"));
+    const bars = week?.bars.filter((bar) => bar.details.some((detail) =>
+      detail.eventId === "evt-plain-70924-a" || detail.eventId === "evt-plain-70924-b")) ?? [];
+    expect(bars).toHaveLength(2);
   });
 
   it("masks private bars as Unavailable and never exposes private summaries", () => {
