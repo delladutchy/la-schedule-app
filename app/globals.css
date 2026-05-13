@@ -1123,6 +1123,24 @@ body {
   padding-top: 0;
 }
 
+.board-day-modal-day-breakdown {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.board-day-modal-day-breakdown li {
+  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  padding-top: 8px;
+}
+
+.board-day-modal-day-breakdown li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
 .board-day-modal-event-title {
   margin: 0;
   font-size: 12px;

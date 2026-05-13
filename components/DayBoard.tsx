@@ -857,6 +857,7 @@ export function DayBoard({
     ? enumerateIsoDatesInRange(bookingStartDate, parsedBookingEndDate >= bookingStartDate ? parsedBookingEndDate : bookingStartDate)
     : [];
   const bookingHasMultiDayRange = bookingSelectedDates.length > 1;
+  const overallJobNotesLabel = bookingHasMultiDayRange ? "Overall Job Notes" : "Job Notes";
   const resolveCallTimeFromInputs = (option: string, other: string): string => (
     option === "Other" ? other.trim() : option.trim()
   );
@@ -1254,7 +1255,7 @@ export function DayBoard({
                 ) : null}
                 {activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.globalJobNotes ? (
                   <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
-                    <span className="board-day-modal-event-label">Notes</span>{" "}
+                    <span className="board-day-modal-event-label">Overall Job Notes</span>{" "}
                     {activeSelectedDayMeta.globalJobNotes}
                   </p>
                 ) : null}
@@ -1620,27 +1621,7 @@ export function DayBoard({
                 />
               ) : null}
 
-              <label className="month-booking-label" htmlFor="week-booking-notes">
-                Job Notes
-              </label>
-              <textarea
-                id="week-booking-notes"
-                name="job-notes"
-                className="month-booking-textarea"
-                autoComplete="off"
-                autoCapitalize="sentences"
-                value={bookingNotes}
-                onChange={(event) => {
-                  setBookingNotes(event.target.value);
-                  if (bookingError) setBookingError(null);
-                }}
-                placeholder="Venue notes, contact, etc."
-                maxLength={4000}
-                rows={4}
-                disabled={bookingModalIsLocked}
-              />
-
-              {activeBookingPanel.mode === "create" && bookingHasMultiDayRange ? (
+              {bookingHasMultiDayRange ? (
                 <div className="month-booking-daily-details">
                   <p className="month-booking-label">
                     Days
@@ -1716,6 +1697,26 @@ export function DayBoard({
                   </div>
                 </div>
               ) : null}
+
+              <label className="month-booking-label" htmlFor="week-booking-notes">
+                {overallJobNotesLabel}
+              </label>
+              <textarea
+                id="week-booking-notes"
+                name="job-notes"
+                className="month-booking-textarea"
+                autoComplete="off"
+                autoCapitalize="sentences"
+                value={bookingNotes}
+                onChange={(event) => {
+                  setBookingNotes(event.target.value);
+                  if (bookingError) setBookingError(null);
+                }}
+                placeholder="Venue notes, contact, etc."
+                maxLength={4000}
+                rows={4}
+                disabled={bookingModalIsLocked}
+              />
 
               {bookingError ? (
                 <p className="month-booking-error" role="alert">{bookingError}</p>

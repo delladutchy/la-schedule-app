@@ -13,6 +13,7 @@ import {
   mergeGigDescriptionWithDailyDetailsBlock,
   parseGigDescription,
   parseLaJobSummary,
+  resolveParsedGigDetailForDate,
 } from "@/lib/gigs";
 import { CALL_TIME_OPTIONS, isCallTimeOption } from "@/lib/call-time-options";
 
@@ -150,6 +151,39 @@ function formatCompactDate(isoDate: string): string {
 
 function formatShortDate(isoDate: string): string {
   return DateTime.fromISO(isoDate, { zone: "utc" }).toFormat("LLL d");
+}
+
+interface MonthPopupDayDetailRow {
+  date: string;
+  startTime: string | null;
+  dayNotes: string | null;
+}
+
+function formatMonthPopupRange(startDate: string, endDate: string): string {
+  const start = DateTime.fromISO(startDate, { zone: "utc" });
+  const end = DateTime.fromISO(endDate, { zone: "utc" });
+  if (!start.isValid || !end.isValid || end < start) return `${startDate} – ${endDate}`;
+  if (start.hasSame(end, "day")) return start.toFormat("LLL d");
+  if (start.year === end.year && start.month === end.month) {
+    return `${start.toFormat("LLL d")}–${end.toFormat("d")}`;
+  }
+  if (start.year === end.year) {
+    return `${start.toFormat("LLL d")} – ${end.toFormat("LLL d")}`;
+  }
+  return `${start.toFormat("LLL d, yyyy")} – ${end.toFormat("LLL d, yyyy")}`;
+}
+
+function resolveDetailRangeBounds(detail: BookedLabel["details"][number]): { startDate: string; endDateInclusive: string } | null {
+  const startDate = detail.startDate ?? detail.startUtc?.slice(0, 10);
+  const endDateInclusive = detail.endDateInclusive ?? detail.endUtc?.slice(0, 10) ?? startDate;
+  if (!startDate || !endDateInclusive || endDateInclusive < startDate) return null;
+  return { startDate, endDateInclusive };
+}
+
+function detailIncludesDate(detail: BookedLabel["details"][number], date: string): boolean {
+  const bounds = resolveDetailRangeBounds(detail);
+  if (!bounds) return false;
+  return date >= bounds.startDate && date <= bounds.endDateInclusive;
 }
 
 interface BookingCalendarDay {
@@ -758,6 +792,7 @@ export function MonthBoard({
     ? enumerateIsoDatesInRange(bookingStartDate, parsedBookingEndDate >= bookingStartDate ? parsedBookingEndDate : bookingStartDate)
     : [];
   const bookingHasMultiDayRange = bookingSelectedDates.length > 1;
+  const overallJobNotesLabel = bookingHasMultiDayRange ? "Overall Job Notes" : "Job Notes";
   const resolveCallTimeFromInputs = (option: string, other: string): string => (
     option === "Other" ? other.trim() : option.trim()
   );
@@ -786,6 +821,67 @@ export function MonthBoard({
     activeDetailPanel
     && activeDetailPanel.details.some((detail) => isLaDetail(detail, editorCalendarId, overtureCalendarId))
   );
+  const activeDetailRangeBounds = activeDetailPanel
+    ? activeDetailPanel.details
+      .map(resolveDetailRangeBounds)
+      .filter((value): value is { startDate: string; endDateInclusive: string } => value != null)
+      .reduce<{ startDate: string; endDateInclusive: string } | null>((acc, current) => {
+        if (!acc) return current;
+        return {
+          startDate: current.startDate < acc.startDate ? current.startDate : acc.startDate,
+          endDateInclusive: current.endDateInclusive > acc.endDateInclusive
+            ? current.endDateInclusive
+            : acc.endDateInclusive,
+        };
+      }, null)
+    : null;
+  const activeDetailRangeLabel = activeDetailRangeBounds
+    ? formatMonthPopupRange(activeDetailRangeBounds.startDate, activeDetailRangeBounds.endDateInclusive)
+    : activeDetailPanel?.details[0]?.dateRangeLabel ?? null;
+  const activeDetailDayRows: MonthPopupDayDetailRow[] = (() => {
+    if (!activeDetailPanel || !activeDetailRangeBounds) return [];
+    const rows: MonthPopupDayDetailRow[] = [];
+    const allDates = enumerateIsoDatesInRange(
+      activeDetailRangeBounds.startDate,
+      activeDetailRangeBounds.endDateInclusive,
+    );
+    for (const date of allDates) {
+      let startTime: string | null = null;
+      let dayNotes: string | null = null;
+      for (const detail of activeDetailPanel.details) {
+        if (!detailIncludesDate(detail, date)) continue;
+        if (!canViewDetailNotes(detail, normalizedEditorId, editorCalendarId, overtureCalendarId)) {
+          continue;
+        }
+        const parsed = parseGigDescription(detail.description);
+        const resolved = resolveParsedGigDetailForDate(parsed, date);
+        if (!startTime && resolved.startTime?.trim()) {
+          startTime = resolved.startTime.trim();
+        }
+        if (!dayNotes && resolved.notes?.trim()) {
+          dayNotes = resolved.notes.trim();
+        }
+        if (startTime && dayNotes) break;
+      }
+      rows.push({ date, startTime, dayNotes });
+    }
+    return rows;
+  })();
+  const activeDetailOverallNotes = (() => {
+    if (!activeDetailPanel) return null;
+    for (const detail of activeDetailPanel.details) {
+      if (!canViewDetailNotes(detail, normalizedEditorId, editorCalendarId, overtureCalendarId)) {
+        continue;
+      }
+      const parsed = parseGigDescription(detail.description);
+      const notes = parsed.jobNotes?.trim();
+      if (notes) return notes;
+    }
+    return null;
+  })();
+  const activeDetailPrimaryTitle = activeDetailPanel
+    ? stripJobPrefix(activeDetailPanel.details[0]?.summary ?? activeDetailPanel.header, activeDetailPanel.headerJobNumber)
+    : "";
   const canManageActiveDetail = editorModeActive
     && !!activeEditableDetail;
   const showDeleteConfirm = !!confirmDeleteEventId
@@ -1145,55 +1241,42 @@ export function MonthBoard({
             </h3>
 
             {activeDetailPanel.details.length > 0 ? (
-              <ul className="board-day-modal-events">
-                {activeDetailPanel.details.map((detail, index) => {
-                  const detailTitle = stripJobPrefix(detail.summary, activeDetailPanel.headerJobNumber);
-                  const hideTitle = !activeDetailPanel.headerJobNumber
-                    && (
-                      detail.summary === "Unavailable"
-                      || (activeDetailPanel.details.length === 1
-                        && detail.summary === activeDetailPanel.header)
-                    );
-                  const detailParsedDescription = parseGigDescription(detail.description);
-                  const showDetailNotes = canViewDetailNotes(
-                    detail,
-                    normalizedEditorId,
-                    editorCalendarId,
-                    overtureCalendarId,
-                  );
-
-                  return (
-                    <li
-                      key={`${detail.summary}-${detail.dateRangeLabel ?? ""}-${detail.timeRangeLabel ?? ""}-${index}`}
-                    >
-                      {!hideTitle ? (
-                        <p className="board-day-modal-event-title">{detailTitle}</p>
-                      ) : null}
-                      {detail.dateRangeLabel ? (
-                        <p className="board-day-modal-event-date">{detail.dateRangeLabel}</p>
-                      ) : null}
-                      {detail.timeRangeLabel ? (
+              <div className="board-day-modal-events">
+                <p className="board-day-modal-event-title">{activeDetailPrimaryTitle}</p>
+                {activeDetailRangeLabel ? (
+                  <p className="board-day-modal-event-date">{activeDetailRangeLabel}</p>
+                ) : null}
+                {activeDetailDayRows.length > 0 ? (
+                  <ul className="board-day-modal-day-breakdown">
+                    {activeDetailDayRows.map((row) => (
+                      <li key={row.date}>
                         <p className="board-day-modal-event-meta">
-                          <span className="board-day-modal-event-label">Time</span>{" "}
-                          {detail.timeRangeLabel}
+                          <span className="board-day-modal-event-label">Day</span>{" "}
+                          {formatCompactDate(row.date)}
                         </p>
-                      ) : null}
-                      {showDetailNotes && detailParsedDescription.callTime ? (
-                        <p className="board-day-modal-event-meta">
-                          <span className="board-day-modal-event-label">Call</span>{" "}
-                          {detailParsedDescription.callTime}
-                        </p>
-                      ) : null}
-                      {showDetailNotes && detailParsedDescription.jobNotes ? (
-                        <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
-                          <span className="board-day-modal-event-label">Notes</span>{" "}
-                          {detailParsedDescription.jobNotes}
-                        </p>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
+                        {row.startTime ? (
+                          <p className="board-day-modal-event-meta">
+                            <span className="board-day-modal-event-label">Start</span>{" "}
+                            {row.startTime}
+                          </p>
+                        ) : null}
+                        {row.dayNotes ? (
+                          <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
+                            <span className="board-day-modal-event-label">Day Notes</span>{" "}
+                            {row.dayNotes}
+                          </p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {activeDetailOverallNotes ? (
+                  <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
+                    <span className="board-day-modal-event-label">Overall Job Notes</span>{" "}
+                    {activeDetailOverallNotes}
+                  </p>
+                ) : null}
+              </div>
             ) : (
               <p className="board-day-modal-empty">No event details available.</p>
             )}
@@ -1548,27 +1631,7 @@ export function MonthBoard({
                 />
               ) : null}
 
-              <label className="month-booking-label" htmlFor="booking-notes">
-                Job Notes
-              </label>
-              <textarea
-                id="booking-notes"
-                name="job-notes"
-                className="month-booking-textarea"
-                autoComplete="off"
-                autoCapitalize="sentences"
-                value={bookingNotes}
-                onChange={(event) => {
-                  setBookingNotes(event.target.value);
-                  if (bookingError) setBookingError(null);
-                }}
-                placeholder="Venue notes, contact, etc."
-                maxLength={4000}
-                rows={4}
-                disabled={bookingModalIsLocked}
-              />
-
-              {activeBookingPanel.mode === "create" && bookingHasMultiDayRange ? (
+              {bookingHasMultiDayRange ? (
                 <div className="month-booking-daily-details">
                   <p className="month-booking-label">
                     Days
@@ -1644,6 +1707,26 @@ export function MonthBoard({
                   </div>
                 </div>
               ) : null}
+
+              <label className="month-booking-label" htmlFor="booking-notes">
+                {overallJobNotesLabel}
+              </label>
+              <textarea
+                id="booking-notes"
+                name="job-notes"
+                className="month-booking-textarea"
+                autoComplete="off"
+                autoCapitalize="sentences"
+                value={bookingNotes}
+                onChange={(event) => {
+                  setBookingNotes(event.target.value);
+                  if (bookingError) setBookingError(null);
+                }}
+                placeholder="Venue notes, contact, etc."
+                maxLength={4000}
+                rows={4}
+                disabled={bookingModalIsLocked}
+              />
 
               {bookingError ? (
                 <p className="month-booking-error" role="alert">{bookingError}</p>
