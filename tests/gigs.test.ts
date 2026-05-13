@@ -164,6 +164,7 @@ describe("parseGigDescription/buildGigDescription", () => {
       callTime: "8:00 AM",
       jobNotes: "Venue loading at north dock",
     });
+    expect(parseGigDescription(built).dayDetails).toBeUndefined();
   });
 
   it("omits empty lines and parses multi-line notes", () => {
@@ -215,6 +216,19 @@ describe("parseGigDescription/buildGigDescription", () => {
 });
 
 describe("mergeGigDescriptionWithDailyDetailsBlock", () => {
+  it("preserves legacy single-day description metadata without adding day details", () => {
+    const original = "Human notes stay exactly here.";
+    const merged = mergeGigDescriptionWithDailyDetailsBlock(original, {
+      callTime: "8:00 AM",
+      jobNotes: "Venue loading at north dock",
+    });
+    expect(merged?.startsWith(original)).toBe(true);
+    const parsed = parseGigDescription(merged ?? "");
+    expect(parsed.callTime).toBe("8:00 AM");
+    expect(parsed.jobNotes).toBe("Venue loading at north dock");
+    expect(parsed.dayDetails).toBeUndefined();
+  });
+
   it("preserves human-written description verbatim and appends block when none exists", () => {
     const human = "Line 1\nLine 2\nCall producer at 7.";
     const merged = mergeGigDescriptionWithDailyDetailsBlock(human, {

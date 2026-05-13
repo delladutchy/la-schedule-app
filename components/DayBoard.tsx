@@ -541,7 +541,9 @@ export function DayBoard({
       return;
     }
     const selectedDates = enumerateIsoDatesInRange(startDate, endDate);
-    const dailyOverrides = selectedDates
+    const bookingHasMultiDayRange = selectedDates.length > 1;
+    const dailyOverrides = bookingHasMultiDayRange
+      ? selectedDates
       .map((date) => {
         const override = bookingDayOverrides[date];
         if (!override) return null;
@@ -555,21 +557,25 @@ export function DayBoard({
           notes: override.notes,
         };
       })
-      .filter((row): row is { date: string; startTime: string; notes: string } | { date: string; invalid: true } => row != null);
-    const invalidDailyOverride = dailyOverrides.find((detail) => "invalid" in detail);
-    if (invalidDailyOverride) {
+      .filter((row): row is { date: string; startTime: string; notes: string } | { date: string; invalid: true } => row != null)
+      : [];
+    const invalidDailyOverride = bookingHasMultiDayRange
+      ? dailyOverrides.find((detail) => "invalid" in detail)
+      : null;
+    if (bookingHasMultiDayRange && invalidDailyOverride) {
       setBookingError(`Enter a custom start time for ${formatCompactDate(invalidDailyOverride.date)} or choose another option.`);
       setIsBookingSavePending(false);
       return;
     }
-
-    const dayDetails = buildGigDayDetailsForRange({
-      startDate,
-      endDateInclusive: endDate,
-      defaultStartTime: callTime,
-      defaultNotes: bookingNotes,
-      overrides: dailyOverrides,
-    });
+    const dayDetails = bookingHasMultiDayRange
+      ? buildGigDayDetailsForRange({
+          startDate,
+          endDateInclusive: endDate,
+          defaultStartTime: callTime,
+          defaultNotes: bookingNotes,
+          overrides: dailyOverrides,
+        })
+      : undefined;
     const description = activeBookingPanel.mode === "edit"
       ? mergeGigDescriptionWithDailyDetailsBlock(bookingExistingDescriptionRaw, {
           callTime,
@@ -1563,7 +1569,7 @@ export function DayBoard({
                 disabled={bookingModalIsLocked}
               />
 
-              {activeBookingPanel.mode === "create" && bookingSelectedDates.length > 0 ? (
+              {activeBookingPanel.mode === "create" && bookingHasMultiDayRange ? (
                 <div className="month-booking-daily-details">
                   <p className="month-booking-label">
                     Daily Details
