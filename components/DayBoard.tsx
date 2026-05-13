@@ -586,15 +586,6 @@ export function DayBoard({
     if (bookingError) setBookingError(null);
   };
 
-  const clearBookingDayOverride = (date: string) => {
-    setBookingDayOverrides((current) => {
-      const next = { ...current };
-      delete next[date];
-      return next;
-    });
-    if (bookingError) setBookingError(null);
-  };
-
   async function saveBooking() {
     if (!activeBookingPanel || isBookingSavePending) return;
     if (!editorModeActive) {
@@ -1780,21 +1771,10 @@ export function DayBoard({
                       const dayCallTimeOption = override?.callTimeOption ?? bookingCallTimeOption;
                       const dayCallTimeOther = override?.callTimeOther ?? bookingCallTimeOther;
                       const dayNotes = override?.notes ?? "";
-                      const hasOverride = !!override;
                       return (
                         <div key={date} className="month-booking-daily-row">
                           <div className="month-booking-daily-row-header">
                             <span>{formatCompactDate(date)}</span>
-                            {hasOverride ? (
-                              <button
-                                type="button"
-                                className="month-booking-daily-reset"
-                                onClick={() => clearBookingDayOverride(date)}
-                                disabled={bookingModalIsLocked}
-                              >
-                                Use default
-                              </button>
-                            ) : null}
                           </div>
                           <select
                             className="month-booking-input month-booking-input--small"
