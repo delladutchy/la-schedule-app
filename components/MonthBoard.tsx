@@ -792,13 +792,7 @@ export function MonthBoard({
     ? enumerateIsoDatesInRange(bookingStartDate, parsedBookingEndDate >= bookingStartDate ? parsedBookingEndDate : bookingStartDate)
     : [];
   const bookingHasMultiDayRange = bookingSelectedDates.length > 1;
-  const overallJobNotesLabel = bookingHasMultiDayRange ? "Additional Notes" : "Job Notes";
-  const defaultStartTimeLabel = bookingHasMultiDayRange ? "Default Start Time" : "Call Time";
-  const bookingHeaderLabel = isOvertureBookingMode
-    ? "Overture"
-    : bookingLaNumber.trim()
-      ? `LA#${bookingLaNumber.trim()}`
-      : bookingJobName.trim() || "New Job";
+  const overallJobNotesLabel = "Job Notes";
   const resolveCallTimeFromInputs = (option: string, other: string): string => (
     option === "Other" ? other.trim() : option.trim()
   );
@@ -1222,9 +1216,7 @@ export function MonthBoard({
             </button>
 
             <h3 id="month-job-detail-title" className="board-day-modal-title">
-              {activeDetailIsMultiDay ? (
-                activeDetailPanel.header
-              ) : activeDetailIsOverture ? (
+              {activeDetailIsOverture ? (
                 <img
                   src="/brand/overture-logo.png"
                   alt="Overture"
@@ -1254,7 +1246,9 @@ export function MonthBoard({
 
             {activeDetailPanel.details.length > 0 ? (
               <div className="board-day-modal-events">
-                <p className="board-day-modal-event-title">{activeDetailPrimaryTitle}</p>
+                {activeDetailPrimaryTitle && activeDetailPrimaryTitle.toLowerCase() !== activeDetailPanel.header.toLowerCase() ? (
+                  <p className="board-day-modal-event-title">{activeDetailPrimaryTitle}</p>
+                ) : null}
                 {activeDetailRangeLabel ? (
                   <p className="board-day-modal-event-date">{activeDetailRangeLabel}</p>
                 ) : null}
@@ -1263,13 +1257,11 @@ export function MonthBoard({
                     {activeDetailDayRows.map((row) => (
                       <li key={row.date}>
                         <p className="board-day-modal-event-meta">
-                          <span className="board-day-modal-event-label">Day</span>{" "}
                           {formatCompactDate(row.date)}
                           {row.startTime ? ` · ${row.startTime}` : ""}
                         </p>
                         {row.dayNotes ? (
                           <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
-                            <span className="board-day-modal-event-label">Day Notes</span>{" "}
                             {row.dayNotes}
                           </p>
                         ) : null}
@@ -1278,10 +1270,12 @@ export function MonthBoard({
                   </ul>
                 ) : null}
                 {activeDetailOverallNotes ? (
-                  <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
-                    <span className="board-day-modal-event-label">Additional Notes</span>{" "}
-                    {activeDetailOverallNotes}
-                  </p>
+                  <>
+                    <p className="board-day-modal-event-label">Job Notes</p>
+                    <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
+                      {activeDetailOverallNotes}
+                    </p>
+                  </>
                 ) : null}
               </div>
             ) : (
@@ -1385,12 +1379,6 @@ export function MonthBoard({
             <p className="board-day-modal-event-date">{bookingDateLabel}</p>
 
             <div className="month-booking-form">
-              {bookingHasMultiDayRange ? (
-                <div className="month-booking-summary-card">
-                  <p className="month-booking-summary-title">{bookingHeaderLabel}</p>
-                  <p className="month-booking-summary-range">{bookingRangeLabel}</p>
-                </div>
-              ) : null}
               {showBookingModeSelector ? (
                 <div className="month-booking-mode">
                   <p className="month-booking-label">Booking Type</p>
@@ -1601,53 +1589,56 @@ export function MonthBoard({
                 ) : null}
               </div>
 
-              <label className="month-booking-label" htmlFor="booking-call-time">
-                {defaultStartTimeLabel}
-              </label>
-              <select
-                id="booking-call-time"
-                name="job-call-time"
-                className="month-booking-input"
-                autoComplete="off"
-                value={bookingCallTimeOption}
-                onChange={(event) => {
-                  setBookingCallTimeOption(event.target.value);
-                  if (bookingError) setBookingError(null);
-                }}
-                disabled={bookingModalIsLocked}
-              >
-                {CALL_TIME_OPTIONS.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-                <option value="Other">Other</option>
-              </select>
-
-              {bookingCallTimeOption === "Other" ? (
-                <input
-                  id="booking-call-time-other"
-                  name="job-call-time-other"
-                  className="month-booking-input month-booking-input--small"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  value={bookingCallTimeOther}
-                  onChange={(event) => {
-                    setBookingCallTimeOther(event.target.value);
-                    if (bookingError) setBookingError(null);
-                  }}
-                  placeholder="Custom call time"
-                  maxLength={120}
-                  disabled={bookingModalIsLocked}
-                />
+              {!bookingHasMultiDayRange ? (
+                <>
+                  <label className="month-booking-label" htmlFor="booking-call-time">
+                    Call Time
+                  </label>
+                  <select
+                    id="booking-call-time"
+                    name="job-call-time"
+                    className="month-booking-input"
+                    autoComplete="off"
+                    value={bookingCallTimeOption}
+                    onChange={(event) => {
+                      setBookingCallTimeOption(event.target.value);
+                      if (bookingError) setBookingError(null);
+                    }}
+                    disabled={bookingModalIsLocked}
+                  >
+                    {CALL_TIME_OPTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                    <option value="Other">Other</option>
+                  </select>
+                  {bookingCallTimeOption === "Other" ? (
+                    <input
+                      id="booking-call-time-other"
+                      name="job-call-time-other"
+                      className="month-booking-input month-booking-input--small"
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      value={bookingCallTimeOther}
+                      onChange={(event) => {
+                        setBookingCallTimeOther(event.target.value);
+                        if (bookingError) setBookingError(null);
+                      }}
+                      placeholder="Custom call time"
+                      maxLength={120}
+                      disabled={bookingModalIsLocked}
+                    />
+                  ) : null}
+                </>
               ) : null}
 
               {bookingHasMultiDayRange ? (
                 <div className="month-booking-daily-details">
                   <p className="month-booking-label">
-                    Daily Schedule
+                    Call Times
                   </p>
                   <div className="month-booking-daily-list">
                     {bookingSelectedDates.map((date) => {
@@ -1710,7 +1701,7 @@ export function MonthBoard({
                             onChange={(event) => {
                               updateBookingDayOverride(date, { notes: event.target.value });
                             }}
-                            placeholder="Day notes (optional)"
+                            placeholder="Notes"
                             maxLength={4000}
                             disabled={bookingModalIsLocked}
                           />
