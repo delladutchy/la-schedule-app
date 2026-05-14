@@ -58,12 +58,60 @@ export const DAY_NOTE_CHIPS = [
   "Strike",
 ] as const;
 
+function normalizeDayNoteSegment(segment: string): string {
+  return segment.replace(/\s+/g, " ").trim();
+}
+
+function tokenizeDayNotes(current: string): string[] {
+  return current
+    .split(/\s*\/\s*/g)
+    .map(normalizeDayNoteSegment)
+    .filter((segment) => segment.length > 0);
+}
+
+const NORMALIZED_DAY_NOTE_CHIPS = DAY_NOTE_CHIPS.map((chip) =>
+  normalizeDayNoteSegment(chip).toLowerCase());
+
+function startsWithSegmentLabel(segment: string, label: string): boolean {
+  if (!segment.startsWith(label)) return false;
+  if (segment.length === label.length) return true;
+  const nextChar = segment.charAt(label.length);
+  return /[\s.,;:!?()[\]{}'"&/+\\|-]/.test(nextChar);
+}
+
+function segmentContainsChip(segment: string, chip: string): boolean {
+  const normalizedSegment = normalizeDayNoteSegment(segment).toLowerCase();
+  const normalizedChip = normalizeDayNoteSegment(chip).toLowerCase();
+  if (!normalizedSegment || !normalizedChip) return false;
+  if (!startsWithSegmentLabel(normalizedSegment, normalizedChip)) return false;
+  if (normalizedSegment === normalizedChip) return true;
+
+  // Avoid false positives where a longer exact preset label should win.
+  const hasLongerPresetMatch = NORMALIZED_DAY_NOTE_CHIPS.some((otherChip) =>
+    otherChip !== normalizedChip
+      && otherChip.startsWith(normalizedChip)
+      && startsWithSegmentLabel(normalizedSegment, otherChip));
+  if (hasLongerPresetMatch) return false;
+
+  return true;
+}
+
+export function isDayNoteChipActive(current: string, chip: string): boolean {
+  return tokenizeDayNotes(current).some((segment) => segmentContainsChip(segment, chip));
+}
+
 export function applyDayNoteChip(current: string, chip: string): string {
-  if (!current.trim()) return chip;
-  const parts = current.split(" / ");
-  const idx = parts.findIndex((p) => p.trim() === chip);
+  const normalizedChip = normalizeDayNoteSegment(chip);
+  if (!normalizedChip) return current;
+  const parts = tokenizeDayNotes(current);
+  if (parts.length === 0) return normalizedChip;
+  const idx = parts.findIndex((segment) => segmentContainsChip(segment, normalizedChip));
   if (idx !== -1) {
-    return parts.filter((_, i) => i !== idx).join(" / ");
+    return parts
+      .filter((_, i) => i !== idx)
+      .map(normalizeDayNoteSegment)
+      .filter((segment) => segment.length > 0)
+      .join(" / ");
   }
-  return current + " / " + chip;
+  return [...parts, normalizedChip].join(" / ");
 }

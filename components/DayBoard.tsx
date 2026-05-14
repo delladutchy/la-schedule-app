@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type TouchEventHandler } from "react";
 import { useRouter } from "next/navigation";
+import { createPortal } from "react-dom";
 import { DateTime } from "luxon";
 import {
   buildWeekRenderRows,
@@ -19,7 +20,13 @@ import {
   parseLaJobSummary,
   resolveParsedGigDetailForDate,
 } from "@/lib/gigs";
-import { CALL_TIME_OPTIONS, DAY_NOTE_CHIPS, applyDayNoteChip, isCallTimeOption } from "@/lib/call-time-options";
+import {
+  CALL_TIME_OPTIONS,
+  DAY_NOTE_CHIPS,
+  applyDayNoteChip,
+  isCallTimeOption,
+  isDayNoteChipActive,
+} from "@/lib/call-time-options";
 
 interface Props {
   weeks: WeekGroup[];
@@ -430,8 +437,29 @@ export function DayBoard({
 
   useEffect(() => {
     if (!activeDetailPanel && !activeBookingPanel) return undefined;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
+    const scrollY = window.scrollY;
+    document.documentElement.style.setProperty("--modal-scroll-y", `-${scrollY}px`);
+    document.documentElement.classList.add("modal-open");
+
+    const updateViewport = () => {
+      const h = window.innerHeight;
+      const w = window.innerWidth;
+      document.documentElement.style.setProperty("--visual-vh", `${h}px`);
+      document.documentElement.style.setProperty("--visual-vw", `${w}px`);
+    };
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    window.addEventListener("orientationchange", updateViewport);
+
+    return () => {
+      window.removeEventListener("resize", updateViewport);
+      window.removeEventListener("orientationchange", updateViewport);
+      document.documentElement.classList.remove("modal-open");
+      document.documentElement.style.removeProperty("--modal-scroll-y");
+      document.documentElement.style.removeProperty("--visual-vh");
+      document.documentElement.style.removeProperty("--visual-vw");
+      window.scrollTo(0, scrollY);
+    };
   }, [activeDetailPanel, activeBookingPanel]);
 
   useEffect(() => {
@@ -569,12 +597,29 @@ export function DayBoard({
   };
 
   const applySameDaySelection = () => {
+    dismissMobileKeyboardForRangeChange();
     if (!activeBookingPanel) return;
     const sameDay = activeBookingPanel.date;
     setBookingEndDate(sameDay);
     setBookingPickerMonthKey(DateTime.fromISO(sameDay, { zone: "utc" }).toFormat("yyyy-LL"));
     setBookingPickerExpanded(false);
     if (bookingError) setBookingError(null);
+  };
+
+  const dismissMobileKeyboardForRangeChange = () => {
+    if (typeof window === "undefined") return;
+    if (!window.matchMedia("(max-width: 760px) and (hover: none)").matches) return;
+    const activeElement = document.activeElement;
+    if (!(activeElement instanceof HTMLElement)) return;
+    if (
+      !(activeElement instanceof HTMLInputElement)
+      && !(activeElement instanceof HTMLTextAreaElement)
+      && !(activeElement instanceof HTMLSelectElement)
+      && !activeElement.isContentEditable
+    ) {
+      return;
+    }
+    activeElement.blur();
   };
 
   const updateBookingDayOverride = (
@@ -1467,9 +1512,9 @@ export function DayBoard({
         </div>
       ) : null}
 
-      {activeBookingPanel ? (
+      {activeBookingPanel && typeof document !== "undefined" ? createPortal(
         <div
-          className="board-day-modal-backdrop board-day-modal-backdrop--booking"
+          className="board-day-modal-backdrop board-day-modal-backdrop--booking board-day-modal-backdrop--booking-mobile-sheet"
           role="presentation"
           onClick={() => {
             if (bookingModalIsLocked) return;
@@ -1478,7 +1523,7 @@ export function DayBoard({
         >
           <section
             id="week-booking-modal"
-            className="board-day-modal board-day-modal--booking"
+            className="board-day-modal board-day-modal--booking board-day-modal--booking-mobile-sheet"
             role="dialog"
             aria-modal="true"
             aria-labelledby="week-booking-title"
@@ -1634,7 +1679,10 @@ export function DayBoard({
                 <button
                   type="button"
                   className={`month-booking-range-toggle${bookingPickerExpanded ? " is-open" : ""}`}
-                  onClick={() => setBookingPickerExpanded((prev) => !prev)}
+                  onClick={() => {
+                    dismissMobileKeyboardForRangeChange();
+                    setBookingPickerExpanded((prev) => !prev);
+                  }}
                   aria-expanded={bookingPickerExpanded}
                   aria-controls="week-booking-calendar-panel"
                   disabled={bookingModalIsLocked}
@@ -1706,6 +1754,7 @@ export function DayBoard({
                             ].filter(Boolean).join(" ")}
                             disabled={bookingModalIsLocked || isDisabled}
                             onClick={() => {
+                              dismissMobileKeyboardForRangeChange();
                               setBookingEndDate(day.isoDate);
                               setBookingPickerExpanded(false);
                               if (bookingError) setBookingError(null);
@@ -1842,7 +1891,7 @@ export function DayBoard({
                           {!isOvertureBookingMode && (
                           <div className="month-booking-day-chips">
                             {DAY_NOTE_CHIPS.map((chip) => {
-                              const isActive = dayNotes.split(" / ").some((p) => p.trim() === chip);
+                              const isActive = isDayNoteChipActive(dayNotes, chip);
                               return (
                                 <button
                                   key={chip}
@@ -1927,7 +1976,8 @@ export function DayBoard({
               </button>
             </div>
           </section>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );
