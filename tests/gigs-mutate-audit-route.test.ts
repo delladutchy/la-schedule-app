@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  APP_DAILY_DETAILS_BLOCK_END,
+  APP_DAILY_DETAILS_BLOCK_START,
+  mergeGigDescriptionWithDailyDetailsBlock,
+} from "@/lib/gigs";
 
 const updateAllDayEvent = vi.fn();
 const deleteCalendarEvent = vi.fn();
@@ -184,6 +189,103 @@ describe("/api/gigs/[eventId] audit logging", () => {
         ownerEditor: "milos",
       }),
     );
+  });
+
+  it("PATCH forwards merged description without changing human text outside the app block", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      busy: [{
+        startUtc: "2026-05-08T00:00:00.000Z",
+        endUtc: "2026-05-09T00:00:00.000Z",
+      }],
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-edit-desc",
+        startUtc: "2026-05-08T00:00:00.000Z",
+        endUtc: "2026-05-09T00:00:00.000Z",
+        ownerEditor: "dave",
+      }],
+    });
+    updateAllDayEvent.mockResolvedValue({ id: "evt-edit-desc", status: "confirmed" });
+
+    const originalHuman = "Shoot notes line A\nShoot notes line B";
+    const mergedDescription = mergeGigDescriptionWithDailyDetailsBlock(originalHuman, {
+      callTime: "9:00 AM",
+      dayDetails: [{ date: "2026-05-08", startTime: "9:00 AM" }],
+    });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-edit-desc", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12346 — Updated Job",
+        description: mergedDescription,
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-edit-desc" } });
+    expect(res.status).toBe(200);
+    expect(updateAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: mergedDescription,
+      }),
+    );
+    expect(mergedDescription).toContain(originalHuman);
+    expect(mergedDescription).toContain(APP_DAILY_DETAILS_BLOCK_START);
+    expect(mergedDescription).toContain(APP_DAILY_DETAILS_BLOCK_END);
+  });
+
+  it("PATCH keeps malformed existing block text and only appends new app-owned block", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      busy: [{
+        startUtc: "2026-05-08T00:00:00.000Z",
+        endUtc: "2026-05-09T00:00:00.000Z",
+      }],
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-edit-malformed-desc",
+        startUtc: "2026-05-08T00:00:00.000Z",
+        endUtc: "2026-05-09T00:00:00.000Z",
+        ownerEditor: "dave",
+      }],
+    });
+    updateAllDayEvent.mockResolvedValue({ id: "evt-edit-malformed-desc", status: "confirmed" });
+
+    const malformedExistingDescription = [
+      "Human notes stay as-is",
+      APP_DAILY_DETAILS_BLOCK_START,
+      "{ bad-json",
+    ].join("\n");
+    const mergedDescription = mergeGigDescriptionWithDailyDetailsBlock(malformedExistingDescription, {
+      callTime: "10:30 AM",
+      dayDetails: [{ date: "2026-05-08", startTime: "10:30 AM" }],
+    });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-edit-malformed-desc", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12346 — Updated Job",
+        description: mergedDescription,
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-edit-malformed-desc" } });
+    expect(res.status).toBe(200);
+    expect(updateAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: mergedDescription,
+      }),
+    );
+    expect(mergedDescription).toContain(malformedExistingDescription);
+    expect((mergedDescription?.match(new RegExp(APP_DAILY_DETAILS_BLOCK_START, "g")) ?? []).length).toBe(2);
   });
 
   it("allows limited editor to edit own event", async () => {

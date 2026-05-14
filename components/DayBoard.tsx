@@ -10,10 +10,14 @@ import {
 } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
 import {
+  buildGigDayDetailsForRange,
   buildGigDescription,
   buildLaJobSummary,
+  enumerateIsoDatesInRange,
+  mergeGigDescriptionWithDailyDetailsBlock,
   parseGigDescription,
   parseLaJobSummary,
+  resolveParsedGigDetailForDate,
 } from "@/lib/gigs";
 import { CALL_TIME_OPTIONS, isCallTimeOption } from "@/lib/call-time-options";
 
@@ -68,6 +72,7 @@ type BookedLabel = BookedDaySummary;
 
 interface ActiveDetailPanel {
   rowKey: string;
+  selectedDate: string;
   header: string;
   headerJobNumber?: string;
   details: BookedLabel["details"];
@@ -79,6 +84,14 @@ interface ActiveBookingPanel {
   date: string;
   bookingMode: "la" | "overture";
 }
+
+interface BookingDayOverride {
+  callTimeOption: string;
+  callTimeOther: string;
+  notes: string;
+}
+
+type BookingDayOverrideMap = Record<string, BookingDayOverride>;
 
 function stripJobPrefix(summary: string, jobNumber?: string): string {
   if (!jobNumber) return summary;
@@ -196,6 +209,24 @@ function formatShortDate(isoDate: string): string {
   return DateTime.fromISO(isoDate, { zone: "utc" }).toFormat("LLL d");
 }
 
+function formatDayAbbrev(isoDate: string): string {
+  return DateTime.fromISO(isoDate, { zone: "utc" }).toFormat("ccc");
+}
+
+function formatPopupDateRange(startDate: string, endDate: string): string {
+  const start = DateTime.fromISO(startDate, { zone: "utc" });
+  const end = DateTime.fromISO(endDate, { zone: "utc" });
+  if (!start.isValid || !end.isValid || end < start) return `${startDate} – ${endDate}`;
+  if (start.hasSame(end, "day")) return start.toFormat("LLL d");
+  if (start.year === end.year && start.month === end.month) {
+    return `${start.toFormat("LLL d")}–${end.toFormat("d")}`;
+  }
+  if (start.year === end.year) {
+    return `${start.toFormat("LLL d")} – ${end.toFormat("LLL d")}`;
+  }
+  return `${start.toFormat("LLL d, yyyy")} – ${end.toFormat("LLL d, yyyy")}`;
+}
+
 interface BookingCalendarDay {
   isoDate: string;
   dayNumber: string;
@@ -244,6 +275,74 @@ export function filterWeekRowsByWeekendVisibility(
       days: week.days.filter((day) => !day.isWeekend),
     }))
     .filter((week) => week.days.length > 0);
+}
+
+export function buildBookedDayInlineMetaForDate(
+  bookedLabel: BookedLabel,
+  date: string,
+): string | null {
+  const values = bookedLabel.details
+    .map((detail) => {
+      const parsed = parseGigDescription(detail.description);
+      const resolved = resolveParsedGigDetailForDate(parsed, date);
+      return resolved.startTime?.trim();
+    })
+    .filter((value): value is string => !!value && value.length > 0);
+  if (values.length === 0) return null;
+  const deduped = [...new Set(values)];
+  const [first, ...rest] = deduped;
+  if (!first) return null;
+  return rest.length > 0 ? `${first} +${rest.length}` : first;
+}
+
+export function buildWeekBookedBadgeDisplay(opts: {
+  bookedLabel: BookedLabel;
+  connectorPart: "none" | "start" | "middle" | "end";
+}): {
+  primary: string | null;
+  isSubtle?: boolean;
+} {
+  const label = opts.bookedLabel.label?.trim() ?? "";
+  const hasUsefulLabel = label.length > 0 && label.toLowerCase() !== "busy";
+
+  if (opts.connectorPart === "middle" || opts.connectorPart === "end") {
+    if (hasUsefulLabel) {
+      return { primary: "Booked", isSubtle: true };
+    }
+    return {
+      primary: label.length > 0 ? label : "Busy",
+    };
+  }
+
+  return {
+    primary: label.length > 0 ? label : "Busy",
+  };
+}
+
+function detailIncludesDate(detail: BookedLabel["details"][number], date: string): boolean {
+  const startDate = detail.startDate ?? detail.startUtc?.slice(0, 10);
+  const endDate = detail.endDateInclusive ?? detail.endUtc?.slice(0, 10) ?? startDate;
+  if (!startDate || !endDate) return false;
+  return date >= startDate && date <= endDate;
+}
+
+export function resolveSelectedDayPopupMeta(
+  detail: BookedLabel["details"][number],
+  selectedDate: string,
+): {
+  selectedStartTime: string | null;
+  selectedDayNotes: string | null;
+  globalJobNotes: string | null;
+} {
+  const parsed = parseGigDescription(detail.description);
+  const selected = resolveParsedGigDetailForDate(parsed, selectedDate);
+  const selectedNotes = parsed.dayDetails?.[selectedDate]?.notes?.trim() || null;
+  const globalNotes = parsed.jobNotes?.trim() || null;
+  return {
+    selectedStartTime: selected.startTime?.trim() || null,
+    selectedDayNotes: selectedNotes,
+    globalJobNotes: globalNotes || null,
+  };
 }
 
 /**
@@ -300,6 +399,8 @@ export function DayBoard({
   const [bookingCallTimeOption, setBookingCallTimeOption] = useState("TBD");
   const [bookingCallTimeOther, setBookingCallTimeOther] = useState("");
   const [bookingNotes, setBookingNotes] = useState("");
+  const [bookingDayOverrides, setBookingDayOverrides] = useState<BookingDayOverrideMap>({});
+  const [bookingExistingDescriptionRaw, setBookingExistingDescriptionRaw] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isBookingSavePending, setIsBookingSavePending] = useState(false);
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState<string | null>(null);
@@ -365,6 +466,8 @@ export function DayBoard({
     setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
+    setBookingDayOverrides({});
+    setBookingExistingDescriptionRaw("");
     setBookingError(null);
     setIsBookingSavePending(false);
     setConfirmDeleteEventId(null);
@@ -384,6 +487,8 @@ export function DayBoard({
     setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
+    setBookingDayOverrides({});
+    setBookingExistingDescriptionRaw("");
     setBookingError(null);
     setConfirmDeleteEventId(null);
     setDeleteError(null);
@@ -399,27 +504,56 @@ export function DayBoard({
     const summary = parseLaJobSummary(detail.summary);
     const parsedDescription = parseGigDescription(detail.description);
     const startMonthKey = DateTime.fromISO(startDate, { zone: "utc" }).toFormat("yyyy-LL");
+    const editBookingMode = resolveBookingModeFromDetail(detail, isMikeEditor, overtureCalendarId);
+
+    const globalCallTimeOption = parsedDescription.callTime && isCallTimeOption(parsedDescription.callTime)
+      ? parsedDescription.callTime
+      : parsedDescription.callTime
+        ? "Other"
+        : "TBD";
+    const globalCallTimeOther = parsedDescription.callTime && !isCallTimeOption(parsedDescription.callTime)
+      ? parsedDescription.callTime
+      : "";
+
+    const rehydratedDayOverrides: BookingDayOverrideMap = {};
+    if (parsedDescription.dayDetails) {
+      for (const [date, dayDetail] of Object.entries(parsedDescription.dayDetails)) {
+        const savedTime = dayDetail.startTime?.trim() ?? "";
+        const savedNotes = dayDetail.notes?.trim() ?? "";
+        const dayCallTimeOption = savedTime && isCallTimeOption(savedTime)
+          ? savedTime
+          : savedTime
+            ? "Other"
+            : "TBD";
+        const dayCallTimeOther = savedTime && !isCallTimeOption(savedTime) ? savedTime : "";
+        const differsFromGlobal = dayCallTimeOption !== globalCallTimeOption
+          || dayCallTimeOther !== globalCallTimeOther;
+        if (differsFromGlobal || savedNotes) {
+          rehydratedDayOverrides[date] = {
+            callTimeOption: dayCallTimeOption,
+            callTimeOther: dayCallTimeOther,
+            notes: savedNotes,
+          };
+        }
+      }
+    }
 
     setActiveBookingPanel({
       mode: "edit",
       eventId: detail.eventId,
       date: startDate,
-      bookingMode: resolveBookingModeFromDetail(detail, isMikeEditor, overtureCalendarId),
+      bookingMode: editBookingMode,
     });
-    setBookingLaNumber(summary.jobNumber?.replace(/\D/g, "") ?? "");
-    setBookingJobName(summary.jobName);
+    setBookingLaNumber(editBookingMode === "overture" ? "" : (summary.jobNumber?.replace(/\D/g, "") ?? ""));
+    setBookingJobName(editBookingMode === "overture" ? (parsedDescription.jobTitle?.trim() ?? "") : summary.jobName);
     setBookingEndDate(endDate);
     setBookingPickerMonthKey(startMonthKey);
     setBookingPickerExpanded(false);
-    setBookingCallTimeOption(parsedDescription.callTime && isCallTimeOption(parsedDescription.callTime)
-      ? parsedDescription.callTime
-      : parsedDescription.callTime
-        ? "Other"
-        : "TBD");
-    setBookingCallTimeOther(parsedDescription.callTime && !isCallTimeOption(parsedDescription.callTime)
-      ? parsedDescription.callTime
-      : "");
+    setBookingCallTimeOption(globalCallTimeOption);
+    setBookingCallTimeOther(globalCallTimeOther);
     setBookingNotes(parsedDescription.jobNotes ?? "");
+    setBookingDayOverrides(rehydratedDayOverrides);
+    setBookingExistingDescriptionRaw(detail.description ?? "");
     setBookingError(null);
     setConfirmDeleteEventId(null);
     setDeleteError(null);
@@ -433,6 +567,27 @@ export function DayBoard({
     setBookingEndDate(sameDay);
     setBookingPickerMonthKey(DateTime.fromISO(sameDay, { zone: "utc" }).toFormat("yyyy-LL"));
     setBookingPickerExpanded(false);
+    if (bookingError) setBookingError(null);
+  };
+
+  const updateBookingDayOverride = (
+    date: string,
+    patch: Partial<BookingDayOverride>,
+  ) => {
+    setBookingDayOverrides((current) => {
+      const previous = current[date] ?? {
+        callTimeOption: bookingCallTimeOption,
+        callTimeOther: bookingCallTimeOther,
+        notes: "",
+      };
+      return {
+        ...current,
+        [date]: {
+          ...previous,
+          ...patch,
+        },
+      };
+    });
     if (bookingError) setBookingError(null);
   };
 
@@ -466,15 +621,59 @@ export function DayBoard({
 
     setBookingError(null);
     setIsBookingSavePending(true);
-    const callTime = bookingCallTimeOption === "Other"
-      ? bookingCallTimeOther.trim()
-      : bookingCallTimeOption.trim();
+    const callTime = resolveCallTimeFromInputs(bookingCallTimeOption, bookingCallTimeOther);
     if (bookingCallTimeOption === "Other" && !callTime) {
       setBookingError("Enter a custom Call Time or choose another option.");
       setIsBookingSavePending(false);
       return;
     }
-    const description = buildGigDescription(callTime, bookingNotes);
+    const selectedDates = enumerateIsoDatesInRange(startDate, endDate);
+    const bookingHasMultiDayRange = selectedDates.length > 1;
+    const dailyOverrides = bookingHasMultiDayRange
+      ? selectedDates
+      .map((date) => {
+        const override = bookingDayOverrides[date];
+        if (!override) return null;
+        const overrideCallTime = resolveCallTimeFromInputs(override.callTimeOption, override.callTimeOther);
+        if (override.callTimeOption === "Other" && !overrideCallTime) {
+          return { date, invalid: true as const };
+        }
+        return {
+          date,
+          startTime: overrideCallTime,
+          notes: override.notes,
+        };
+      })
+      .filter((row): row is { date: string; startTime: string; notes: string } | { date: string; invalid: true } => row != null)
+      : [];
+    const invalidDailyOverride = bookingHasMultiDayRange
+      ? dailyOverrides.find((detail) => "invalid" in detail)
+      : null;
+    if (bookingHasMultiDayRange && invalidDailyOverride) {
+      setBookingError(`Enter a custom start time for ${formatCompactDate(invalidDailyOverride.date)} or choose another option.`);
+      setIsBookingSavePending(false);
+      return;
+    }
+    const dayDetails = bookingHasMultiDayRange
+      ? buildGigDayDetailsForRange({
+          startDate,
+          endDateInclusive: endDate,
+          defaultStartTime: callTime,
+          defaultNotes: undefined,
+          overrides: dailyOverrides,
+        })
+      : undefined;
+    const overtureJobTitle = activeBookingPanel.bookingMode === "overture" && bookingJobName.trim()
+      ? bookingJobName.trim()
+      : undefined;
+    const description = activeBookingPanel.mode === "edit"
+      ? mergeGigDescriptionWithDailyDetailsBlock(bookingExistingDescriptionRaw, {
+          callTime,
+          jobNotes: bookingNotes,
+          dayDetails,
+          jobTitle: overtureJobTitle,
+        })
+      : buildGigDescription(callTime, bookingNotes, dayDetails, overtureJobTitle);
 
     try {
       const endpoint = activeBookingPanel.mode === "edit"
@@ -629,6 +828,7 @@ export function DayBoard({
 
     setActiveDetailPanel({
       rowKey,
+      selectedDate: date,
       header,
       ...(bookedLabel.jobNumber
         ? { headerJobNumber: bookedLabel.jobNumber }
@@ -694,6 +894,15 @@ export function DayBoard({
         return "Select end date";
       })()
     : "Select end date";
+  const bookingSelectedDates = bookingStartDate && parsedBookingEndDate
+    ? enumerateIsoDatesInRange(bookingStartDate, parsedBookingEndDate >= bookingStartDate ? parsedBookingEndDate : bookingStartDate)
+    : [];
+  const bookingHasMultiDayRange = bookingSelectedDates.length > 1;
+  const overallJobNotesLabel = "Job Notes";
+  const resolveCallTimeFromInputs = (option: string, other: string): string => (
+    option === "Other" ? other.trim() : option.trim()
+  );
+  const defaultCallTimeValue = resolveCallTimeFromInputs(bookingCallTimeOption, bookingCallTimeOther);
   const canGoToPreviousBookingMonth = bookingStartMonth && bookingViewMonth
     ? bookingViewMonth > bookingStartMonth
     : false;
@@ -713,6 +922,87 @@ export function DayBoard({
     activeDetailPanel
     && activeDetailPanel.details.some((detail) => isLaDetail(detail, editorCalendarId, overtureCalendarId))
   );
+  const activeSelectedDate = activeDetailPanel?.selectedDate ?? null;
+  const activePrimaryDetail = activeDetailPanel && activeSelectedDate
+    ? activeDetailPanel.details.find((detail) => detailIncludesDate(detail, activeSelectedDate))
+      ?? activeDetailPanel.details[0]
+      ?? null
+    : null;
+  const activePrimaryDetailCanViewNotes = !!(
+    activePrimaryDetail
+    && canViewDetailNotes(
+      activePrimaryDetail,
+      normalizedEditorId,
+      editorCalendarId,
+      overtureCalendarId,
+    )
+  );
+  const activeSelectedDayMeta = activePrimaryDetail && activeSelectedDate
+    ? resolveSelectedDayPopupMeta(activePrimaryDetail, activeSelectedDate)
+    : null;
+  const activeDetailRangeBounds = activeDetailPanel
+    ? activeDetailPanel.details
+      .map((detail) => {
+        const startDate = detail.startDate ?? detail.startUtc?.slice(0, 10);
+        const endDateInclusive = detail.endDateInclusive ?? detail.endUtc?.slice(0, 10) ?? startDate;
+        if (!startDate || !endDateInclusive || endDateInclusive < startDate) return null;
+        return { startDate, endDateInclusive };
+      })
+      .filter((value): value is { startDate: string; endDateInclusive: string } => value != null)
+      .reduce<{ startDate: string; endDateInclusive: string } | null>((acc, current) => {
+        if (!acc) return current;
+        return {
+          startDate: current.startDate < acc.startDate ? current.startDate : acc.startDate,
+          endDateInclusive: current.endDateInclusive > acc.endDateInclusive
+            ? current.endDateInclusive
+            : acc.endDateInclusive,
+        };
+      }, null)
+    : null;
+  const activeDetailIsMultiDay = !!(
+    activeDetailRangeBounds
+    && activeDetailRangeBounds.startDate !== activeDetailRangeBounds.endDateInclusive
+  );
+  const activeDetailRangeLabel = activeDetailRangeBounds
+    ? formatPopupDateRange(activeDetailRangeBounds.startDate, activeDetailRangeBounds.endDateInclusive)
+    : activePrimaryDetail?.dateRangeLabel ?? null;
+  const activeDetailDayRows = (() => {
+    if (!activeDetailPanel || !activeDetailRangeBounds) return [] as Array<{ date: string; startTime: string | null; dayNotes: string | null }>;
+    return enumerateIsoDatesInRange(
+      activeDetailRangeBounds.startDate,
+      activeDetailRangeBounds.endDateInclusive,
+    ).map((date) => {
+      let startTime: string | null = null;
+      let dayNotes: string | null = null;
+      for (const detail of activeDetailPanel.details) {
+        if (!detailIncludesDate(detail, date)) continue;
+        if (!canViewDetailNotes(detail, normalizedEditorId, editorCalendarId, overtureCalendarId)) continue;
+        const parsed = parseGigDescription(detail.description);
+        const resolved = resolveParsedGigDetailForDate(parsed, date);
+        if (!startTime && resolved.startTime?.trim()) startTime = resolved.startTime.trim();
+        if (!dayNotes && parsed.dayDetails?.[date]?.notes?.trim()) dayNotes = parsed.dayDetails[date]?.notes?.trim() ?? null;
+      }
+      return { date, startTime, dayNotes };
+    });
+  })();
+  const activeDetailOverallNotes = (() => {
+    if (!activeDetailPanel) return null;
+    for (const detail of activeDetailPanel.details) {
+      if (!canViewDetailNotes(detail, normalizedEditorId, editorCalendarId, overtureCalendarId)) continue;
+      const notes = parseGigDescription(detail.description).jobNotes?.trim();
+      if (notes) return notes;
+    }
+    return null;
+  })();
+  const activeDetailJobTitle = (() => {
+    if (!activePrimaryDetail || !activeDetailPanel) return null;
+    if (activeDetailIsOverture) {
+      if (!activePrimaryDetailCanViewNotes) return null;
+      return parseGigDescription(activePrimaryDetail.description).jobTitle?.trim() || null;
+    }
+    const t = stripJobPrefix(activePrimaryDetail.summary, activeDetailPanel.headerJobNumber);
+    return t && t.toLowerCase() !== activeDetailPanel.header.toLowerCase() ? t : null;
+  })();
   const canManageActiveDetail = editorModeActive
     && !!activeEditableDetail;
   const showDeleteConfirm = !!confirmDeleteEventId
@@ -901,24 +1191,41 @@ export function DayBoard({
                   : null;
               const connectorPart = row.connectorPart;
               const bookedLabel = row.bookedLabel;
+              const bookedBadgeDisplay = bookedLabel
+                ? buildWeekBookedBadgeDisplay({
+                  bookedLabel,
+                  connectorPart,
+                })
+                : null;
               return (
                 <li
                   key={d.date}
                   className={`board-day ${d.status}${canBookRow ? " board-day--bookable" : ""}${row.bookedLabel?.isPrivateUnavailable ? " booked-private" : ""}${d.isToday ? " today" : ""}${d.isToday && todayPulseActive ? " today-pulse" : ""}`}
-                  tabIndex={canBookRow ? 0 : undefined}
+                  tabIndex={(canBookRow || (!!bookedLabel && !bookedLabel.isPrivateUnavailable)) ? 0 : undefined}
                   onClick={() => {
                     onDateFocus?.(d.date);
-                    if (!canBookRow) return;
-                    closeDetailPanel();
-                    openBookingPanel(d.date);
+                    if (canBookRow) {
+                      closeDetailPanel();
+                      openBookingPanel(d.date);
+                      return;
+                    }
+                    if (bookedLabel && !bookedLabel.isPrivateUnavailable) {
+                      openDetailPanelForRow(rowKey, bookedLabel, d.date);
+                    }
                   }}
-                  onKeyDown={canBookRow
+                  onKeyDown={(canBookRow || (!!bookedLabel && !bookedLabel.isPrivateUnavailable))
                     ? (event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         onDateFocus?.(d.date);
-                        closeDetailPanel();
-                        openBookingPanel(d.date);
+                        if (canBookRow) {
+                          closeDetailPanel();
+                          openBookingPanel(d.date);
+                          return;
+                        }
+                        if (bookedLabel && !bookedLabel.isPrivateUnavailable) {
+                          openDetailPanelForRow(rowKey, bookedLabel, d.date);
+                        }
                       }
                     }
                     : undefined}
@@ -941,19 +1248,17 @@ export function DayBoard({
                     ) : bookedLabel?.isPrivateUnavailable ? (
                       <span className="board-day-unavailable-text">Unavailable</span>
                     ) : bookedLabel ? (
-                      <button
-                        type="button"
-                        className="board-day-badge booked board-day-pill-button"
-                        title={bookedLabel.title}
-                        onClick={() => {
-                          openDetailPanelForRow(rowKey, bookedLabel, d.date);
-                        }}
-                        aria-haspopup="dialog"
-                        aria-expanded={activeDetailPanel?.rowKey === rowKey}
-                        aria-controls="week-job-detail-modal"
-                      >
-                        {bookedLabel.label ?? "Busy"}
-                      </button>
+                      bookedBadgeDisplay?.primary ? (
+                        bookedBadgeDisplay.isSubtle ? (
+                          <span className="board-day-booked-continuation">
+                            {bookedBadgeDisplay.primary}
+                          </span>
+                        ) : (
+                          <span className="board-day-badge booked" title={bookedLabel.title}>
+                            {bookedBadgeDisplay.primary}
+                          </span>
+                        )
+                      ) : null
                     ) : (
                       <span className="board-day-badge booked">Busy</span>
                     )}
@@ -1027,56 +1332,71 @@ export function DayBoard({
               )}
             </h3>
 
-            {activeDetailPanel.details.length > 0 ? (
-              <ul className="board-day-modal-events">
-                {activeDetailPanel.details.map((detail, index) => {
-                  const detailTitle = stripJobPrefix(detail.summary, activeDetailPanel.headerJobNumber);
-                  const hideTitle = !activeDetailPanel.headerJobNumber
-                    && (
-                      detail.summary === "Unavailable"
-                      || (activeDetailPanel.details.length === 1
-                        && detail.summary === activeDetailPanel.header)
-                    );
-                  const detailParsedDescription = parseGigDescription(detail.description);
-                  const showDetailNotes = canViewDetailNotes(
-                    detail,
-                    normalizedEditorId,
-                    editorCalendarId,
-                    overtureCalendarId,
-                  );
-
-                  return (
-                    <li
-                      key={`${detail.summary}-${detail.dateRangeLabel ?? ""}-${detail.timeRangeLabel ?? ""}-${index}`}
-                    >
-                      {!hideTitle ? (
-                        <p className="board-day-modal-event-title">{detailTitle}</p>
-                      ) : null}
-                      {detail.dateRangeLabel ? (
-                        <p className="board-day-modal-event-date">{detail.dateRangeLabel}</p>
-                      ) : null}
-                      {detail.timeRangeLabel ? (
-                        <p className="board-day-modal-event-meta">
-                          <span className="board-day-modal-event-label">Time</span>{" "}
-                          {detail.timeRangeLabel}
+            {activePrimaryDetail ? (
+              <div className="board-day-modal-events">
+                {activeDetailJobTitle ? (
+                  <p className="board-day-modal-event-title">{activeDetailJobTitle}</p>
+                ) : null}
+                {activeDetailRangeLabel ? (
+                  <p className="board-day-modal-event-date">{activeDetailRangeLabel}</p>
+                ) : activeSelectedDate ? (
+                  <p className="board-day-modal-event-date">{formatCompactDate(activeSelectedDate)}</p>
+                ) : null}
+                {!activeDetailIsMultiDay && activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.selectedStartTime ? (
+                  <p className="board-day-modal-event-meta">
+                    {activeSelectedDayMeta.selectedStartTime}
+                  </p>
+                ) : !activeDetailIsMultiDay && activePrimaryDetail.timeRangeLabel ? (
+                  <p className="board-day-modal-event-meta">
+                    {activePrimaryDetail.timeRangeLabel}
+                  </p>
+                ) : null}
+                {!activeDetailIsMultiDay && activePrimaryDetail.dateRangeLabel ? (
+                  <p className="board-day-modal-event-meta">
+                    {activePrimaryDetail.dateRangeLabel}
+                  </p>
+                ) : null}
+                {!activeDetailIsMultiDay && activePrimaryDetailCanViewNotes && activeSelectedDayMeta?.selectedDayNotes ? (
+                  <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
+                    {activeSelectedDayMeta.selectedDayNotes}
+                  </p>
+                ) : null}
+                {activeDetailIsMultiDay && activeDetailDayRows.length > 0 ? (
+                  <ul className="board-day-modal-day-breakdown">
+                    {activeDetailDayRows.map((row) => (
+                      <li key={row.date}>
+                        <p className="board-day-modal-day-label">
+                          <span className="board-day-modal-day-date">{formatShortDate(row.date)}</span>
+                          <span className="board-day-modal-day-sep"> — </span>
+                          <span className="board-day-modal-day-name">{formatDayAbbrev(row.date)}</span>
                         </p>
-                      ) : null}
-                      {showDetailNotes && detailParsedDescription.callTime ? (
-                        <p className="board-day-modal-event-meta">
-                          <span className="board-day-modal-event-label">Call</span>{" "}
-                          {detailParsedDescription.callTime}
-                        </p>
-                      ) : null}
-                      {showDetailNotes && detailParsedDescription.jobNotes ? (
-                        <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
-                          <span className="board-day-modal-event-label">Notes</span>{" "}
-                          {detailParsedDescription.jobNotes}
-                        </p>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
+                        {row.startTime ? (
+                          <p className="board-day-modal-event-meta">{row.startTime}</p>
+                        ) : null}
+                        {row.dayNotes ? (
+                          <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
+                            {row.dayNotes}
+                          </p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {activePrimaryDetailCanViewNotes && activeDetailOverallNotes ? (
+                  <>
+                    <p className="board-day-modal-event-label">Job Notes</p>
+                    <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
+                      {activeDetailOverallNotes}
+                    </p>
+                  </>
+                ) : null}
+                {activeDetailPanel.details.length > 1 ? (
+                  <p className="board-day-modal-event-meta">
+                    <span className="board-day-modal-event-label">Events</span>{" "}
+                    {activeDetailPanel.details.length}
+                  </p>
+                ) : null}
+              </div>
             ) : (
               <p className="board-day-modal-empty">No event details available.</p>
             )}
@@ -1215,17 +1535,37 @@ export function DayBoard({
                 </div>
               ) : null}
               {isOvertureBookingMode ? (
-                <p className="board-day-modal-event-meta board-day-modal-overture-brand board-day-modal-overture-brand--booking">
-                  <img
-                    src="/brand/overture-logo.png"
-                    alt="Overture"
-                    width={150}
-                    height={44}
-                    fetchPriority="high"
-                    decoding="async"
-                    className="board-day-modal-overture-logo board-day-modal-overture-logo--booking"
+                <>
+                  <p className="board-day-modal-event-meta board-day-modal-overture-brand board-day-modal-overture-brand--booking">
+                    <img
+                      src="/brand/overture-logo.png"
+                      alt="Overture"
+                      width={150}
+                      height={44}
+                      fetchPriority="high"
+                      decoding="async"
+                      className="board-day-modal-overture-logo board-day-modal-overture-logo--booking"
+                    />
+                  </p>
+                  <label className="month-booking-label" htmlFor="week-booking-overture-title">
+                    Job Title
+                  </label>
+                  <input
+                    id="week-booking-overture-title"
+                    name="overture-job-title"
+                    className="month-booking-input"
+                    autoComplete="off"
+                    autoCapitalize="words"
+                    value={bookingJobName}
+                    onChange={(event) => {
+                      setBookingJobName(event.target.value);
+                      if (bookingError) setBookingError(null);
+                    }}
+                    placeholder="Event name"
+                    maxLength={200}
+                    disabled={bookingModalIsLocked}
                   />
-                </p>
+                </>
               ) : (
                 <>
                   <label
@@ -1389,51 +1729,122 @@ export function DayBoard({
                 ) : null}
               </div>
 
-              <label className="month-booking-label" htmlFor="week-booking-call-time">
-                Call Time
-              </label>
-              <select
-                id="week-booking-call-time"
-                name="job-call-time"
-                className="month-booking-input"
-                autoComplete="off"
-                value={bookingCallTimeOption}
-                onChange={(event) => {
-                  setBookingCallTimeOption(event.target.value);
-                  if (bookingError) setBookingError(null);
-                }}
-                disabled={bookingModalIsLocked}
-              >
-                {CALL_TIME_OPTIONS.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-                <option value="Other">Other</option>
-              </select>
+              {!bookingHasMultiDayRange ? (
+                <>
+                  <label className="month-booking-label" htmlFor="week-booking-call-time">
+                    Call Time
+                  </label>
+                  <select
+                    id="week-booking-call-time"
+                    name="job-call-time"
+                    className="month-booking-input"
+                    autoComplete="off"
+                    value={bookingCallTimeOption}
+                    onChange={(event) => {
+                      setBookingCallTimeOption(event.target.value);
+                      if (bookingError) setBookingError(null);
+                    }}
+                    disabled={bookingModalIsLocked}
+                  >
+                    {CALL_TIME_OPTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                    <option value="Other">Other</option>
+                  </select>
+                  {bookingCallTimeOption === "Other" ? (
+                    <input
+                      id="week-booking-call-time-other"
+                      name="job-call-time-other"
+                      className="month-booking-input month-booking-input--small"
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      value={bookingCallTimeOther}
+                      onChange={(event) => {
+                        setBookingCallTimeOther(event.target.value);
+                        if (bookingError) setBookingError(null);
+                      }}
+                      placeholder="Custom call time"
+                      maxLength={120}
+                      disabled={bookingModalIsLocked}
+                    />
+                  ) : null}
+                </>
+              ) : null}
 
-              {bookingCallTimeOption === "Other" ? (
-                <input
-                  id="week-booking-call-time-other"
-                  name="job-call-time-other"
-                  className="month-booking-input month-booking-input--small"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  value={bookingCallTimeOther}
-                  onChange={(event) => {
-                    setBookingCallTimeOther(event.target.value);
-                    if (bookingError) setBookingError(null);
-                  }}
-                  placeholder="Custom call time"
-                  maxLength={120}
-                  disabled={bookingModalIsLocked}
-                />
+              {bookingHasMultiDayRange ? (
+                <div className="month-booking-daily-details">
+                  <p className="month-booking-label">
+                    Call Times
+                  </p>
+                  <div className="month-booking-daily-list">
+                    {bookingSelectedDates.map((date) => {
+                      const override = bookingDayOverrides[date];
+                      const dayCallTimeOption = override?.callTimeOption ?? bookingCallTimeOption;
+                      const dayCallTimeOther = override?.callTimeOther ?? bookingCallTimeOther;
+                      const dayNotes = override?.notes ?? "";
+                      return (
+                        <div key={date} className="month-booking-daily-row">
+                          <div className="month-booking-daily-row-header">
+                            <span className="board-day-modal-day-date">{formatShortDate(date)}</span>
+                            <span className="board-day-modal-day-sep"> — </span>
+                            <span className="board-day-modal-day-name">{formatDayAbbrev(date)}</span>
+                          </div>
+                          <select
+                            className="month-booking-input month-booking-input--small"
+                            value={dayCallTimeOption}
+                            onChange={(event) => {
+                              updateBookingDayOverride(date, { callTimeOption: event.target.value });
+                            }}
+                            disabled={bookingModalIsLocked}
+                          >
+                            {CALL_TIME_OPTIONS.map((value) => (
+                              <option key={value} value={value}>
+                                {value}
+                              </option>
+                            ))}
+                            <option value="Other">Other</option>
+                          </select>
+                          {dayCallTimeOption === "Other" ? (
+                            <input
+                              className="month-booking-input month-booking-input--small"
+                              autoComplete="off"
+                              autoCorrect="off"
+                              autoCapitalize="off"
+                              spellCheck={false}
+                              value={dayCallTimeOther}
+                              onChange={(event) => {
+                                updateBookingDayOverride(date, { callTimeOther: event.target.value });
+                              }}
+                              placeholder="Custom start time"
+                              maxLength={120}
+                              disabled={bookingModalIsLocked}
+                            />
+                          ) : null}
+                          <input
+                            className="month-booking-input month-booking-input--small"
+                            autoComplete="off"
+                            autoCapitalize="sentences"
+                            value={dayNotes}
+                            onChange={(event) => {
+                              updateBookingDayOverride(date, { notes: event.target.value });
+                            }}
+                            placeholder="Notes"
+                            maxLength={4000}
+                            disabled={bookingModalIsLocked}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               ) : null}
 
               <label className="month-booking-label" htmlFor="week-booking-notes">
-                Job Notes
+                {overallJobNotesLabel}
               </label>
               <textarea
                 id="week-booking-notes"
@@ -1452,28 +1863,29 @@ export function DayBoard({
                 disabled={bookingModalIsLocked}
               />
 
-              {bookingError ? (
-                <p className="month-booking-error" role="alert">{bookingError}</p>
-              ) : null}
+            </div>
 
-              <div className="month-booking-actions">
-                <button
-                  type="button"
-                  className="month-booking-button month-booking-button--secondary"
-                  onClick={closeBookingPanel}
-                  disabled={bookingModalIsLocked}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="month-booking-button month-booking-button--primary"
-                  onClick={() => { void saveBooking(); }}
-                  disabled={bookingModalIsLocked}
-                >
-                  {bookingModalIsLocked ? "Saving..." : "Save"}
-                </button>
-              </div>
+            {bookingError ? (
+              <p className="month-booking-error" role="alert">{bookingError}</p>
+            ) : null}
+
+            <div className="month-booking-actions">
+              <button
+                type="button"
+                className="month-booking-button month-booking-button--secondary"
+                onClick={closeBookingPanel}
+                disabled={bookingModalIsLocked}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="month-booking-button month-booking-button--primary"
+                onClick={() => { void saveBooking(); }}
+                disabled={bookingModalIsLocked}
+              >
+                {bookingModalIsLocked ? "Saving..." : "Save"}
+              </button>
             </div>
           </section>
         </div>
