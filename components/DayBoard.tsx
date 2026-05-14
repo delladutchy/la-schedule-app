@@ -1604,7 +1604,6 @@ export function DayBoard({
                       inputMode="numeric"
                       pattern="[0-9]*"
                       maxLength={12}
-                      autoFocus
                       disabled={bookingModalIsLocked}
                     />
                   </div>
