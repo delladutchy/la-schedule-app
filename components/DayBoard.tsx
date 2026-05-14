@@ -1169,7 +1169,7 @@ export function DayBoard({
                               {inlineMeta ? (
                                 <span className="board-day-group-meta">{inlineMeta}</span>
                               ) : (
-                                <span className="board-day-group-meta board-day-group-meta--muted">Booked</span>
+                                <span className="board-day-booked-continuation" aria-hidden="true" />
                               )}
                             </span>
                             <span className="board-day-connector board-day-connector--none" aria-hidden="true" />
