@@ -671,39 +671,44 @@ export function ScheduleView({
     };
 
     const refresh = async (reason: "mount" | "visible") => {
-      const now = Date.now();
-      if (now - lastBackgroundRefreshAtRef.current < BACKGROUND_REFRESH_MIN_INTERVAL_MS
-          && reason !== "mount") {
-        return;
-      }
-      lastBackgroundRefreshAtRef.current = now;
-      // The URL's coordinates are the source of truth for what to fetch.
-      // Both mount and visibility refreshes target what the user is
-      // currently navigated to; in-flight responses for old URLs are
-      // dropped by the `cancelled` guard above.
-      const baseParams = {
-        viewMode: activeView,
-        start: routeTargetWeekStart,
-        month: routeTargetMonthKey,
-        signal: controller.signal,
-        editorToken: navigationEditorToken,
-      };
+      try {
+        const now = Date.now();
+        if (now - lastBackgroundRefreshAtRef.current < BACKGROUND_REFRESH_MIN_INTERVAL_MS
+            && reason !== "mount") {
+          return;
+        }
+        lastBackgroundRefreshAtRef.current = now;
+        // The URL's coordinates are the source of truth for what to fetch.
+        // Both mount and visibility refreshes target what the user is
+        // currently navigated to; in-flight responses for old URLs are
+        // dropped by the `cancelled` guard above.
+        const baseParams = {
+          viewMode: activeView,
+          start: routeTargetWeekStart,
+          month: routeTargetMonthKey,
+          signal: controller.signal,
+          editorToken: navigationEditorToken,
+        };
 
-      if (reason === "mount") {
-        // Fire both stages in parallel. Stage 1 (selected) typically
-        // returns first and triggers the first real paint; stage 2 (full)
-        // arrives shortly after and quietly upgrades the cached payload.
-        const fastPromise = fetchBoardWindowPayload({ ...baseParams, scope: "selected" });
-        const fullPromise = fetchBoardWindowPayload({ ...baseParams });
-        fastPromise.then((fast) => { if (fast) applyResponse(fast); }).catch(() => { /* aborted */ });
-        const full = await fullPromise;
-        if (full) applyResponse(full);
-        return;
-      }
+        if (reason === "mount") {
+          // Fire both stages in parallel. Stage 1 (selected) typically
+          // returns first and triggers the first real paint; stage 2 (full)
+          // arrives shortly after and quietly upgrades the cached payload.
+          const fastPromise = fetchBoardWindowPayload({ ...baseParams, scope: "selected" });
+          const fullPromise = fetchBoardWindowPayload({ ...baseParams });
+          fastPromise.then((fast) => { if (fast) applyResponse(fast); }).catch(() => { /* aborted */ });
+          const full = await fullPromise;
+          if (full) applyResponse(full);
+          return;
+        }
 
-      // Visibility refresh: single full fetch.
-      const fresh = await fetchBoardWindowPayload(baseParams);
-      if (fresh) applyResponse(fresh);
+        // Visibility refresh: single full fetch.
+        const fresh = await fetchBoardWindowPayload(baseParams);
+        if (fresh) applyResponse(fresh);
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
+        throw err;
+      }
     };
 
     const ssrGeneratedMs = Date.parse(initialBoardWindowPayload.generatedAtUtc);
