@@ -1334,7 +1334,7 @@ export function DayBoard({
                   <p className="board-day-modal-event-title">{activeDetailJobTitle}</p>
                 ) : null}
                 {activeDetailRangeLabel ? (
-                  <p className="board-day-modal-event-date">{activeDetailRangeLabel}</p>
+                  <p className="board-day-modal-event-date board-day-modal-event-date--range">{activeDetailRangeLabel}</p>
                 ) : activeSelectedDate ? (
                   <p className="board-day-modal-event-date">{formatCompactDate(activeSelectedDate)}</p>
                 ) : null}

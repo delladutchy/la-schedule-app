@@ -1283,7 +1283,7 @@ export function MonthBoard({
                   <p className="board-day-modal-event-title">{activeDetailPrimaryTitle}</p>
                 ) : null}
                 {activeDetailRangeLabel ? (
-                  <p className="board-day-modal-event-date">{activeDetailRangeLabel}</p>
+                  <p className="board-day-modal-event-date board-day-modal-event-date--range">{activeDetailRangeLabel}</p>
                 ) : null}
                 {!activeDetailIsMultiDay && activeDetailDayRows[0]?.startTime ? (
                   <p className="board-day-modal-event-meta">{activeDetailDayRows[0].startTime}</p>

@@ -1190,6 +1190,11 @@ body {
   font-weight: 500;
 }
 
+.board-day-modal-event-date--range {
+  font-weight: 400;
+  opacity: 0.65;
+}
+
 .board-day-modal-event-meta {
   margin: 6px 0 0;
   font-size: 11px;
