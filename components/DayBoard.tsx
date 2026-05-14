@@ -1358,8 +1358,8 @@ export function DayBoard({
                   <ul className="board-day-modal-day-breakdown">
                     {activeDetailDayRows.map((row) => (
                       <li key={row.date}>
-                        <p className="board-day-modal-day-name">{formatDayAbbrev(row.date)}</p>
                         <p className="board-day-modal-day-date">{formatShortDate(row.date)}</p>
+                        <p className="board-day-modal-day-name">{formatDayAbbrev(row.date)}</p>
                         {row.startTime ? (
                           <p className="board-day-modal-event-meta">{row.startTime}</p>
                         ) : null}
@@ -1851,28 +1851,29 @@ export function DayBoard({
                 disabled={bookingModalIsLocked}
               />
 
-              {bookingError ? (
-                <p className="month-booking-error" role="alert">{bookingError}</p>
-              ) : null}
+            </div>
 
-              <div className="month-booking-actions">
-                <button
-                  type="button"
-                  className="month-booking-button month-booking-button--secondary"
-                  onClick={closeBookingPanel}
-                  disabled={bookingModalIsLocked}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="month-booking-button month-booking-button--primary"
-                  onClick={() => { void saveBooking(); }}
-                  disabled={bookingModalIsLocked}
-                >
-                  {bookingModalIsLocked ? "Saving..." : "Save"}
-                </button>
-              </div>
+            {bookingError ? (
+              <p className="month-booking-error" role="alert">{bookingError}</p>
+            ) : null}
+
+            <div className="month-booking-actions">
+              <button
+                type="button"
+                className="month-booking-button month-booking-button--secondary"
+                onClick={closeBookingPanel}
+                disabled={bookingModalIsLocked}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="month-booking-button month-booking-button--primary"
+                onClick={() => { void saveBooking(); }}
+                disabled={bookingModalIsLocked}
+              >
+                {bookingModalIsLocked ? "Saving..." : "Save"}
+              </button>
             </div>
           </section>
         </div>
