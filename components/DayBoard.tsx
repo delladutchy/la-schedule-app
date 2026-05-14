@@ -300,13 +300,14 @@ export function buildWeekBookedBadgeDisplay(opts: {
   connectorPart: "none" | "start" | "middle" | "end";
 }): {
   primary: string | null;
+  isSubtle?: boolean;
 } {
   const label = opts.bookedLabel.label?.trim() ?? "";
   const hasUsefulLabel = label.length > 0 && label.toLowerCase() !== "busy";
 
   if (opts.connectorPart === "middle" || opts.connectorPart === "end") {
     if (hasUsefulLabel) {
-      return { primary: null };
+      return { primary: "Booked", isSubtle: true };
     }
     return {
       primary: label.length > 0 ? label : "Busy",
@@ -1248,7 +1249,7 @@ export function DayBoard({
                       <span className="board-day-unavailable-text">Unavailable</span>
                     ) : bookedLabel ? (
                       bookedBadgeDisplay?.primary ? (
-                        <span className="board-day-badge booked" title={bookedLabel.title}>
+                        <span className={`board-day-badge booked${bookedBadgeDisplay.isSubtle ? " board-day-badge--continuation" : ""}`} title={bookedLabel.title}>
                           {bookedBadgeDisplay.primary}
                         </span>
                       ) : null
@@ -1358,8 +1359,11 @@ export function DayBoard({
                   <ul className="board-day-modal-day-breakdown">
                     {activeDetailDayRows.map((row) => (
                       <li key={row.date}>
-                        <p className="board-day-modal-day-date">{formatShortDate(row.date)}</p>
-                        <p className="board-day-modal-day-name">{formatDayAbbrev(row.date)}</p>
+                        <p className="board-day-modal-day-label">
+                          <span className="board-day-modal-day-date">{formatShortDate(row.date)}</span>
+                          <span className="board-day-modal-day-sep"> — </span>
+                          <span className="board-day-modal-day-name">{formatDayAbbrev(row.date)}</span>
+                        </p>
                         {row.startTime ? (
                           <p className="board-day-modal-event-meta">{row.startTime}</p>
                         ) : null}
@@ -1779,7 +1783,9 @@ export function DayBoard({
                       return (
                         <div key={date} className="month-booking-daily-row">
                           <div className="month-booking-daily-row-header">
-                            <span>{formatCompactDate(date)}</span>
+                            <span className="board-day-modal-day-date">{formatShortDate(date)}</span>
+                            <span className="board-day-modal-day-sep"> — </span>
+                            <span className="board-day-modal-day-name">{formatDayAbbrev(date)}</span>
                           </div>
                           <select
                             className="month-booking-input month-booking-input--small"

@@ -1297,8 +1297,11 @@ export function MonthBoard({
                   <ul className="board-day-modal-day-breakdown">
                     {activeDetailDayRows.map((row) => (
                       <li key={row.date}>
-                        <p className="board-day-modal-day-date">{formatShortDate(row.date)}</p>
-                        <p className="board-day-modal-day-name">{formatDayAbbrev(row.date)}</p>
+                        <p className="board-day-modal-day-label">
+                          <span className="board-day-modal-day-date">{formatShortDate(row.date)}</span>
+                          <span className="board-day-modal-day-sep"> — </span>
+                          <span className="board-day-modal-day-name">{formatDayAbbrev(row.date)}</span>
+                        </p>
                         {row.startTime ? (
                           <p className="board-day-modal-event-meta">{row.startTime}</p>
                         ) : null}
@@ -1711,7 +1714,9 @@ export function MonthBoard({
                       return (
                         <div key={date} className="month-booking-daily-row">
                           <div className="month-booking-daily-row-header">
-                            <span>{formatCompactDate(date)}</span>
+                            <span className="board-day-modal-day-date">{formatShortDate(date)}</span>
+                            <span className="board-day-modal-day-sep"> — </span>
+                            <span className="board-day-modal-day-name">{formatDayAbbrev(date)}</span>
                           </div>
                           <select
                             className="month-booking-input month-booking-input--small"

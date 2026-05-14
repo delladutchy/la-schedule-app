@@ -783,7 +783,7 @@ describe("buildBookedDayInlineMetaForDate", () => {
 });
 
 describe("buildWeekBookedBadgeDisplay", () => {
-  it("shows job label only on first day of a connected multi-day range", () => {
+  it("shows job label on start day, Booked badge on middle/end days of a connected multi-day range", () => {
     const booked = summarizeBookedDayLabel(
       ["LA#71761 — Test Job"],
       [{
@@ -814,7 +814,8 @@ describe("buildWeekBookedBadgeDisplay", () => {
       bookedLabel: booked,
       connectorPart: "middle",
     })).toEqual({
-      primary: null,
+      primary: "Booked",
+      isSubtle: true,
     });
   });
 
@@ -862,7 +863,8 @@ describe("buildWeekBookedBadgeDisplay", () => {
       bookedLabel: booked,
       connectorPart: "middle",
     })).toEqual({
-      primary: null,
+      primary: "Booked",
+      isSubtle: true,
     });
   });
 });
