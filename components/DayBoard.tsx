@@ -1840,6 +1840,7 @@ export function DayBoard({
                             maxLength={4000}
                             disabled={bookingModalIsLocked}
                           />
+                          {!isOvertureBookingMode && (
                           <div className="month-booking-day-chips">
                             {DAY_NOTE_CHIPS.map((chip) => {
                               const isActive = dayNotes.split(" / ").some((p) => p.trim() === chip);
@@ -1874,6 +1875,7 @@ export function DayBoard({
                               Other
                             </button>
                           </div>
+                          )}
                         </div>
                       );
                     })}

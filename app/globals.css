@@ -1077,7 +1077,8 @@ body {
 
 /* Booking/edit modal: scrollable with sticky footer on desktop */
 .board-day-modal--booking {
-  max-height: min(90dvh, 680px);
+  width: min(720px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
   overflow-y: auto;
 }
 
@@ -2770,15 +2771,19 @@ body {
 
   .board-day-modal-backdrop--booking {
     align-items: stretch;
-    justify-items: center;
-    padding-top: max(6px, env(safe-area-inset-top, 0px));
-    padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+    justify-items: stretch;
+    padding-top: max(8px, env(safe-area-inset-top, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+    padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
   }
 
   .board-day-modal--booking {
     display: flex;
     flex-direction: column;
     align-self: stretch;
+    width: auto;
+    max-width: none;
     max-height: none;
     overflow: hidden;
     padding-bottom: 0;
@@ -2981,22 +2986,37 @@ body {
 
   .board-day-modal-backdrop--booking {
     align-items: stretch;
-    justify-items: center;
+    justify-items: stretch;
     padding-top: max(4px, env(safe-area-inset-top, 0px));
+    padding-right: max(4px, env(safe-area-inset-right, 0px));
     padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(4px, env(safe-area-inset-left, 0px));
   }
 
   .board-day-modal--booking {
     display: flex;
     flex-direction: column;
     align-self: stretch;
+    width: auto;
+    max-width: none;
     max-height: none;
     overflow: hidden;
+    padding: 6px 12px 0;
   }
 
   .board-day-modal--booking .board-day-modal-title,
   .board-day-modal--booking .board-day-modal-event-date {
     flex-shrink: 0;
+  }
+
+  .board-day-modal--booking .board-day-modal-title {
+    font-size: 12px;
+    margin-bottom: 2px;
+  }
+
+  .board-day-modal--booking .board-day-modal-event-date {
+    font-size: 11px;
+    margin-bottom: 4px;
   }
 
   .board-day-modal--booking .month-booking-form {
@@ -3031,12 +3051,17 @@ body {
   }
 
   .board-day-modal--booking .month-booking-form {
-    gap: 8px;
+    gap: 6px;
+  }
+
+  .board-day-modal--booking .month-booking-input,
+  .board-day-modal--booking .month-booking-input--small {
+    padding: 7px 10px;
   }
 
   .board-day-modal--booking .month-booking-actions {
-    padding-top: 16px;
-    padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+    padding-top: 8px;
+    padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
     background: linear-gradient(
       to top,
       color-mix(in srgb, var(--surface) 96%, transparent),
@@ -3045,22 +3070,22 @@ body {
   }
 
   .board-day-modal--booking .month-booking-textarea {
-    min-height: 60px;
-    max-height: 28vh;
+    min-height: 40px;
+    max-height: 18dvh;
   }
 
   .board-day-modal--booking .board-day-modal-overture-brand--booking {
-    margin-top: 6px;
+    margin-top: 2px;
   }
 
   .board-day-modal--booking .board-day-modal-overture-logo--booking {
-    height: 40px;
-    max-width: min(146px, 100%);
+    height: 22px;
+    max-width: min(88px, 100%);
   }
 
   .board-day-modal--booking .board-day-modal-la-logo--booking {
-    height: 36px;
-    max-width: min(126px, 100%);
+    height: 22px;
+    max-width: min(88px, 100%);
   }
 
   .month-booking-calendar {
