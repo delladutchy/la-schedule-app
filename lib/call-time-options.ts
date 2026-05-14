@@ -46,3 +46,20 @@ export type CallTimeOption = (typeof CALL_TIME_OPTIONS)[number];
 export function isCallTimeOption(value: string): value is CallTimeOption {
   return (CALL_TIME_OPTIONS as readonly string[]).includes(value);
 }
+
+export const DAY_NOTE_CHIPS = [
+  "Load In",
+  "Rehearsal",
+  "Show",
+  "Load In & Show",
+  "Show & Out",
+  "Load Out",
+  "Travel",
+  "Strike",
+] as const;
+
+export function applyDayNoteChip(current: string, chip: string): string {
+  if (!current.trim()) return chip;
+  if (current.split(" / ").some((p) => p.trim() === chip)) return current;
+  return current + " / " + chip;
+}

@@ -15,7 +15,7 @@ import {
   parseLaJobSummary,
   resolveParsedGigDetailForDate,
 } from "@/lib/gigs";
-import { CALL_TIME_OPTIONS, isCallTimeOption } from "@/lib/call-time-options";
+import { CALL_TIME_OPTIONS, DAY_NOTE_CHIPS, applyDayNoteChip, isCallTimeOption } from "@/lib/call-time-options";
 
 interface Props {
   month: MonthBoardData;
@@ -1761,6 +1761,24 @@ export function MonthBoard({
                             maxLength={4000}
                             disabled={bookingModalIsLocked}
                           />
+                          <div className="month-booking-day-chips">
+                            {DAY_NOTE_CHIPS.map((chip) => {
+                              const isActive = dayNotes.split(" / ").some((p) => p.trim() === chip);
+                              return (
+                                <button
+                                  key={chip}
+                                  type="button"
+                                  className={`month-booking-day-chip${isActive ? " month-booking-day-chip--active" : ""}`}
+                                  onClick={() => {
+                                    updateBookingDayOverride(date, { notes: applyDayNoteChip(dayNotes, chip) });
+                                  }}
+                                  disabled={bookingModalIsLocked}
+                                >
+                                  {chip}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       );
                     })}

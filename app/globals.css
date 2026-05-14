@@ -2568,6 +2568,42 @@ body {
   color: var(--text);
 }
 
+.month-booking-day-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.month-booking-day-chip {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.month-booking-day-chip:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg) 60%, var(--surface));
+  color: var(--text);
+}
+
+.month-booking-day-chip--active {
+  border-color: color-mix(in srgb, var(--available-dot) 55%, var(--border));
+  background: color-mix(in srgb, var(--available-bg) 72%, var(--surface));
+  color: color-mix(in srgb, var(--available-text) 92%, var(--text));
+}
+
+.month-booking-day-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 
 .month-booking-range-toggle-caret {
   color: var(--text-muted);
