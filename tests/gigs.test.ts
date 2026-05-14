@@ -208,10 +208,42 @@ describe("parseGigDescription/buildGigDescription", () => {
     });
   });
 
-  it("keeps malformed app block text safe by falling back to legacy parse", () => {
+  it("never leaks raw block markers into jobNotes when JSON is invalid", () => {
     const malformed = `${APP_DAILY_DETAILS_BLOCK_START}\n{not json}\n${APP_DAILY_DETAILS_BLOCK_END}`;
     const parsed = parseGigDescription(malformed);
-    expect(parsed.jobNotes).toContain(APP_DAILY_DETAILS_BLOCK_START);
+    expect(parsed.jobNotes).toBeUndefined();
+    expect(JSON.stringify(parsed)).not.toContain(APP_DAILY_DETAILS_BLOCK_START);
+    expect(JSON.stringify(parsed)).not.toContain(APP_DAILY_DETAILS_BLOCK_END);
+  });
+
+  it("never leaks raw block markers into jobNotes when END marker is missing", () => {
+    const truncated = `Human notes here\n${APP_DAILY_DETAILS_BLOCK_START}\n{"callTime":"8:00 AM"}`;
+    const parsed = parseGigDescription(truncated);
+    expect(parsed.jobNotes).toBe("Human notes here");
+    expect(JSON.stringify(parsed)).not.toContain(APP_DAILY_DETAILS_BLOCK_START);
+  });
+
+  it("never leaks raw block markers into jobNotes in a double-START description", () => {
+    // Scenario: malformed block from an earlier state was appended-to rather than
+    // replaced, creating two START markers with only one END marker.
+    const doubleStart = [
+      APP_DAILY_DETAILS_BLOCK_START,
+      "{bad json from old state}",
+      APP_DAILY_DETAILS_BLOCK_START,
+      JSON.stringify({ callTime: "8:00 AM" }, null, 2),
+      APP_DAILY_DETAILS_BLOCK_END,
+    ].join("\n");
+    const parsed = parseGigDescription(doubleStart);
+    expect(JSON.stringify(parsed)).not.toContain(APP_DAILY_DETAILS_BLOCK_START);
+    expect(JSON.stringify(parsed)).not.toContain(APP_DAILY_DETAILS_BLOCK_END);
+    expect(parsed.jobNotes).toBeUndefined();
+  });
+
+  it("preserves human text outside block when END marker is missing", () => {
+    const truncated = `Notes: bring cables\n${APP_DAILY_DETAILS_BLOCK_START}\n{"callTime":"TBD"}`;
+    const parsed = parseGigDescription(truncated);
+    expect(parsed.jobNotes).toContain("Notes: bring cables");
+    expect(JSON.stringify(parsed)).not.toContain(APP_DAILY_DETAILS_BLOCK_START);
   });
 
   it("round-trips jobTitle for Overture events", () => {

@@ -159,8 +159,10 @@ function parseDescriptionBlock(descriptionRaw?: string): ParsedDescriptionBlock 
     startIndex + APP_DAILY_DETAILS_BLOCK_START.length,
   );
   if (endIndex < 0) {
+    // Strip from START marker onwards — the tail is app-owned, not human text.
+    const before = description.slice(0, startIndex).replace(/^\n+|\n+$/g, "");
     return {
-      humanDescription: description,
+      humanDescription: before,
       blockPayloadRaw: null,
       hasWellFormedBlock: false,
       hasMalformedBlock: true,
@@ -305,13 +307,13 @@ export function parseGigDescription(descriptionRaw?: string): ParsedGigDescripti
         ...(Object.keys(dayDetails).length > 0 ? { dayDetails } : {}),
       };
     } catch {
-      // Malformed app block payload: keep backward-compatible rendering by
-      // parsing the full description as legacy human text.
-      return parseLegacyGigDescription(descriptionRaw);
+      // Bad JSON inside a well-formed block: parse only the human text outside
+      // the block — never pass raw block markers to the legacy parser.
+      return parseLegacyGigDescription(block.humanDescription || undefined);
     }
   }
 
-  return parseLegacyGigDescription(descriptionRaw);
+  return parseLegacyGigDescription(block.humanDescription || undefined);
 }
 
 export function resolveParsedGigDetailForDate(
