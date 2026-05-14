@@ -1075,6 +1075,39 @@ body {
   position: relative;
 }
 
+/* Booking/edit modal: always flex-column so the form scrolls and footer stays pinned */
+.board-day-modal--booking {
+  display: flex;
+  flex-direction: column;
+  max-height: min(90dvh, 680px);
+  overflow: hidden;
+}
+
+.board-day-modal--booking .board-day-modal-title,
+.board-day-modal--booking .board-day-modal-event-date {
+  flex-shrink: 0;
+}
+
+.board-day-modal--booking .month-booking-form {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.board-day-modal--booking .month-booking-actions {
+  flex-shrink: 0;
+  margin-top: 0;
+  padding-top: 12px;
+}
+
+.board-day-modal--booking .month-booking-error {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0 0 6px;
+}
+
 .board-day-modal-title {
   margin: 0 0 10px;
   font-size: 15px;
@@ -2755,12 +2788,8 @@ body {
   }
 
   .board-day-modal--booking {
-    height: auto;
-    max-height: none;
     align-self: stretch;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
+    max-height: none;
     padding-bottom: 0;
   }
 
@@ -2792,16 +2821,16 @@ body {
   }
 
   .board-day-modal--booking .month-booking-form {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
+    gap: 8px;
     padding-bottom: 6px;
   }
 
+  .board-day-modal--booking .month-booking-input,
+  .board-day-modal--booking .month-booking-input--small {
+    padding: 8px 10px;
+  }
+
   .board-day-modal--booking .month-booking-actions {
-    flex-shrink: 0;
     padding-top: 16px;
     padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
     background: linear-gradient(
@@ -2811,14 +2840,8 @@ body {
     );
   }
 
-  .board-day-modal--booking .month-booking-error {
-    flex-shrink: 0;
-    margin: 0;
-    padding: 0 0 6px;
-  }
-
-  .board-day-modal .month-booking-textarea {
-    min-height: 76px;
+  .board-day-modal--booking .month-booking-textarea {
+    min-height: 56px;
   }
 
   .board-day-modal .board-day-modal-close-icon {
@@ -2948,11 +2971,8 @@ body {
   }
 
   .board-day-modal--booking {
-    height: auto;
-    max-height: none;
     align-self: stretch;
-    display: flex;
-    flex-direction: column;
+    max-height: none;
   }
 
   .month-booking-input,
@@ -2968,8 +2988,16 @@ body {
 
   .board-day-modal--booking .month-booking-form {
     gap: 8px;
-    min-height: 0;
-    overflow-y: auto;
+  }
+
+  .board-day-modal--booking .month-booking-actions {
+    padding-top: 16px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(
+      to top,
+      color-mix(in srgb, var(--surface) 96%, transparent),
+      color-mix(in srgb, var(--surface) 84%, transparent)
+    );
   }
 
   .board-day-modal--booking .month-booking-textarea {

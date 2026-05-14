@@ -429,6 +429,12 @@ export function DayBoard({
   }, [activeDetailPanel, activeBookingPanel, isBookingSavePending, isDeletePending]);
 
   useEffect(() => {
+    if (!activeDetailPanel && !activeBookingPanel) return undefined;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, [activeDetailPanel, activeBookingPanel]);
+
+  useEffect(() => {
     const fromProp = sanitizeEditorToken(initialEditorToken);
     const fromUrl = sanitizeEditorToken(
       new URLSearchParams(window.location.search).get("editor"),
