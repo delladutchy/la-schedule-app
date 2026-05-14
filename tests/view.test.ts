@@ -814,7 +814,7 @@ describe("buildWeekBookedBadgeDisplay", () => {
       bookedLabel: booked,
       connectorPart: "middle",
     })).toEqual({
-      primary: "Booked",
+      primary: null,
       isSubtle: true,
     });
   });
@@ -863,7 +863,7 @@ describe("buildWeekBookedBadgeDisplay", () => {
       bookedLabel: booked,
       connectorPart: "middle",
     })).toEqual({
-      primary: "Booked",
+      primary: null,
       isSubtle: true,
     });
   });

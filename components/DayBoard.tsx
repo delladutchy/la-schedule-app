@@ -307,7 +307,7 @@ export function buildWeekBookedBadgeDisplay(opts: {
 
   if (opts.connectorPart === "middle" || opts.connectorPart === "end") {
     if (hasUsefulLabel) {
-      return { primary: "Booked", isSubtle: true };
+      return { primary: null, isSubtle: true };
     }
     return {
       primary: label.length > 0 ? label : "Busy",
@@ -1248,16 +1248,12 @@ export function DayBoard({
                     ) : bookedLabel?.isPrivateUnavailable ? (
                       <span className="board-day-unavailable-text">Unavailable</span>
                     ) : bookedLabel ? (
-                      bookedBadgeDisplay?.primary ? (
-                        bookedBadgeDisplay.isSubtle ? (
-                          <span className="board-day-booked-continuation">
-                            {bookedBadgeDisplay.primary}
-                          </span>
-                        ) : (
-                          <span className="board-day-badge booked" title={bookedLabel.title}>
-                            {bookedBadgeDisplay.primary}
-                          </span>
-                        )
+                      bookedBadgeDisplay?.isSubtle ? (
+                        <span className="board-day-booked-continuation" aria-hidden="true" />
+                      ) : bookedBadgeDisplay?.primary ? (
+                        <span className="board-day-badge booked" title={bookedLabel.title}>
+                          {bookedBadgeDisplay.primary}
+                        </span>
                       ) : null
                     ) : (
                       <span className="board-day-badge booked">Busy</span>
@@ -1351,7 +1347,7 @@ export function DayBoard({
                     {activePrimaryDetail.timeRangeLabel}
                   </p>
                 ) : null}
-                {!activeDetailIsMultiDay && activePrimaryDetail.dateRangeLabel ? (
+                {!activeDetailIsMultiDay && !activeDetailRangeLabel && activePrimaryDetail.dateRangeLabel ? (
                   <p className="board-day-modal-event-meta">
                     {activePrimaryDetail.dateRangeLabel}
                   </p>
