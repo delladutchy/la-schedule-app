@@ -1249,9 +1249,15 @@ export function DayBoard({
                       <span className="board-day-unavailable-text">Unavailable</span>
                     ) : bookedLabel ? (
                       bookedBadgeDisplay?.primary ? (
-                        <span className={`board-day-badge booked${bookedBadgeDisplay.isSubtle ? " board-day-badge--continuation" : ""}`} title={bookedLabel.title}>
-                          {bookedBadgeDisplay.primary}
-                        </span>
+                        bookedBadgeDisplay.isSubtle ? (
+                          <span className="board-day-booked-continuation">
+                            {bookedBadgeDisplay.primary}
+                          </span>
+                        ) : (
+                          <span className="board-day-badge booked" title={bookedLabel.title}>
+                            {bookedBadgeDisplay.primary}
+                          </span>
+                        )
                       ) : null
                     ) : (
                       <span className="board-day-badge booked">Busy</span>
