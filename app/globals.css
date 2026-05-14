@@ -998,10 +998,13 @@ body {
 .board-day-badge.booked::before { background: var(--booked-dot); }
 
 .board-day-booked-continuation {
-  font-size: 13px;
-  font-weight: 400;
-  letter-spacing: 0.01em;
-  color: var(--text-subtle);
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-subtle);
+  opacity: 0.5;
+  flex-shrink: 0;
 }
 
 .board-day.booked-private {
