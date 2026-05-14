@@ -1347,7 +1347,7 @@ export function DayBoard({
                     {activePrimaryDetail.timeRangeLabel}
                   </p>
                 ) : null}
-                {!activeDetailIsMultiDay && activePrimaryDetail.dateRangeLabel ? (
+                {!activeDetailIsMultiDay && !activeDetailRangeLabel && activePrimaryDetail.dateRangeLabel ? (
                   <p className="board-day-modal-event-meta">
                     {activePrimaryDetail.dateRangeLabel}
                   </p>
