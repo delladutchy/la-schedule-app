@@ -2748,22 +2748,16 @@ body {
   }
 
   .board-day-modal-backdrop--booking {
-    align-items: start;
+    align-items: stretch;
     justify-items: center;
     padding-top: max(6px, env(safe-area-inset-top, 0px));
+    padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
   }
 
   .board-day-modal--booking {
-    height: calc(
-      100dvh
-      - max(6px, env(safe-area-inset-top, 0px))
-      - max(6px, env(safe-area-inset-bottom, 0px))
-    );
-    max-height: calc(
-      100dvh
-      - max(6px, env(safe-area-inset-top, 0px))
-      - max(6px, env(safe-area-inset-bottom, 0px))
-    );
+    height: auto;
+    max-height: none;
+    align-self: stretch;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -2947,22 +2941,16 @@ body {
   .board-day-modal-event-meta--notes { line-height: 1.35; }
 
   .board-day-modal-backdrop--booking {
-    align-items: start;
+    align-items: stretch;
     justify-items: center;
     padding-top: max(4px, env(safe-area-inset-top, 0px));
+    padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
   }
 
   .board-day-modal--booking {
-    height: calc(
-      100dvh
-      - max(4px, env(safe-area-inset-top, 0px))
-      - max(4px, env(safe-area-inset-bottom, 0px))
-    );
-    max-height: calc(
-      100dvh
-      - max(4px, env(safe-area-inset-top, 0px))
-      - max(4px, env(safe-area-inset-bottom, 0px))
-    );
+    height: auto;
+    max-height: none;
+    align-self: stretch;
     display: flex;
     flex-direction: column;
   }

@@ -387,6 +387,7 @@ export function DayBoard({
     startY: 0,
     moved: false,
   });
+  const dayNoteInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [activeDetailPanel, setActiveDetailPanel] = useState<ActiveDetailPanel | null>(null);
   const [editorToken, setEditorToken] = useState<string | null>(null);
   const [resolvedEditorId, setResolvedEditorId] = useState<string | null>(initialResolvedEditorId);
@@ -1821,6 +1822,7 @@ export function DayBoard({
                             />
                           ) : null}
                           <input
+                            ref={(el) => { dayNoteInputRefs.current[date] = el; }}
                             className="month-booking-input month-booking-input--small"
                             autoComplete="off"
                             autoCapitalize="sentences"
@@ -1849,6 +1851,22 @@ export function DayBoard({
                                 </button>
                               );
                             })}
+                            <button
+                              type="button"
+                              className="month-booking-day-chip"
+                              onClick={() => {
+                                const input = dayNoteInputRefs.current[date];
+                                if (!dayNotes.trim()) {
+                                  updateBookingDayOverride(date, { notes: "Other: " });
+                                  setTimeout(() => input?.focus(), 0);
+                                } else {
+                                  input?.focus();
+                                }
+                              }}
+                              disabled={bookingModalIsLocked}
+                            >
+                              Other
+                            </button>
                           </div>
                         </div>
                       );

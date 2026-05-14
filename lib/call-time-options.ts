@@ -60,6 +60,10 @@ export const DAY_NOTE_CHIPS = [
 
 export function applyDayNoteChip(current: string, chip: string): string {
   if (!current.trim()) return chip;
-  if (current.split(" / ").some((p) => p.trim() === chip)) return current;
+  const parts = current.split(" / ");
+  const idx = parts.findIndex((p) => p.trim() === chip);
+  if (idx !== -1) {
+    return parts.filter((_, i) => i !== idx).join(" / ");
+  }
   return current + " / " + chip;
 }
