@@ -7,6 +7,7 @@ import {
   deriveShellBucket,
   parseCookieValue,
   shouldHandleNavigationRequest,
+  shouldBypassShellCacheForRequest,
   shouldPersistResponseForRequest,
 } from "@/lib/sw-cache-key";
 
@@ -144,6 +145,22 @@ describe("buildShellCacheKey", () => {
   });
 });
 
+describe("shouldBypassShellCacheForRequest", () => {
+  it("returns true for navigation URLs carrying an editor token param", () => {
+    expect(shouldBypassShellCacheForRequest("https://example.com/?editor=mike-token-abc")).toBe(true);
+    expect(shouldBypassShellCacheForRequest("https://example.com/?view=list&editor=jeff-token-abc")).toBe(true);
+  });
+
+  it("returns false for normal navigation URLs without editor param", () => {
+    expect(shouldBypassShellCacheForRequest("https://example.com/")).toBe(false);
+    expect(shouldBypassShellCacheForRequest("https://example.com/?view=month&month=2026-05")).toBe(false);
+  });
+
+  it("returns false for unparseable URLs", () => {
+    expect(shouldBypassShellCacheForRequest("not-a-url")).toBe(false);
+  });
+});
+
 describe("shouldHandleNavigationRequest", () => {
   it("only matches GET to the home route", () => {
     expect(shouldHandleNavigationRequest("https://example.com/", "GET")).toBe(true);
@@ -252,6 +269,7 @@ describe("end-to-end token-leakage guard", () => {
     expect(bucket).not.toContain(token);
     expect(key).not.toContain(token);
     expect(key).not.toContain("editor=");
+    expect(shouldBypassShellCacheForRequest(url)).toBe(true);
     expect(shouldPersistResponseForRequest(url)).toBe(false);
   });
 });
