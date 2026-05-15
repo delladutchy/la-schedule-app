@@ -219,7 +219,6 @@ interface NamedEventInterval extends Interval {
   summary: string;
   eventId?: string;
   description?: string;
-  location?: string;
   ownerEditor?: string;
   calendarId?: string;
   displayMode: CalendarDisplayMode;
@@ -439,7 +438,6 @@ function snapshotNamedEvents(snapshot: Snapshot): NamedEventInterval[] {
       summary: normalizeEventName(event.summary),
       eventId: event.eventId,
       description: event.description,
-      location: event.location,
       ownerEditor: event.ownerEditor,
       calendarId: event.calendarId,
       displayMode: event.displayMode ?? "details",
@@ -543,9 +541,6 @@ function collectEventDetails(
         ...(event.displayMode === "details" && event.description
           ? { description: event.description }
           : {}),
-        ...(event.displayMode === "details" && event.location
-          ? { location: event.location }
-          : {}),
         ...(event.ownerEditor ? { ownerEditor: event.ownerEditor } : {}),
         dateRangeLabel: formatEventDateRange(event.startMs, event.endMs, timezone, referenceYear),
         ...(timeRangeLabel ? { timeRangeLabel } : {}),
@@ -596,7 +591,6 @@ export function summarizeBookedDayLabel(
     jobNumber?: string;
     eventId?: string;
     description?: string;
-    location?: string;
     ownerEditor?: string;
     startUtc?: string;
     endUtc?: string;
@@ -688,7 +682,6 @@ export function summarizeBookedDayLabel(
             ...(detailJob ? { jobNumber: detailJob } : {}),
             ...(detail.eventId ? { eventId: detail.eventId } : {}),
             ...(detail.description ? { description: detail.description } : {}),
-            ...(detail.location ? { location: detail.location } : {}),
             ...(detail.ownerEditor ? { ownerEditor: detail.ownerEditor } : {}),
             ...(detail.startUtc ? { startUtc: detail.startUtc } : {}),
             ...(detail.endUtc ? { endUtc: detail.endUtc } : {}),
@@ -723,7 +716,6 @@ export function summarizeBookedDayLabel(
         summary: detail.summary,
         ...(detail.eventId ? { eventId: detail.eventId } : {}),
         ...(detail.description ? { description: detail.description } : {}),
-        ...(detail.location ? { location: detail.location } : {}),
         ...(detail.ownerEditor ? { ownerEditor: detail.ownerEditor } : {}),
         ...(detail.startUtc ? { startUtc: detail.startUtc } : {}),
         ...(detail.endUtc ? { endUtc: detail.endUtc } : {}),
@@ -896,9 +888,6 @@ function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][
       ...(event.displayMode === "details" && event.description
         ? { description: event.description }
         : {}),
-      ...(event.displayMode === "details" && event.location
-        ? { location: event.location }
-        : {}),
       ...(event.displayMode === "details" && event.ownerEditor
         ? { ownerEditor: event.ownerEditor }
         : {}),
@@ -939,7 +928,6 @@ function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][
           ...(row.jobNumber ? { jobNumber: row.jobNumber } : {}),
           ...(row.eventId ? { eventId: row.eventId } : {}),
           ...(row.description ? { description: row.description } : {}),
-          ...(row.location ? { location: row.location } : {}),
           ...(row.ownerEditor ? { ownerEditor: row.ownerEditor } : {}),
           ...(row.startUtc ? { startUtc: row.startUtc } : {}),
           ...(row.endUtc ? { endUtc: row.endUtc } : {}),

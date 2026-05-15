@@ -20,7 +20,6 @@ export interface MutationEventRecord {
   calendarId: string;
   summary: string;
   description?: string;
-  location?: string;
   ownerEditor?: string;
   startDate: string;
   endDateExclusive: string;
@@ -241,7 +240,6 @@ function buildNamedEventFromMutationEvent(
     summary: displayMode === "private" ? "Unavailable" : summary,
     eventId: event.eventId,
     ...(trimToNonEmpty(event.description) ? { description: trimToNonEmpty(event.description) } : {}),
-    ...(displayMode === "details" && trimToNonEmpty(event.location) ? { location: trimToNonEmpty(event.location) } : {}),
     ...(normalizeOwnerEditor(event.ownerEditor) ? { ownerEditor: normalizeOwnerEditor(event.ownerEditor) } : {}),
     calendarId,
     displayMode,

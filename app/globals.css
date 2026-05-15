@@ -1348,18 +1348,6 @@ html.modal-open body {
   font-weight: 500;
 }
 
-.board-day-modal-maps-link {
-  display: inline-block;
-  margin-top: 5px;
-  font-size: 11px;
-  color: var(--today-accent);
-  text-decoration: none;
-}
-
-.board-day-modal-maps-link:hover {
-  text-decoration: underline;
-}
-
 .board-day-modal-empty {
   margin: 0;
   font-size: 12px;

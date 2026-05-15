@@ -45,7 +45,6 @@ export const NamedEventSchema = z.object({
   summary: z.string().min(1),
   eventId: z.string().min(1).optional(),
   description: z.string().optional(),
-  location: z.string().optional(),
   ownerEditor: z.string().min(1).optional(),
   // Optional for backward compatibility with older snapshots.
   calendarId: z.string().optional(),
@@ -116,7 +115,6 @@ export interface DayEventDetail {
   endDateInclusive?: string;
   eventId?: string;
   description?: string;
-  location?: string;
   ownerEditor?: string;
   dateRangeLabel: string;
   timeRangeLabel?: string;

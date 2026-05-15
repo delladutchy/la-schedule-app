@@ -86,7 +86,6 @@ function parsePayload(body: unknown) {
       ok: true as const,
       summary: parsed.data.summary.trim(),
       description: parsed.data.description?.trim(),
-      location: parsed.data.location?.trim(),
       bookingMode: parsed.data.bookingMode,
       ...resolveAllDayRange(parsed.data),
     };
@@ -202,7 +201,6 @@ export async function POST(req: Request) {
     ...(eventIdOverride ? { eventId: eventIdOverride } : {}),
     summary,
     ...(payload.description ? { description: payload.description } : {}),
-    ...(payload.location ? { location: payload.location } : {}),
     startDate: payload.startDate,
     endDateExclusive: payload.endDateExclusive,
   });
@@ -230,7 +228,6 @@ export async function POST(req: Request) {
           calendarId: writeCalendar.calendarId,
           summary,
           ...(payload.description ? { description: payload.description } : {}),
-          ...(payload.location ? { location: payload.location } : {}),
           ownerEditor: editorId,
           startDate: payload.startDate,
           endDateExclusive: payload.endDateExclusive,
@@ -375,7 +372,6 @@ export async function POST(req: Request) {
               calendarId: writeCalendar.calendarId,
               summary,
               ...(payload.description ? { description: payload.description } : {}),
-              ...(payload.location ? { location: payload.location } : {}),
               ownerEditor: editorId,
               startDate: payload.startDate,
               endDateExclusive: payload.endDateExclusive,
