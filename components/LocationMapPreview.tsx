@@ -111,7 +111,7 @@ function LocationMapPreviewInner({ location, debounceMs = 400 }: LocationMapPrev
           doubleClickZoom: true,
           boxZoom: false,
           keyboard: false,
-        }).setView([coords.lat, coords.lon], 14);
+        }).setView([coords.lat, coords.lon], 13);
 
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
@@ -131,10 +131,12 @@ function LocationMapPreviewInner({ location, debounceMs = 400 }: LocationMapPrev
 
         mapRef.current = map;
 
-        // invalidateSize handles rendering inside a modal before the container has settled.
-        setTimeout(() => { map.invalidateSize(); }, 50);
+        // Two invalidateSize calls: first covers fast opens, second covers desktop
+        // modal CSS transitions that may still be running at 150ms.
+        setTimeout(() => { map.invalidateSize(); }, 150);
+        setTimeout(() => { map.invalidateSize(); }, 350);
       } else {
-        mapRef.current.setView([coords.lat, coords.lon], 14, { animate: true });
+        mapRef.current.setView([coords.lat, coords.lon], 13, { animate: true });
         markerRef.current?.setLatLng([coords.lat, coords.lon]);
       }
     });
@@ -143,6 +145,18 @@ function LocationMapPreviewInner({ location, debounceMs = 400 }: LocationMapPrev
       cancelled = true;
     };
   }, [coords]);
+
+  // ResizeObserver calls invalidateSize whenever the container dimensions change,
+  // ensuring the map fills correctly when a modal animates open or resizes.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (mapRef.current) mapRef.current.invalidateSize();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Destroy Leaflet map when the component unmounts.
   // Empty dependency array ensures this cleanup runs once, on unmount only.

@@ -1975,36 +1975,6 @@ export function MonthBoard({
                   rows={4}
                   disabled={bookingModalIsLocked}
                 />
-                <label className="month-booking-label" htmlFor="booking-location">
-                  Job Location
-                </label>
-                <input
-                  id="booking-location"
-                  name="job-location"
-                  type="text"
-                  className="month-booking-input"
-                  autoComplete="off"
-                  autoCapitalize="words"
-                  value={bookingLocation}
-                  onChange={(event) => {
-                    setBookingLocation(event.target.value);
-                    if (bookingError) setBookingError(null);
-                  }}
-                  placeholder="Venue name or address"
-                  maxLength={500}
-                  disabled={bookingModalIsLocked}
-                />
-                {bookingLocation.trim() ? (
-                  <LocationMapPreview location={bookingLocation} debounceMs={400} />
-                ) : null}
-                <a
-                  href={bookingLocation.trim() ? `https://maps.apple.com/?q=${encodeURIComponent(bookingLocation.trim())}` : undefined}
-                  className={`board-day-modal-maps-link${bookingLocation.trim() ? "" : " board-day-modal-maps-link--hidden"}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Preview in Apple Maps
-                </a>
                 {!bookingHasMultiDayRange && !isOvertureBookingMode ? (
                   <div className="month-booking-presets month-booking-presets--linked">
                     <button
@@ -2062,6 +2032,36 @@ export function MonthBoard({
                     ) : null}
                   </div>
                 ) : null}
+                <label className="month-booking-label" htmlFor="booking-location">
+                  Job Location
+                </label>
+                <input
+                  id="booking-location"
+                  name="job-location"
+                  type="text"
+                  className="month-booking-input"
+                  autoComplete="off"
+                  autoCapitalize="words"
+                  value={bookingLocation}
+                  onChange={(event) => {
+                    setBookingLocation(event.target.value);
+                    if (bookingError) setBookingError(null);
+                  }}
+                  placeholder="Venue name or address"
+                  maxLength={500}
+                  disabled={bookingModalIsLocked}
+                />
+                {bookingLocation.trim() ? (
+                  <LocationMapPreview location={bookingLocation} debounceMs={400} />
+                ) : null}
+                <a
+                  href={bookingLocation.trim() ? `https://maps.apple.com/?q=${encodeURIComponent(bookingLocation.trim())}` : undefined}
+                  className={`board-day-modal-maps-link${bookingLocation.trim() ? "" : " board-day-modal-maps-link--hidden"}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Preview in Apple Maps
+                </a>
               </div>
 
             </div>
