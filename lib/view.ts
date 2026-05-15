@@ -897,6 +897,9 @@ function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][
       ...(event.displayMode === "details" && event.description
         ? { description: event.description }
         : {}),
+      ...(event.displayMode === "details" && event.location
+        ? { location: event.location }
+        : {}),
       ...(event.displayMode === "details" && event.ownerEditor
         ? { ownerEditor: event.ownerEditor }
         : {}),
@@ -937,6 +940,7 @@ function buildMonthEventBars(opts: BuildMonthEventBarsOptions): MonthEventBar[][
           ...(row.jobNumber ? { jobNumber: row.jobNumber } : {}),
           ...(row.eventId ? { eventId: row.eventId } : {}),
           ...(row.description ? { description: row.description } : {}),
+          ...(row.location ? { location: row.location } : {}),
           ...(row.ownerEditor ? { ownerEditor: row.ownerEditor } : {}),
           ...(row.startUtc ? { startUtc: row.startUtc } : {}),
           ...(row.endUtc ? { endUtc: row.endUtc } : {}),

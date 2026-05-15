@@ -1184,6 +1184,36 @@ describe("buildMonthBoard", () => {
     expect(bar?.details[0]?.calendarId).toBe("jobs");
   });
 
+  it("preserves location in month bar details", () => {
+    const snap = makeSnapshot({
+      busy: [{ startUtc: "2026-04-26T14:00:00.000Z", endUtc: "2026-04-26T18:00:00.000Z" }],
+      namedEvents: [
+        {
+          startUtc: "2026-04-26T14:00:00.000Z",
+          endUtc: "2026-04-26T18:00:00.000Z",
+          summary: "LA#71760 BPM after game concert Camden Yards Baltimore",
+          eventId: "evt_71760_location",
+          description: "Call Time: 8:00 AM\nJob Notes: Bring radios",
+          location: "The Lighthouse Dewey Beach, Dewey Beach, DE",
+          ownerEditor: "dave",
+          calendarId: "jobs",
+          displayMode: "details",
+        },
+      ],
+    });
+    const month = buildMonthBoard({
+      snapshot: snap,
+      month: "2026-04",
+      timezone: TZ,
+    });
+
+    const bar = month.weeks
+      .flatMap((w) => w.bars)
+      .find((b) => b.details[0]?.eventId === "evt_71760_location");
+    expect(bar).toBeTruthy();
+    expect(bar?.details[0]?.location).toBe("The Lighthouse Dewey Beach, Dewey Beach, DE");
+  });
+
   it("preserves ownerEditor in month bar details for scoped editor actions", () => {
     const snap = makeSnapshot({
       busy: [{ startUtc: "2026-04-26T04:00:00.000Z", endUtc: "2026-04-27T04:00:00.000Z" }],
