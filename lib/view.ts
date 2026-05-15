@@ -219,6 +219,7 @@ interface NamedEventInterval extends Interval {
   summary: string;
   eventId?: string;
   description?: string;
+  location?: string;
   ownerEditor?: string;
   calendarId?: string;
   displayMode: CalendarDisplayMode;
@@ -439,6 +440,7 @@ function snapshotNamedEvents(snapshot: Snapshot): NamedEventInterval[] {
       summary: normalizeEventName(event.summary),
       eventId: event.eventId,
       description: event.description,
+      location: event.location,
       ownerEditor: event.ownerEditor,
       calendarId: event.calendarId,
       displayMode: event.displayMode ?? "details",
@@ -541,6 +543,9 @@ function collectEventDetails(
         ...(event.eventId ? { eventId: event.eventId } : {}),
         ...(event.displayMode === "details" && event.description
           ? { description: event.description }
+          : {}),
+        ...(event.displayMode === "details" && event.location
+          ? { location: event.location }
           : {}),
         ...(event.ownerEditor ? { ownerEditor: event.ownerEditor } : {}),
         dateRangeLabel: formatEventDateRange(event.startMs, event.endMs, timezone, referenceYear),

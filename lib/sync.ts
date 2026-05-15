@@ -164,6 +164,7 @@ export async function buildAndPersistSnapshot(
           summary: event.summary.trim(),
           eventId: event.eventId?.trim(),
           description: event.description,
+          location: event.location,
           ownerEditor: event.ownerEditor,
           calendarId: event.calendarId,
           displayMode: env.CALENDAR_DISPLAY_MODES[event.calendarId] ?? "details",
@@ -178,6 +179,9 @@ export async function buildAndPersistSnapshot(
             : {}),
           ...(event.displayMode === "details" && event.description
             ? { description: event.description }
+            : {}),
+          ...(event.displayMode === "details" && event.location
+            ? { location: event.location }
             : {}),
           ...(event.displayMode === "details" && event.ownerEditor
             ? { ownerEditor: event.ownerEditor }

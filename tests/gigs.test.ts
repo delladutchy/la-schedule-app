@@ -56,6 +56,18 @@ describe("GigCreateBodySchema", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("accepts optional location payload", () => {
+    const parsed = GigCreateBodySchema.safeParse({
+      summary: "LA#71411 Wilmington Flower Market",
+      date: "2026-05-06",
+      location: "  100 Universal City Plaza, Universal City, CA  ",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.location).toBe("100 Universal City Plaza, Universal City, CA");
+    }
+  });
+
   it("rejects mixed single + range payload", () => {
     const parsed = GigCreateBodySchema.safeParse({
       summary: "Bad payload",

@@ -20,6 +20,7 @@ export interface MutationEventRecord {
   calendarId: string;
   summary: string;
   description?: string;
+  location?: string;
   ownerEditor?: string;
   startDate: string;
   endDateExclusive: string;
@@ -111,6 +112,7 @@ function clampNamedEventToWindow(
     endUtc: new Date(clippedEnd).toISOString(),
     summary,
     ...(trimToNonEmpty(event.description) ? { description: trimToNonEmpty(event.description) } : {}),
+    ...(trimToNonEmpty(event.location) ? { location: trimToNonEmpty(event.location) } : {}),
     ...(normalizeOwnerEditor(event.ownerEditor) ? { ownerEditor: normalizeOwnerEditor(event.ownerEditor) } : {}),
   };
 }
@@ -240,6 +242,7 @@ function buildNamedEventFromMutationEvent(
     summary: displayMode === "private" ? "Unavailable" : summary,
     eventId: event.eventId,
     ...(trimToNonEmpty(event.description) ? { description: trimToNonEmpty(event.description) } : {}),
+    ...(trimToNonEmpty(event.location) ? { location: trimToNonEmpty(event.location) } : {}),
     ...(normalizeOwnerEditor(event.ownerEditor) ? { ownerEditor: normalizeOwnerEditor(event.ownerEditor) } : {}),
     calendarId,
     displayMode,

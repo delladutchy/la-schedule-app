@@ -45,6 +45,7 @@ export const NamedEventSchema = z.object({
   summary: z.string().min(1),
   eventId: z.string().min(1).optional(),
   description: z.string().optional(),
+  location: z.string().optional(),
   ownerEditor: z.string().min(1).optional(),
   // Optional for backward compatibility with older snapshots.
   calendarId: z.string().optional(),

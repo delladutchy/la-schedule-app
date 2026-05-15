@@ -152,6 +152,50 @@ describe("/api/gigs/[eventId] audit logging", () => {
     expect(payload.action).toBe("edit");
   });
 
+  it("PATCH forwards location to Google update and fast snapshot patch", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-edit-location",
+        ownerEditor: "dave",
+        calendarId: "la-jobs@group.calendar.google.com",
+      }],
+    });
+    updateAllDayEvent.mockResolvedValue({ id: "evt-edit-location", status: "confirmed" });
+    const { PATCH } = await loadRoutes();
+
+    const req = new Request("http://localhost/api/gigs/evt-edit-location", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12346 — Updated Job",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+        location: "  100 Universal City Plaza, Universal City, CA  ",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-edit-location" } });
+    expect(res.status).toBe(200);
+    expect(updateAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventId: "evt-edit-location",
+        location: "100 Universal City Plaza, Universal City, CA",
+      }),
+    );
+    expect(refreshSnapshotAfterMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          action: "edit",
+          event: expect.objectContaining({
+            location: "100 Universal City Plaza, Universal City, CA",
+          }),
+        }),
+      }),
+    );
+  });
+
   it("preserves existing owner metadata on PATCH updates", async () => {
     authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
     readCurrentSnapshot.mockResolvedValue({

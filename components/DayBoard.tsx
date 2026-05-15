@@ -805,6 +805,7 @@ export function DayBoard({
         body: JSON.stringify({
           summary,
           ...(description ? { description } : {}),
+          location: bookingLocation.trim(),
           ...(activeBookingPanel.mode === "create" ? { bookingMode: activeBookingPanel.bookingMode } : {}),
           startDate,
           endDate,

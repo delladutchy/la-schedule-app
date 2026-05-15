@@ -153,6 +153,43 @@ describe("/api/gigs/create audit logging", () => {
     );
   });
 
+  it("forwards location to Google create and fast snapshot patch", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue(snapshot);
+    createAllDayEvent.mockResolvedValue({ id: "evt-with-location", status: "confirmed" });
+    buildAndPersistSnapshot.mockResolvedValue({ status: "ok", snapshot });
+
+    const POST = await loadRoute();
+    const req = new Request("http://localhost/api/gigs/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#12345 — Test Job",
+        startDate: "2026-05-07",
+        endDate: "2026-05-07",
+        location: "  100 Universal City Plaza, Universal City, CA  ",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    expect(createAllDayEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        location: "100 Universal City Plaza, Universal City, CA",
+      }),
+    );
+    expect(refreshSnapshotAfterMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          action: "create",
+          event: expect.objectContaining({
+            location: "100 Universal City Plaza, Universal City, CA",
+          }),
+        }),
+      }),
+    );
+  });
+
   it("stores owner metadata for limited editor create", async () => {
     authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
     readCurrentSnapshot.mockResolvedValue(snapshot);
