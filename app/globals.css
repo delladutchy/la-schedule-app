@@ -175,6 +175,20 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+html.modal-open {
+  overflow: hidden;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+html.modal-open body {
+  overflow: hidden;
+  position: fixed;
+  top: var(--modal-scroll-y, 0px);
+  width: 100%;
+  overscroll-behavior: none;
+}
+
 /* ---------- Layout ---------- */
 
 .page {
@@ -1075,24 +1089,99 @@ body {
   position: relative;
 }
 
-/* Booking/edit modal: scrollable with sticky footer on desktop */
+/* Booking/edit modal layout: header + scrollable form + action row */
 .board-day-modal--booking {
+  --booking-footer-clearance: 112px;
+  --booking-surface-primary: var(--bg);
+  --booking-field-bg: color-mix(in srgb, #1e1e1e 55%, var(--surface));
+  --booking-border-soft: var(--border);
+  --booking-border-strong: var(--border-strong);
+  --booking-chip-bg: color-mix(in srgb, var(--surface) 60%, #222222);
+  --booking-chip-text: var(--text-muted);
+  --booking-chip-border: var(--border);
+  --booking-chip-active-bg: color-mix(in srgb, var(--available-bg) 82%, var(--surface));
+  --booking-chip-active-border: color-mix(in srgb, var(--available-dot) 78%, var(--border));
+  --booking-chip-active-text: color-mix(in srgb, var(--available-text) 96%, var(--text));
+  --booking-day-heading-text: var(--text);
+  --booking-day-heading-subtle: var(--text-muted);
+  --booking-presets-toggle-bg: var(--surface);
+  --booking-presets-toggle-border: var(--border);
+  --booking-presets-toggle-text: var(--text-muted);
+  background: var(--bg);
   width: min(720px, calc(100vw - 48px));
   max-height: calc(100dvh - 48px);
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 14px 14px 0;
+}
+
+:root[data-theme="light"] .board-day-modal--booking {
+  --booking-surface-primary: #ffffff;
+  --booking-field-bg: #ffffff;
+  --booking-border-soft: #d8d8d8;
+  --booking-border-strong: #c8c8c8;
+  --booking-chip-bg: #f0f0f0;
+  --booking-chip-text: #5a5a5a;
+  --booking-chip-border: #d4d4d4;
+  --booking-chip-active-bg: color-mix(in srgb, var(--available-bg) 76%, #ffffff);
+  --booking-chip-active-border: color-mix(in srgb, var(--available-dot) 74%, #b4b4b4);
+  --booking-chip-active-text: color-mix(in srgb, var(--available-text) 90%, #073a2e);
+  --booking-day-heading-text: #1a1a1a;
+  --booking-day-heading-subtle: #6a6a6a;
+  --booking-presets-toggle-bg: #f0f0f0;
+  --booking-presets-toggle-border: #d4d4d4;
+  --booking-presets-toggle-text: #5a5a5a;
 }
 
 .board-day-modal--booking .month-booking-actions {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  margin-top: 12px;
-  padding-top: 10px;
-  background: color-mix(in srgb, var(--surface) 96%, #000000);
+  position: static;
+  flex-shrink: 0;
+  margin-top: 0;
+  padding-top: 9px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--booking-surface-primary);
+  border-top: 1px solid var(--booking-border-soft);
 }
 
 .board-day-modal--booking .month-booking-error {
-  margin: 6px 0 0;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 2px 0 0;
+}
+
+.board-day-modal--booking .board-day-modal-title {
+  flex-shrink: 0;
+  margin-right: 34px;
+}
+
+.board-day-modal--booking .board-day-modal-event-date {
+  flex-shrink: 0;
+}
+
+.board-day-modal--booking .month-booking-form {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  align-content: start;
+  gap: 8px;
+  padding: 0 2px calc(16px + env(safe-area-inset-bottom, 0px));
+  scroll-padding-bottom: calc(var(--booking-footer-clearance) + env(safe-area-inset-bottom, 0px));
+}
+
+.board-day-modal--booking .month-booking-input,
+.board-day-modal--booking .month-booking-textarea,
+.board-day-modal--booking .month-booking-range-toggle,
+.board-day-modal--booking .month-booking-same-day-button {
+  scroll-margin-bottom: calc(var(--booking-footer-clearance) - 16px);
+}
+
+.board-day-modal--booking .month-booking-textarea {
+  scroll-margin-bottom: calc(var(--booking-footer-clearance) + 8px);
 }
 
 .board-day-modal-title {
@@ -1119,8 +1208,8 @@ body {
 }
 
 .board-day-modal-la-logo--booking {
-  height: clamp(36px, 6vw, 40px);
-  max-width: min(132px, 100%);
+  height: clamp(40px, 6.4vw, 44px);
+  max-width: min(150px, 100%);
   margin-top: 2px;
 }
 
@@ -1972,15 +2061,22 @@ body {
   gap: 10px;
 }
 
+.month-booking-landscape-fallback {
+  display: none;
+}
+
 .month-booking-label {
+  margin: 0;
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
+  font-weight: 620;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--text-muted) 86%, var(--text-subtle));
+  letter-spacing: 0.008em;
 }
 
 .month-booking-mode {
   display: grid;
-  gap: 6px;
+  gap: 7px;
 }
 
 .month-booking-mode-options {
@@ -1988,10 +2084,10 @@ body {
   align-items: center;
   gap: 4px;
   width: fit-content;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface) 94%, var(--bg));
-  padding: 2px;
+  padding: 3px;
 }
 
 .month-booking-mode-button {
@@ -2001,10 +2097,10 @@ body {
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11.5px;
+  font-weight: 620;
   line-height: 1.1;
-  padding: 6px 10px;
+  padding: 6px 11px;
   cursor: pointer;
 }
 
@@ -2023,9 +2119,9 @@ body {
   grid-template-columns: auto 1fr;
   align-items: stretch;
   min-height: 42px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
+  border: 1px solid var(--booking-border-soft);
+  border-radius: 10px;
+  background: var(--booking-field-bg);
   overflow: hidden;
 }
 
@@ -2039,23 +2135,24 @@ body {
   align-items: center;
   justify-content: center;
   padding: 0 10px;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text-muted);
-  border-right: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface) 90%, var(--bg));
+  border-right: 1px solid var(--booking-border-soft);
+  background: color-mix(in srgb, var(--booking-surface-secondary) 84%, var(--booking-surface-primary));
 }
 
 .month-booking-input,
 .month-booking-textarea {
   width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
+  border: 1px solid var(--booking-border-soft);
+  border-radius: 10px;
+  background: var(--booking-field-bg);
   color: var(--text);
   font: inherit;
   font-size: 14px;
-  padding: 10px 11px;
+  padding: 10px 12px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 4%, transparent);
 }
 
 .month-booking-input--la {
@@ -2075,11 +2172,13 @@ body {
 .month-booking-textarea:focus-visible {
   outline: 2px solid var(--today-accent);
   outline-offset: 1px;
+  border-color: color-mix(in srgb, var(--today-accent) 58%, var(--booking-border-strong));
 }
 
 .month-booking-textarea {
   resize: vertical;
-  min-height: 88px;
+  min-height: 74px;
+  max-height: 220px;
 }
 
 .month-booking-end-date-control {
@@ -2506,13 +2605,13 @@ body {
 .month-booking-range-toggle {
   appearance: none;
   width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface);
+  border: 1px solid var(--booking-border-soft);
+  border-radius: 10px;
+  background: var(--booking-field-bg);
   color: var(--text);
   font: inherit;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13.5px;
+  font-weight: 560;
   padding: 10px 12px;
   cursor: pointer;
   display: flex;
@@ -2558,72 +2657,223 @@ body {
 
 .month-booking-daily-details {
   display: grid;
-  gap: 6px;
-  border: 1px solid var(--border);
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--booking-border-soft) 50%, transparent);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--surface) 96%, var(--bg));
-  padding: 8px;
-  margin-top: -4px;
+  background: transparent;
+  padding: 10px 12px;
+  margin-top: 0;
+}
+
+.month-booking-daily-details > .month-booking-label {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: color-mix(in srgb, var(--text) 84%, var(--text-muted));
 }
 
 .month-booking-daily-list {
   display: grid;
-  gap: 6px;
+  gap: 0;
+  margin-top: 4px;
 }
 
 .month-booking-daily-row {
   display: grid;
-  gap: 5px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-  padding-top: 6px;
+  gap: 8px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
 }
 
-.month-booking-daily-row:first-child {
-  border-top: 0;
-  padding-top: 0;
+.month-booking-daily-row + .month-booking-daily-row {
+  border-top: 1px solid color-mix(in srgb, var(--booking-border-soft) 40%, transparent);
+  padding-top: 10px;
+  margin-top: 6px;
 }
 
 .month-booking-daily-row-header {
   display: flex;
   align-items: center;
-  font-size: 12px;
+  gap: 5px;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--booking-day-heading-text);
+  line-height: 1.3;
+  padding: 0 1px;
+}
+
+.month-booking-presets {
+  display: grid;
+  gap: 7px;
+}
+
+.month-booking-notes-group,
+.month-booking-day-notes-group {
+  display: grid;
+  gap: 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
+.month-booking-day-notes-input,
+.month-booking-notes-group .month-booking-textarea {
+  margin: 0;
+}
+
+.month-booking-notes-group .month-booking-textarea {
+  min-height: 96px;
+}
+
+.month-booking-day-notes-input {
+  min-height: 44px;
+}
+
+.month-booking-presets--linked {
+  gap: 6px;
+}
+
+.month-booking-presets--linked .month-booking-presets-toggle {
+  border-color: color-mix(in srgb, var(--booking-border-soft) 70%, transparent);
+  background: var(--booking-presets-toggle-bg);
+}
+
+.month-booking-presets--linked .month-booking-day-chips {
+  margin-top: 0;
+  margin-bottom: 6px;
+  padding-top: 1px;
+}
+
+.month-booking-presets-toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--booking-presets-toggle-border);
+  border-radius: 999px;
+  background: var(--booking-presets-toggle-bg);
+  color: var(--booking-presets-toggle-text);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  min-height: 32px;
+  padding: 6px 11px;
+  cursor: pointer;
+  justify-self: end;
+}
+
+.month-booking-presets-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--booking-presets-toggle-bg) 78%, var(--booking-surface-primary));
+  border-color: color-mix(in srgb, var(--booking-presets-toggle-border) 78%, var(--text-muted));
   color: var(--text);
+}
+
+.month-booking-presets-toggle:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.month-booking-presets-toggle-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--text-muted) 84%, var(--text-subtle));
+  transition: transform 140ms ease;
+}
+
+.month-booking-presets-toggle.is-open .month-booking-presets-toggle-caret {
+  transform: rotate(180deg);
 }
 
 .month-booking-day-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 7px 8px;
+  margin-top: 1px;
+  margin-bottom: 8px;
 }
 
 .month-booking-day-chip {
   appearance: none;
-  border: 1px solid var(--border);
+  border: 1px solid var(--booking-chip-border);
   border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted);
+  background: var(--booking-chip-bg);
+  color: var(--booking-chip-text);
   font: inherit;
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1;
-  padding: 3px 8px;
+  min-height: 30px;
+  padding: 5px 11px;
   cursor: pointer;
   white-space: nowrap;
+  font-weight: 560;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 5%, transparent);
 }
 
 .month-booking-day-chip:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--bg) 60%, var(--surface));
+  background: color-mix(in srgb, var(--booking-chip-bg) 82%, var(--booking-surface-primary));
+  border-color: color-mix(in srgb, var(--booking-chip-border) 70%, var(--text-muted));
   color: var(--text);
 }
 
 .month-booking-day-chip--active {
-  border-color: color-mix(in srgb, var(--available-dot) 55%, var(--border));
-  background: color-mix(in srgb, var(--available-bg) 72%, var(--surface));
-  color: color-mix(in srgb, var(--available-text) 92%, var(--text));
+  border-color: var(--booking-chip-active-border);
+  background: var(--booking-chip-active-bg);
+  color: var(--booking-chip-active-text);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 11%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--available-dot) 24%, transparent);
+}
+
+.month-booking-day-chip--active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--booking-chip-active-bg) 86%, var(--booking-surface-primary));
+  border-color: color-mix(in srgb, var(--booking-chip-active-border) 86%, var(--available-dot));
+  color: color-mix(in srgb, var(--booking-chip-active-text) 96%, var(--text));
 }
 
 .month-booking-day-chip:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.board-day-modal--booking .month-booking-day-notes-group,
+.board-day-modal--booking .month-booking-notes-group {
+  border: 0;
+  background: transparent;
+}
+
+.month-booking-daily-row .month-booking-day-time-field {
+  min-height: 42px;
+  font-size: 13.5px;
+  padding: 9px 10px;
+}
+
+.month-booking-daily-row .board-day-modal-day-date {
+  font-size: 13.5px;
+  font-weight: 760;
+  color: color-mix(in srgb, var(--booking-day-heading-text) 98%, var(--text));
+}
+
+.month-booking-daily-row .board-day-modal-day-sep {
+  opacity: 0.34;
+}
+
+.month-booking-daily-row .board-day-modal-day-name {
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: 0.02em;
+  color: var(--booking-day-heading-subtle);
 }
 
 
@@ -2727,15 +2977,10 @@ body {
   }
 
   .month-booking-actions {
-    position: sticky;
-    bottom: 0;
-    background: linear-gradient(
-      to top,
-      color-mix(in srgb, var(--surface) 96%, transparent),
-      color-mix(in srgb, var(--surface) 86%, transparent)
-    );
-    padding-top: 16px;
-    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    position: static;
+    background: none;
+    padding-top: 10px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
     margin-top: 0;
   }
 
@@ -2773,12 +3018,14 @@ body {
     align-items: stretch;
     justify-items: stretch;
     padding-top: max(8px, env(safe-area-inset-top, 0px));
-    padding-right: max(12px, env(safe-area-inset-right, 0px));
-    padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
-    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(8px, env(safe-area-inset-right, 0px));
+    padding-bottom: 0;
+    padding-left: max(8px, env(safe-area-inset-left, 0px));
+    height: var(--visual-vh, 100dvh);
   }
 
   .board-day-modal--booking {
+    --booking-footer-clearance: 96px;
     display: flex;
     flex-direction: column;
     align-self: stretch;
@@ -2786,7 +3033,8 @@ body {
     max-width: none;
     max-height: none;
     overflow: hidden;
-    padding-bottom: 0;
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 12px 12px 0;
   }
 
   .board-day-modal--booking .board-day-modal-title,
@@ -2798,20 +3046,24 @@ body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
+    gap: 8px;
+    padding: 0 2px calc(16px + env(safe-area-inset-bottom, 0px));
+    scroll-padding-bottom: calc(var(--booking-footer-clearance) + env(safe-area-inset-bottom, 0px));
   }
 
   .board-day-modal--booking .month-booking-actions {
     position: static;
     flex-shrink: 0;
+    align-self: stretch;
+    width: 100%;
     margin-top: 0;
-  }
-
-  .board-day-modal--booking .month-booking-error {
-    flex-shrink: 0;
-    margin: 0;
-    padding: 0 0 6px;
+    padding-top: 8px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    background: none;
   }
 
   .board-day-modal .month-booking-input,
@@ -2828,7 +3080,7 @@ body {
   }
 
   .board-day-modal .month-booking-form {
-    gap: 10px;
+    gap: 8px;
   }
 
   .board-day-modal .month-booking-label {
@@ -2841,28 +3093,15 @@ body {
     padding-bottom: max(2px, env(safe-area-inset-bottom, 0px));
   }
 
-  .board-day-modal--booking .month-booking-form {
-    gap: 8px;
-    padding-bottom: 6px;
-  }
-
   .board-day-modal--booking .month-booking-input,
   .board-day-modal--booking .month-booking-input--small {
     padding: 8px 10px;
-  }
-
-  .board-day-modal--booking .month-booking-actions {
-    padding-top: 16px;
-    padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
-    background: linear-gradient(
-      to top,
-      color-mix(in srgb, var(--surface) 96%, transparent),
-      color-mix(in srgb, var(--surface) 86%, transparent)
-    );
+    min-height: 44px;
   }
 
   .board-day-modal--booking .month-booking-textarea {
-    min-height: 56px;
+    min-height: 74px;
+    max-height: 148px;
   }
 
   .board-day-modal .board-day-modal-close-icon {
@@ -2989,11 +3228,13 @@ body {
     justify-items: stretch;
     padding-top: max(4px, env(safe-area-inset-top, 0px));
     padding-right: max(4px, env(safe-area-inset-right, 0px));
-    padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
+    padding-bottom: 0;
     padding-left: max(4px, env(safe-area-inset-left, 0px));
+    height: var(--visual-vh, 100dvh);
   }
 
   .board-day-modal--booking {
+    --booking-footer-clearance: 84px;
     display: flex;
     flex-direction: column;
     align-self: stretch;
@@ -3023,20 +3264,24 @@ body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
+    gap: 6px;
+    padding: 0 2px calc(10px + env(safe-area-inset-bottom, 0px));
+    scroll-padding-bottom: calc(var(--booking-footer-clearance) + env(safe-area-inset-bottom, 0px));
   }
 
   .board-day-modal--booking .month-booking-actions {
     position: static;
     flex-shrink: 0;
+    align-self: stretch;
+    width: 100%;
     margin-top: 0;
-  }
-
-  .board-day-modal--booking .month-booking-error {
-    flex-shrink: 0;
-    margin: 0;
-    padding: 0 0 6px;
+    padding-top: 6px;
+    padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    background: none;
   }
 
   .month-booking-input,
@@ -3050,28 +3295,15 @@ body {
     font-size: 16px;
   }
 
-  .board-day-modal--booking .month-booking-form {
-    gap: 6px;
-  }
-
   .board-day-modal--booking .month-booking-input,
   .board-day-modal--booking .month-booking-input--small {
     padding: 7px 10px;
-  }
-
-  .board-day-modal--booking .month-booking-actions {
-    padding-top: 8px;
-    padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
-    background: linear-gradient(
-      to top,
-      color-mix(in srgb, var(--surface) 96%, transparent),
-      color-mix(in srgb, var(--surface) 84%, transparent)
-    );
+    min-height: 38px;
   }
 
   .board-day-modal--booking .month-booking-textarea {
-    min-height: 40px;
-    max-height: 18dvh;
+    min-height: 52px;
+    max-height: 24dvh;
   }
 
   .board-day-modal--booking .board-day-modal-overture-brand--booking {
@@ -3084,8 +3316,8 @@ body {
   }
 
   .board-day-modal--booking .board-day-modal-la-logo--booking {
-    height: 22px;
-    max-width: min(88px, 100%);
+    height: 26px;
+    max-width: min(108px, 100%);
   }
 
   .month-booking-calendar {
@@ -3104,16 +3336,11 @@ body {
   }
 
   .month-booking-actions {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    padding-top: 16px;
+    position: static;
+    z-index: auto;
+    padding-top: 8px;
     padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
-    background: linear-gradient(
-      to top,
-      color-mix(in srgb, var(--surface) 96%, transparent),
-      color-mix(in srgb, var(--surface) 84%, transparent)
-    );
+    background: none;
   }
 
   .page.page--month .header,
@@ -3420,5 +3647,360 @@ body {
   .board:not(.board-skeleton),
   .month-board:not(.board-skeleton) {
     animation: none;
+  }
+}
+
+/* Booking mobile-sheet override path (separate from desktop modal rules). */
+@media (max-width: 760px) {
+  .board-day-modal-backdrop--booking-mobile-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 420;
+    pointer-events: auto;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+    width: 100vw;
+    height: var(--visual-vh, 100dvh);
+    min-height: var(--visual-vh, 100dvh);
+    max-height: var(--visual-vh, 100dvh);
+    background: #050505;
+    padding: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+
+  .board-day-modal--booking-mobile-sheet {
+    --booking-sheet-footer-height: 124px;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    width: 100%;
+    height: var(--visual-vh, 100dvh);
+    min-height: var(--visual-vh, 100dvh);
+    max-height: var(--visual-vh, 100dvh);
+    max-width: none;
+    max-height: none;
+    overflow: hidden;
+    border-radius: 0;
+    border: 0;
+    box-shadow: none;
+    background: var(--bg);
+    padding-top: max(12px, env(safe-area-inset-top, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-bottom: 0;
+  }
+
+  .board-day-modal--booking-mobile-sheet .board-day-modal-title,
+  .board-day-modal--booking-mobile-sheet .board-day-modal-event-date {
+    flex-shrink: 0;
+  }
+
+.board-day-modal--booking-mobile-sheet .month-booking-form {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    align-content: start;
+    gap: 8px;
+    padding: 10px 2px calc(var(--booking-sheet-footer-height) + env(safe-area-inset-bottom, 0px));
+    scroll-padding-top: 8px;
+    scroll-padding-bottom: calc(var(--booking-sheet-footer-height) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-form > * {
+    scroll-margin-top: 10px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-label {
+    margin: 0;
+    line-height: 1.2;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-actions {
+    position: static;
+    flex-shrink: 0;
+    width: 100%;
+    margin-top: 0;
+    padding-top: 8px;
+    padding-bottom: max(34px, calc(env(safe-area-inset-bottom, 0px) + 20px));
+    border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    background: var(--bg);
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-error {
+    flex-shrink: 0;
+    margin: 0;
+    padding-top: 4px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-input,
+  .board-day-modal--booking-mobile-sheet .month-booking-input--small,
+  .board-day-modal--booking-mobile-sheet .month-booking-range-toggle {
+    min-height: 44px;
+    box-sizing: border-box;
+    font-size: 16px;
+    padding: 9px 10px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-textarea {
+    min-height: 84px;
+    max-height: 140px;
+    resize: none;
+    font-size: 16px;
+    box-sizing: border-box;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-la-prefix,
+  .board-day-modal--booking-mobile-sheet .month-booking-button,
+  .board-day-modal--booking-mobile-sheet .month-booking-same-day-button,
+  .board-day-modal--booking-mobile-sheet .month-booking-calendar-day,
+  .board-day-modal--booking-mobile-sheet .month-booking-calendar-nav,
+  .board-day-modal--booking-mobile-sheet .month-booking-mode-button {
+    font-size: 16px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-la-prefix {
+    font-size: 16.5px;
+    font-weight: 650;
+    padding: 0 11px;
+    letter-spacing: 0.005em;
+  }
+
+  .board-day-modal--booking-mobile-sheet input.month-booking-input--la {
+    font-size: 16.5px;
+    font-weight: 520;
+    letter-spacing: 0.003em;
+  }
+
+  .board-day-modal--booking-mobile-sheet input.month-booking-input:not(.month-booking-input--small):not(.month-booking-input--la) {
+    font-size: 16.5px;
+    font-weight: 510;
+  }
+
+  .board-day-modal--booking-mobile-sheet select.month-booking-input,
+  .board-day-modal--booking-mobile-sheet select.month-booking-input--small {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 34px;
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+      linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+    background-repeat: no-repeat;
+    background-size: 5px 5px, 5px 5px;
+    background-position:
+      calc(100% - 16px) calc(50% - 2px),
+      calc(100% - 11px) calc(50% - 2px);
+  }
+
+  .board-day-modal--booking-mobile-sheet select.month-booking-input::-ms-expand,
+  .board-day-modal--booking-mobile-sheet select.month-booking-input--small::-ms-expand {
+    display: none;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-daily-details,
+  .board-day-modal--booking-mobile-sheet .month-booking-daily-list,
+  .board-day-modal--booking-mobile-sheet .month-booking-daily-row,
+  .board-day-modal--booking-mobile-sheet .month-booking-day-notes-group,
+  .board-day-modal--booking-mobile-sheet .month-booking-notes-group,
+  .board-day-modal--booking-mobile-sheet .month-booking-day-chips {
+    scroll-margin-bottom: calc(var(--booking-sheet-footer-height) + 12px);
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-daily-row-header {
+    position: static;
+    top: auto;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-daily-details {
+    margin-top: 0;
+    padding: 9px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-day-notes-input {
+    min-height: 46px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-notes-group .month-booking-textarea {
+    min-height: 100px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-day-chips {
+    padding-bottom: 2px;
+    margin-bottom: 8px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-presets-toggle {
+    min-height: 36px;
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-day-chip {
+    min-height: 34px;
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-daily-row .month-booking-day-time-field {
+    min-height: 44px;
+    font-size: 16px;
+    padding: 9px 10px;
+  }
+}
+
+@media (max-height: 520px) and (orientation: landscape) and (hover: none) {
+  .board-day-modal-backdrop--booking-mobile-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 420;
+    pointer-events: auto;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+    width: 100vw;
+    height: var(--visual-vh, 100dvh);
+    min-height: var(--visual-vh, 100dvh);
+    max-height: var(--visual-vh, 100dvh);
+    background: #050505;
+    padding: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+
+  .board-day-modal--booking-mobile-sheet {
+    --booking-sheet-footer-height: 120px;
+    flex: 1 1 auto;
+    height: var(--visual-vh, 100dvh);
+    min-height: var(--visual-vh, 100dvh);
+    max-height: var(--visual-vh, 100dvh);
+    padding-top: max(4px, env(safe-area-inset-top, 0px));
+    padding-right: max(10px, env(safe-area-inset-right, 0px));
+    padding-left: max(10px, env(safe-area-inset-left, 0px));
+    padding-bottom: 0;
+    background: var(--bg);
+  }
+
+  .board-day-modal--booking-mobile-sheet .board-day-modal-title {
+    margin-bottom: 4px;
+    font-size: 13px;
+    line-height: 1.25;
+  }
+
+  .board-day-modal--booking-mobile-sheet .board-day-modal-event-date {
+    margin-top: 0;
+    margin-bottom: 5px;
+    font-size: 11px;
+    line-height: 1.25;
+  }
+
+  .board-day-modal--booking-mobile-sheet .board-day-modal-close-icon {
+    top: max(4px, env(safe-area-inset-top, 0px));
+    right: max(4px, env(safe-area-inset-right, 0px));
+    width: 26px;
+    height: 26px;
+    font-size: 16px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-form {
+    gap: 6px;
+    padding: 6px 2px calc(var(--booking-sheet-footer-height) + env(safe-area-inset-bottom, 0px) + 4px);
+    scroll-padding-top: 6px;
+    scroll-padding-bottom: calc(var(--booking-sheet-footer-height) + env(safe-area-inset-bottom, 0px) + 4px);
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-landscape-fallback {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 14px calc(max(18px, env(safe-area-inset-bottom, 0px) + 10px));
+    color: var(--text);
+    background: var(--bg);
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-landscape-fallback-title {
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.25;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-landscape-fallback-copy {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.35;
+    color: color-mix(in srgb, var(--text) 84%, var(--text-muted));
+    max-width: 28ch;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-landscape-fallback-subcopy {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.3;
+    color: var(--text-muted);
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-landscape-fallback-close {
+    margin-top: 2px;
+    min-height: 38px;
+    padding: 7px 14px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-form,
+  .board-day-modal--booking-mobile-sheet .month-booking-error,
+  .board-day-modal--booking-mobile-sheet .month-booking-actions {
+    display: none;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-actions {
+    align-items: center;
+    padding-top: 6px;
+    padding-bottom: max(18px, calc(env(safe-area-inset-bottom, 0px) + 10px));
+    gap: 6px;
+    background: var(--bg);
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-daily-row {
+    gap: 6px;
+    padding: 0;
+    border: none;
+    background: transparent;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-daily-row + .month-booking-daily-row {
+    border-top: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
+    padding-top: 12px;
+    margin-top: 6px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-day-chips {
+    margin-bottom: 6px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-input,
+  .board-day-modal--booking-mobile-sheet .month-booking-input--small,
+  .board-day-modal--booking-mobile-sheet .month-booking-range-toggle {
+    min-height: 40px;
+    padding: 7px 10px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-textarea {
+    min-height: 58px;
+    max-height: 22dvh;
   }
 }

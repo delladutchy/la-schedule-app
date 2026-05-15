@@ -91,6 +91,12 @@ function navigationSignalsFromRequest(req) {
 
 async function handleNavigationRequest(event, req) {
   try {
+    // Tokenized editor bootstrap URLs must bypass shell cache entirely so
+    // same-domain token switches never replay another editor's cached shell.
+    if (shouldBypassShellCacheForRequest(req.url)) {
+      return fetch(new Request(req, { cache: "no-store" }));
+    }
+
     const bucket = deriveShellBucket(req.headers.get("cookie"));
     const cacheKey = buildShellCacheKey(req.url, bucket);
     const cache = await caches.open(SHELL_CACHE_NAME);
@@ -230,6 +236,12 @@ function shouldPersistResponseForRequest(rawUrl) {
   try { url = new URL(rawUrl); } catch (e) { return false; }
   if (url.searchParams.has("editor")) return false;
   return true;
+}
+
+function shouldBypassShellCacheForRequest(rawUrl) {
+  let url;
+  try { url = new URL(rawUrl); } catch (e) { return false; }
+  return url.searchParams.has("editor");
 }
 
 function parseCookieValue(cookieHeader, cookieName) {

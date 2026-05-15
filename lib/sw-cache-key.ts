@@ -99,6 +99,20 @@ export function buildShellCacheKey(rawUrl: string, bucket: string): string {
   return "shell:" + bucket + ":" + url.pathname + search;
 }
 
+/**
+ * Tokenized editor bootstrap URLs must bypass shell cache entirely so
+ * same-domain token switches never replay another editor's cached shell.
+ */
+export function shouldBypassShellCacheForRequest(rawUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  return url.searchParams.has("editor");
+}
+
 export interface NavigationRequestSignals {
   /** request.mode — "navigate" only for top-level document loads. */
   mode?: string | null;
