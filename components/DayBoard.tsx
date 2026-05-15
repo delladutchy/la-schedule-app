@@ -621,6 +621,20 @@ export function DayBoard({
       }
     }
 
+    const hydratedLocation = (() => {
+      const detailLocation = detail.location?.trim();
+      if (detailLocation) return detailLocation;
+      if (!activeDetailPanel) return "";
+      for (const panelDetail of activeDetailPanel.details) {
+        if (!canViewDetailNotes(panelDetail, normalizedEditorId, editorCalendarId, overtureCalendarId)) {
+          continue;
+        }
+        const loc = panelDetail.location?.trim();
+        if (loc) return loc;
+      }
+      return "";
+    })();
+
     setActiveBookingPanel({
       mode: "edit",
       eventId: detail.eventId,
@@ -635,7 +649,7 @@ export function DayBoard({
     setBookingCallTimeOption(globalCallTimeOption);
     setBookingCallTimeOther(globalCallTimeOther);
     setBookingNotes(parsedDescription.jobNotes ?? "");
-    setBookingLocation(detail.location?.trim() ?? "");
+    setBookingLocation(hydratedLocation);
     setLocationQuery("");
     setLocationCoords(null);
     setLocationActiveIndex(-1);
