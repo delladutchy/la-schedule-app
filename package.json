@@ -17,7 +17,9 @@
   "dependencies": {
     "@netlify/blobs": "^8.1.0",
     "@supabase/supabase-js": "^2.105.4",
+    "@types/leaflet": "^1.9.21",
     "googleapis": "^144.0.0",
+    "leaflet": "^1.9.4",
     "luxon": "^3.5.0",
     "next": "14.2.15",
     "react": "18.3.1",

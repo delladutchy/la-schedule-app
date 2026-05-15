@@ -375,6 +375,7 @@ export interface MonthEventBarDetail {
   jobNumber?: string;
   eventId?: string;
   description?: string;
+  location?: string;
   ownerEditor?: string;
   startUtc?: string;
   endUtc?: string;
@@ -591,6 +592,7 @@ export function summarizeBookedDayLabel(
     jobNumber?: string;
     eventId?: string;
     description?: string;
+    location?: string;
     ownerEditor?: string;
     startUtc?: string;
     endUtc?: string;
@@ -682,6 +684,7 @@ export function summarizeBookedDayLabel(
             ...(detailJob ? { jobNumber: detailJob } : {}),
             ...(detail.eventId ? { eventId: detail.eventId } : {}),
             ...(detail.description ? { description: detail.description } : {}),
+            ...(detail.location ? { location: detail.location } : {}),
             ...(detail.ownerEditor ? { ownerEditor: detail.ownerEditor } : {}),
             ...(detail.startUtc ? { startUtc: detail.startUtc } : {}),
             ...(detail.endUtc ? { endUtc: detail.endUtc } : {}),
@@ -716,6 +719,7 @@ export function summarizeBookedDayLabel(
         summary: detail.summary,
         ...(detail.eventId ? { eventId: detail.eventId } : {}),
         ...(detail.description ? { description: detail.description } : {}),
+        ...(detail.location ? { location: detail.location } : {}),
         ...(detail.ownerEditor ? { ownerEditor: detail.ownerEditor } : {}),
         ...(detail.startUtc ? { startUtc: detail.startUtc } : {}),
         ...(detail.endUtc ? { endUtc: detail.endUtc } : {}),

@@ -1348,6 +1348,327 @@ html.modal-open body {
   font-weight: 500;
 }
 
+.board-day-modal-maps-link {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--today-accent);
+  text-decoration: none;
+}
+
+.board-day-modal-maps-link:hover {
+  text-decoration: underline;
+}
+
+.board-day-modal-maps-link--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* ── Location autocomplete suggestions ──────────────────────────────── */
+
+.location-suggestions {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.location-suggestions__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  min-height: 44px;
+  justify-content: center;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+  user-select: none;
+}
+
+.location-suggestions__item:last-child {
+  border-bottom: none;
+}
+
+.location-suggestions__item:hover,
+.location-suggestions__item--active {
+  background: color-mix(in srgb, var(--today-accent) 12%, var(--surface));
+}
+
+.location-suggestions__name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.location-suggestions__sub {
+  font-size: 11px;
+  color: var(--text-subtle);
+  line-height: 1.3;
+}
+
+.location-suggestions__status {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+
+.location-suggestions__status--loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.location-suggestions__status--loading::before {
+  content: '';
+  display: block;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--today-accent);
+  border-radius: 50%;
+  animation: location-suggestions-spin 0.7s linear infinite;
+}
+
+@keyframes location-suggestions-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Location map preview (Leaflet/OSM) ─────────────────────────────── */
+
+.location-map-preview {
+  position: relative;
+  width: 100%;
+  height: 260px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 80%, var(--bg));
+  margin-top: 8px;
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.location-map-preview__map {
+  width: 100%;
+  height: 100%;
+  background: color-mix(in srgb, var(--surface) 60%, #e8e0d8);
+}
+
+.location-map-preview__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-subtle);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  pointer-events: none;
+}
+
+.location-map-preview__overlay--loading::before {
+  content: '';
+  display: block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-top-color: var(--today-accent);
+  border-radius: 50%;
+  animation: lmp-spin 0.75s linear infinite;
+}
+
+@keyframes lmp-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Inside the booking form the map uses the booking field border token */
+.month-booking-notes-group .location-map-preview {
+  border-color: var(--booking-border-soft);
+}
+
+/* Leaflet attribution compact override */
+.location-map-preview .leaflet-control-attribution {
+  font-size: 9px;
+  padding: 0 4px;
+  line-height: 1.4;
+  background: color-mix(in srgb, var(--surface) 75%, transparent);
+  color: var(--text-subtle);
+}
+
+.location-map-preview .leaflet-control-attribution a {
+  color: var(--today-accent);
+}
+
+/* Zoom control styled to match the app surface */
+.location-map-preview .leaflet-control-zoom {
+  border: 1px solid var(--border) !important;
+  border-radius: 7px !important;
+  overflow: hidden;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent) !important;
+  margin: 0 10px 10px 0;
+}
+
+.location-map-preview .leaflet-control-zoom-in,
+.location-map-preview .leaflet-control-zoom-out {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border-bottom: 1px solid var(--border) !important;
+  width: 28px !important;
+  height: 28px !important;
+  line-height: 28px !important;
+  font-size: 16px !important;
+  font-weight: 400 !important;
+  transition: background 0.15s;
+}
+
+.location-map-preview .leaflet-control-zoom-out {
+  border-bottom: none !important;
+}
+
+.location-map-preview .leaflet-control-zoom-in:hover,
+.location-map-preview .leaflet-control-zoom-out:hover {
+  background: color-mix(in srgb, var(--surface) 60%, var(--bg)) !important;
+}
+
+/* Tap-to-expand affordance on the small preview */
+.location-map-preview--expandable {
+  cursor: pointer;
+}
+.location-map-preview--expandable:hover {
+  opacity: 0.9;
+  transition: opacity 0.15s;
+}
+
+/* ── Expanded map overlay ───────────────────────────────────────────────── */
+
+.location-map-expanded-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 600;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.location-map-expanded-modal {
+  background: var(--surface);
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 740px;
+  height: 78vh;
+  max-height: 660px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+}
+
+.location-map-expanded-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.location-map-expanded-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.location-map-expanded-close {
+  appearance: none;
+  background: color-mix(in srgb, var(--surface) 60%, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.location-map-expanded-close:hover {
+  background: color-mix(in srgb, var(--surface) 40%, var(--bg));
+}
+
+.location-map-expanded-map {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.location-map-expanded-footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.location-map-expanded-maps-link {
+  font-size: 13px;
+  color: var(--today-accent);
+  text-decoration: none;
+}
+
+.location-map-expanded-maps-link:hover {
+  text-decoration: underline;
+}
+
+/* Mobile: near-full-screen, top safe-area inset */
+@media (max-width: 600px) {
+  .location-map-expanded-overlay {
+    padding: 0;
+    align-items: flex-start;
+  }
+
+  .location-map-expanded-modal {
+    border-radius: 0;
+    max-width: 100%;
+    height: 100dvh;
+    height: var(--visual-vh, 100dvh);
+    max-height: none;
+  }
+
+  .location-map-expanded-header {
+    padding-top: max(14px, env(safe-area-inset-top, 14px));
+  }
+
+  .location-map-expanded-close {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    font-size: 16px;
+  }
+
+  .location-map-expanded-footer {
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+  }
+}
+
 .board-day-modal-empty {
   margin: 0;
   font-size: 12px;
@@ -3672,7 +3993,7 @@ html.modal-open body {
   }
 
   .board-day-modal--booking-mobile-sheet {
-    --booking-sheet-footer-height: 124px;
+    --booking-sheet-footer-height: 190px;
     pointer-events: auto;
     display: flex;
     flex-direction: column;
@@ -3854,6 +4175,22 @@ html.modal-open body {
     min-height: 44px;
     font-size: 16px;
     padding: 9px 10px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .location-map-preview {
+    height: 172px;
+    margin-bottom: 6px;
+  }
+
+  /* When the location input is focused, iOS should scroll it high enough
+     that the map card below it stays above the keyboard. */
+  .board-day-modal--booking-mobile-sheet #booking-location {
+    scroll-margin-bottom: calc(var(--booking-sheet-footer-height) + 210px);
+  }
+
+  .board-day-modal--booking-mobile-sheet .location-map-preview,
+  .board-day-modal--booking-mobile-sheet .board-day-modal-maps-link {
+    scroll-margin-bottom: calc(var(--booking-sheet-footer-height) + 12px);
   }
 }
 

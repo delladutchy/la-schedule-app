@@ -115,6 +115,7 @@ export interface DayEventDetail {
   endDateInclusive?: string;
   eventId?: string;
   description?: string;
+  location?: string;
   ownerEditor?: string;
   dateRangeLabel: string;
   timeRangeLabel?: string;
