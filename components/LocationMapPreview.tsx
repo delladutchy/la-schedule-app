@@ -7,11 +7,16 @@ import { useEffect, useRef, useState } from 'react';
 
 type GeoCoords = { lat: number; lon: number };
 type GeoStatus = 'loading' | 'ok' | 'not-found' | 'error';
-
-// Soft geographic bias matching the autocomplete hook — Delaware + Mid-Atlantic coast.
-// bounded=0 means US-wide results still appear; in-area results rank first.
-// Keep in sync with BIAS_VIEWBOX in lib/useLocationAutocomplete.ts.
-const GEOCODE_BIAS_VIEWBOX = '-76.5,40.2,-74.5,37.8';
+type LocationSuggestion = {
+  displayName?: string;
+  shortName?: string;
+  subtext?: string;
+  lat?: number;
+  lon?: number;
+};
+type LocationSearchResponse = {
+  suggestions?: LocationSuggestion[];
+};
 
 // Module-level cache: avoids re-geocoding the same string within a session.
 const geocodeCache = new Map<string, GeoCoords>();
@@ -20,27 +25,16 @@ async function geocodeQuery(query: string, signal: AbortSignal): Promise<GeoCoor
   const cached = geocodeCache.get(query);
   if (cached) return cached;
 
-  const params = new URLSearchParams({
-    q: query,
-    format: 'json',
-    limit: '1',
-    countrycodes: 'us',
-    viewbox: GEOCODE_BIAS_VIEWBOX,
-    bounded: '0',
-  });
-  const resp = await fetch(
-    `https://nominatim.openstreetmap.org/search?${params}`,
-    { signal, headers: { 'Accept-Language': 'en' } },
-  );
+  const params = new URLSearchParams({ q: query });
+  const resp = await fetch(`/api/locations/search?${params}`, { signal });
   if (!resp.ok) return null;
 
-  const data: unknown = await resp.json();
-  if (!Array.isArray(data) || data.length === 0) return null;
-
-  const first = data[0] as { lat?: string; lon?: string };
-  const lat = parseFloat(first.lat ?? '');
-  const lon = parseFloat(first.lon ?? '');
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const data = (await resp.json()) as LocationSearchResponse;
+  const first = data.suggestions?.[0];
+  const lat = first?.lat;
+  const lon = first?.lon;
+  if (typeof lat !== 'number' || !Number.isFinite(lat)) return null;
+  if (typeof lon !== 'number' || !Number.isFinite(lon)) return null;
 
   const result: GeoCoords = { lat, lon };
   geocodeCache.set(query, result);
