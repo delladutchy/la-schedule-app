@@ -319,7 +319,7 @@ function deriveMonthPayloadForTarget(
   };
 }
 
-function resolveRenderableViewPayload(opts: {
+export function resolveRenderableViewPayload(opts: {
   viewMode: "list" | "month";
   targetWeekStart: string;
   targetMonthKey: string;
@@ -352,11 +352,11 @@ function resolveRenderableViewPayload(opts: {
     sourceCandidates.push(payload);
   }
 
-  const seen = new Set<string>();
   for (const source of sourceCandidates) {
-    const key = buildBoardWindowCacheKey(source);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    // Do not de-dupe by selected-view cache key here.
+    // A selected-only payload and a richer full-window payload can share the
+    // same selected coordinates; skipping the latter can prevent deriving the
+    // active month/week target and temporarily blank the board.
     const derived = opts.viewMode === "list"
       ? deriveWeekPayloadForTarget(source, opts.targetWeekStart)
       : deriveMonthPayloadForTarget(source, opts.targetMonthKey);

@@ -434,6 +434,15 @@ export function MonthBoard({
     }
   };
 
+  const clearBookingLocation = () => {
+    setBookingLocation("");
+    setLocationQuery("");
+    setLocationCoords(null);
+    setLocationActiveIndex(-1);
+    if (bookingError) setBookingError(null);
+    locationInputRef.current?.focus();
+  };
+
   useEffect(() => {
     if (!activeDetailPanel && !activeBookingPanel) return undefined;
 
@@ -2082,70 +2091,83 @@ export function MonthBoard({
                 <label className="month-booking-label" htmlFor="booking-location">
                   Job Location
                 </label>
-                <input
-                  ref={locationInputRef}
-                  id="booking-location"
-                  name="job-location"
-                  type="text"
-                  className="month-booking-input"
-                  autoComplete="off"
-                  autoCapitalize="words"
-                  value={bookingLocation}
-                  role="combobox"
-                  aria-autocomplete="list"
-                  aria-haspopup="listbox"
-                  aria-expanded={locationSuggestions.length > 0}
-                  aria-controls={locationQuery.trim().length >= 3 ? "month-location-suggestions" : undefined}
-                  aria-activedescendant={locationActiveIndex >= 0 ? `month-location-suggestions-${locationActiveIndex}` : undefined}
-                  onChange={(event) => {
-                    setBookingLocation(event.target.value);
-                    setLocationQuery(event.target.value);
-                    setLocationCoords(null);
-                    if (bookingError) setBookingError(null);
-                  }}
-                  onFocus={() => {
-                    const isDesktop = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
-                    setTimeout(() => {
-                      mapsLinkRef.current?.scrollIntoView({
-                        block: isDesktop ? 'end' : 'nearest',
-                        behavior: 'auto',
-                      });
-                    }, 100);
-                    setTimeout(() => {
-                      if (isDesktop) {
-                        const form = mapsLinkRef.current?.closest('.month-booking-form') as HTMLElement | null;
-                        form?.scrollTo({ top: form.scrollHeight, behavior: 'auto' });
-                      } else {
+                <div className="month-booking-location-field">
+                  <input
+                    ref={locationInputRef}
+                    id="booking-location"
+                    name="job-location"
+                    type="text"
+                    className={`month-booking-input${bookingLocation.trim() ? " month-booking-input--with-clear" : ""}`}
+                    autoComplete="off"
+                    autoCapitalize="words"
+                    value={bookingLocation}
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-haspopup="listbox"
+                    aria-expanded={locationSuggestions.length > 0}
+                    aria-controls={locationQuery.trim().length >= 3 ? "month-location-suggestions" : undefined}
+                    aria-activedescendant={locationActiveIndex >= 0 ? `month-location-suggestions-${locationActiveIndex}` : undefined}
+                    onChange={(event) => {
+                      setBookingLocation(event.target.value);
+                      setLocationQuery(event.target.value);
+                      setLocationCoords(null);
+                      if (bookingError) setBookingError(null);
+                    }}
+                    onFocus={() => {
+                      const isDesktop = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+                      setTimeout(() => {
                         mapsLinkRef.current?.scrollIntoView({
-                          block: 'end',
+                          block: isDesktop ? 'end' : 'nearest',
                           behavior: 'auto',
                         });
+                      }, 100);
+                      setTimeout(() => {
+                        if (isDesktop) {
+                          const form = mapsLinkRef.current?.closest('.month-booking-form') as HTMLElement | null;
+                          form?.scrollTo({ top: form.scrollHeight, behavior: 'auto' });
+                        } else {
+                          mapsLinkRef.current?.scrollIntoView({
+                            block: 'end',
+                            behavior: 'auto',
+                          });
+                        }
+                      }, 350);
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => { setLocationQuery(""); }, 200);
+                    }}
+                    onKeyDown={(e) => {
+                      if (locationSuggestions.length > 0 || isLocationLoading) {
+                        if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          setLocationActiveIndex((i) => Math.min(i + 1, locationSuggestions.length - 1));
+                        } else if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          setLocationActiveIndex((i) => Math.max(i - 1, -1));
+                        } else if (e.key === "Enter" && locationActiveIndex >= 0 && locationSuggestions[locationActiveIndex]) {
+                          e.preventDefault();
+                          handleSuggestionSelect(locationSuggestions[locationActiveIndex]);
+                        } else if (e.key === "Escape") {
+                          setLocationQuery("");
+                        }
                       }
-                    }, 350);
-                  }}
-                  onBlur={() => {
-                    setTimeout(() => { setLocationQuery(""); }, 200);
-                  }}
-                  onKeyDown={(e) => {
-                    if (locationSuggestions.length > 0 || isLocationLoading) {
-                      if (e.key === "ArrowDown") {
-                        e.preventDefault();
-                        setLocationActiveIndex((i) => Math.min(i + 1, locationSuggestions.length - 1));
-                      } else if (e.key === "ArrowUp") {
-                        e.preventDefault();
-                        setLocationActiveIndex((i) => Math.max(i - 1, -1));
-                      } else if (e.key === "Enter" && locationActiveIndex >= 0 && locationSuggestions[locationActiveIndex]) {
-                        e.preventDefault();
-                        handleSuggestionSelect(locationSuggestions[locationActiveIndex]);
-                      } else if (e.key === "Escape") {
-                        setLocationQuery("");
-                      }
-                    }
-                  }}
-                  placeholder="Venue name or address"
-                  maxLength={500}
-                  disabled={bookingModalIsLocked}
-                />
+                    }}
+                    placeholder="Venue name or address"
+                    maxLength={500}
+                    disabled={bookingModalIsLocked}
+                  />
+                  {bookingLocation.trim() ? (
+                    <button
+                      type="button"
+                      className="month-booking-location-clear"
+                      aria-label="Clear job location"
+                      onClick={clearBookingLocation}
+                      disabled={bookingModalIsLocked}
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </div>
                 <LocationSuggestions
                   listboxId="month-location-suggestions"
                   query={locationQuery}

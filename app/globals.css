@@ -2495,6 +2495,50 @@ html.modal-open body {
   padding: 8px 10px;
 }
 
+.month-booking-location-field {
+  position: relative;
+}
+
+.month-booking-input--with-clear {
+  padding-right: 44px;
+}
+
+.month-booking-location-clear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--booking-border-soft) 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--booking-surface-secondary) 78%, var(--booking-surface-primary));
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}
+
+.month-booking-location-clear:hover:not(:disabled) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--booking-border-strong) 72%, transparent);
+}
+
+.month-booking-location-clear:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
+
+.month-booking-location-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .month-booking-input:focus-visible,
 .month-booking-textarea:focus-visible {
   outline: 2px solid var(--today-accent);
@@ -4131,6 +4175,17 @@ html.modal-open body {
   .board-day-modal--booking-mobile-sheet select.month-booking-input::-ms-expand,
   .board-day-modal--booking-mobile-sheet select.month-booking-input--small::-ms-expand {
     display: none;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-input--with-clear {
+    padding-right: 48px;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-location-clear {
+    width: 34px;
+    height: 34px;
+    right: 8px;
+    font-size: 18px;
   }
 
   .board-day-modal--booking-mobile-sheet .month-booking-daily-details,
