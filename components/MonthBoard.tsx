@@ -386,6 +386,7 @@ export function MonthBoard({
   const [bookingCallTimeOption, setBookingCallTimeOption] = useState("TBD");
   const [bookingCallTimeOther, setBookingCallTimeOther] = useState("");
   const [bookingNotes, setBookingNotes] = useState("");
+  const [bookingLocation, setBookingLocation] = useState("");
   const [bookingDayOverrides, setBookingDayOverrides] = useState<BookingDayOverrideMap>({});
   const [bookingExistingDescriptionRaw, setBookingExistingDescriptionRaw] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
@@ -477,6 +478,7 @@ export function MonthBoard({
     setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
+    setBookingLocation("");
     setBookingDayOverrides({});
     setBookingExistingDescriptionRaw("");
     setBookingError(null);
@@ -500,6 +502,7 @@ export function MonthBoard({
     setBookingCallTimeOption("TBD");
     setBookingCallTimeOther("");
     setBookingNotes("");
+    setBookingLocation("");
     setBookingDayOverrides({});
     setBookingExistingDescriptionRaw("");
     setBookingError(null);
@@ -575,6 +578,7 @@ export function MonthBoard({
     setBookingCallTimeOption(globalCallTimeOption);
     setBookingCallTimeOther(globalCallTimeOther);
     setBookingNotes(parsedDescription.jobNotes ?? "");
+    setBookingLocation(detail.location?.trim() ?? "");
     setBookingDayOverrides(rehydratedDayOverrides);
     setBookingExistingDescriptionRaw(detail.description ?? "");
     setBookingError(null);
@@ -744,6 +748,11 @@ export function MonthBoard({
           ...(activeBookingPanel.mode === "create" ? { bookingMode: activeBookingPanel.bookingMode } : {}),
           startDate,
           endDate,
+          ...(bookingLocation.trim()
+            ? { location: bookingLocation.trim() }
+            : activeBookingPanel.mode === "edit"
+              ? { location: "" }
+              : {}),
         }),
       });
 
@@ -970,6 +979,17 @@ export function MonthBoard({
       const parsed = parseGigDescription(detail.description);
       const notes = parsed.jobNotes?.trim();
       if (notes) return notes;
+    }
+    return null;
+  })();
+  const activeDetailLocation = (() => {
+    if (!activeDetailPanel) return null;
+    for (const detail of activeDetailPanel.details) {
+      if (!canViewDetailNotes(detail, normalizedEditorId, editorCalendarId, overtureCalendarId)) {
+        continue;
+      }
+      const location = detail.location?.trim();
+      if (location) return location;
     }
     return null;
   })();
@@ -1384,6 +1404,22 @@ export function MonthBoard({
                     <p className="board-day-modal-event-meta board-day-modal-event-meta--notes">
                       {activeDetailOverallNotes}
                     </p>
+                  </>
+                ) : null}
+                {activeDetailLocation ? (
+                  <>
+                    <p className="board-day-modal-event-label">Job Location</p>
+                    <p className="board-day-modal-event-meta">
+                      {activeDetailLocation}
+                    </p>
+                    <a
+                      href={`https://maps.apple.com/?q=${encodeURIComponent(activeDetailLocation)}`}
+                      className="board-day-modal-maps-link"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open in Apple Maps
+                    </a>
                   </>
                 ) : null}
               </div>
@@ -1937,6 +1973,35 @@ export function MonthBoard({
                   rows={4}
                   disabled={bookingModalIsLocked}
                 />
+                <label className="month-booking-label" htmlFor="booking-location">
+                  Job Location
+                </label>
+                <input
+                  id="booking-location"
+                  name="job-location"
+                  type="text"
+                  className="month-booking-input"
+                  autoComplete="off"
+                  autoCapitalize="words"
+                  value={bookingLocation}
+                  onChange={(event) => {
+                    setBookingLocation(event.target.value);
+                    if (bookingError) setBookingError(null);
+                  }}
+                  placeholder="Venue name or address"
+                  maxLength={500}
+                  disabled={bookingModalIsLocked}
+                />
+                {bookingLocation.trim() ? (
+                  <a
+                    href={`https://maps.apple.com/?q=${encodeURIComponent(bookingLocation.trim())}`}
+                    className="board-day-modal-maps-link"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Preview in Apple Maps
+                  </a>
+                ) : null}
                 {!bookingHasMultiDayRange && !isOvertureBookingMode ? (
                   <div className="month-booking-presets month-booking-presets--linked">
                     <button
