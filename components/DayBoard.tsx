@@ -10,6 +10,7 @@ import {
   type WeekGroup,
 } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
+import { LocationMapPreview } from "@/components/LocationMapPreview";
 import {
   buildGigDayDetailsForRange,
   buildGigDescription,
@@ -1468,6 +1469,7 @@ export function DayBoard({
                   <>
                     <p className="board-day-modal-event-label">Job Location</p>
                     <p className="board-day-modal-event-meta">{activeDetailLocation}</p>
+                    <LocationMapPreview location={activeDetailLocation} debounceMs={0} />
                     <a
                       href={`https://maps.apple.com/?q=${encodeURIComponent(activeDetailLocation)}`}
                       className="board-day-modal-maps-link"
@@ -2055,6 +2057,9 @@ export function DayBoard({
                   maxLength={500}
                   disabled={bookingModalIsLocked}
                 />
+                {bookingLocation.trim() ? (
+                  <LocationMapPreview location={bookingLocation} debounceMs={400} />
+                ) : null}
                 <a
                   href={bookingLocation.trim() ? `https://maps.apple.com/?q=${encodeURIComponent(bookingLocation.trim())}` : undefined}
                   className={`board-day-modal-maps-link${bookingLocation.trim() ? "" : " board-day-modal-maps-link--hidden"}`}

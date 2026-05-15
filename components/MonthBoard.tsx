@@ -23,6 +23,7 @@ import {
   isCallTimeOption,
   isDayNoteChipActive,
 } from "@/lib/call-time-options";
+import { LocationMapPreview } from "@/components/LocationMapPreview";
 
 interface Props {
   month: MonthBoardData;
@@ -1412,6 +1413,7 @@ export function MonthBoard({
                     <p className="board-day-modal-event-meta">
                       {activeDetailLocation}
                     </p>
+                    <LocationMapPreview location={activeDetailLocation} debounceMs={0} />
                     <a
                       href={`https://maps.apple.com/?q=${encodeURIComponent(activeDetailLocation)}`}
                       className="board-day-modal-maps-link"
@@ -1992,6 +1994,9 @@ export function MonthBoard({
                   maxLength={500}
                   disabled={bookingModalIsLocked}
                 />
+                {bookingLocation.trim() ? (
+                  <LocationMapPreview location={bookingLocation} debounceMs={400} />
+                ) : null}
                 <a
                   href={bookingLocation.trim() ? `https://maps.apple.com/?q=${encodeURIComponent(bookingLocation.trim())}` : undefined}
                   className={`board-day-modal-maps-link${bookingLocation.trim() ? "" : " board-day-modal-maps-link--hidden"}`}
