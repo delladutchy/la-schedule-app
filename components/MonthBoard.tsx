@@ -53,6 +53,7 @@ const STAGED_LOADING_COPY: ReadonlyArray<{ delay: number; text: string }> = [
   { delay: 1800, text: "Refreshing schedule…" },
   { delay: 5000, text: "Google Calendar is taking a little longer…" },
 ];
+const MOBILE_BOOKING_MEDIA_QUERY = "(max-width: 760px) and (hover: none)";
 
 function useStagedLoadingCopy(isActive: boolean): string {
   const [stage, setStage] = useState(0);
@@ -372,6 +373,7 @@ export function MonthBoard({
     moved: false,
   });
   const dayNoteInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const bookingNotesInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [activeDetailPanel, setActiveDetailPanel] = useState<ActiveDetailPanel | null>(null);
   const [editorToken, setEditorToken] = useState<string | null>(null);
   const [resolvedEditorId, setResolvedEditorId] = useState<string | null>(initialResolvedEditorId);
@@ -388,6 +390,13 @@ export function MonthBoard({
   const [bookingExistingDescriptionRaw, setBookingExistingDescriptionRaw] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isBookingSavePending, setIsBookingSavePending] = useState(false);
+  const [isMobileBookingViewport, setIsMobileBookingViewport] = useState(() => (
+    typeof window !== "undefined"
+      ? window.matchMedia(MOBILE_BOOKING_MEDIA_QUERY).matches
+      : false
+  ));
+  const [singleDayPresetsExpanded, setSingleDayPresetsExpanded] = useState<boolean | null>(null);
+  const [expandedDayPresetsByDate, setExpandedDayPresetsByDate] = useState<Record<string, boolean>>({});
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeletePending, setIsDeletePending] = useState(false);
@@ -462,6 +471,19 @@ export function MonthBoard({
     setResolvedEditorId(initialResolvedEditorId);
   }, [initialResolvedEditorId]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const mediaQuery = window.matchMedia(MOBILE_BOOKING_MEDIA_QUERY);
+    const sync = () => setIsMobileBookingViewport(mediaQuery.matches);
+    sync();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", sync);
+      return () => mediaQuery.removeEventListener("change", sync);
+    }
+    mediaQuery.addListener(sync);
+    return () => mediaQuery.removeListener(sync);
+  }, []);
+
   const closeDetailPanel = () => setActiveDetailPanel(null);
   const closeBookingPanel = () => {
     setActiveBookingPanel(null);
@@ -477,6 +499,8 @@ export function MonthBoard({
     setBookingExistingDescriptionRaw("");
     setBookingError(null);
     setIsBookingSavePending(false);
+    setSingleDayPresetsExpanded(null);
+    setExpandedDayPresetsByDate({});
     setConfirmDeleteEventId(null);
     setDeleteError(null);
     setIsDeletePending(false);
@@ -497,6 +521,8 @@ export function MonthBoard({
     setBookingDayOverrides({});
     setBookingExistingDescriptionRaw("");
     setBookingError(null);
+    setSingleDayPresetsExpanded(null);
+    setExpandedDayPresetsByDate({});
     setConfirmDeleteEventId(null);
     setDeleteError(null);
   };
@@ -570,6 +596,8 @@ export function MonthBoard({
     setBookingDayOverrides(rehydratedDayOverrides);
     setBookingExistingDescriptionRaw(detail.description ?? "");
     setBookingError(null);
+    setSingleDayPresetsExpanded(null);
+    setExpandedDayPresetsByDate({});
     setConfirmDeleteEventId(null);
     setDeleteError(null);
     setIsDeletePending(false);
@@ -588,7 +616,7 @@ export function MonthBoard({
 
   const dismissMobileKeyboardForRangeChange = () => {
     if (typeof window === "undefined") return;
-    if (!window.matchMedia("(max-width: 760px) and (hover: none)").matches) return;
+    if (!window.matchMedia(MOBILE_BOOKING_MEDIA_QUERY).matches) return;
     const activeElement = document.activeElement;
     if (!(activeElement instanceof HTMLElement)) return;
     if (
@@ -870,6 +898,8 @@ export function MonthBoard({
     ? enumerateIsoDatesInRange(bookingStartDate, parsedBookingEndDate >= bookingStartDate ? parsedBookingEndDate : bookingStartDate)
     : [];
   const bookingHasMultiDayRange = bookingSelectedDates.length > 1;
+  const defaultPresetsExpanded = !isMobileBookingViewport;
+  const singleDayPresetsOpen = singleDayPresetsExpanded ?? defaultPresetsExpanded;
   const overallJobNotesLabel = "Job Notes";
   const resolveCallTimeFromInputs = (option: string, other: string): string => (
     option === "Other" ? other.trim() : option.trim()
@@ -1766,6 +1796,7 @@ export function MonthBoard({
                       const dayCallTimeOption = override?.callTimeOption ?? bookingCallTimeOption;
                       const dayCallTimeOther = override?.callTimeOther ?? bookingCallTimeOther;
                       const dayNotes = override?.notes ?? "";
+                      const dayPresetsExpanded = expandedDayPresetsByDate[date] ?? defaultPresetsExpanded;
                       return (
                         <div key={date} className="month-booking-daily-row">
                           <div className="month-booking-daily-row-header">
@@ -1818,40 +1849,63 @@ export function MonthBoard({
                             disabled={bookingModalIsLocked}
                           />
                           {!isOvertureBookingMode && (
-                          <div className="month-booking-day-chips">
-                            {DAY_NOTE_CHIPS.map((chip) => {
-                              const isActive = isDayNoteChipActive(dayNotes, chip);
-                              return (
-                                <button
-                                  key={chip}
-                                  type="button"
-                                  className={`month-booking-day-chip${isActive ? " month-booking-day-chip--active" : ""}`}
-                                  onClick={() => {
-                                    updateBookingDayOverride(date, { notes: applyDayNoteChip(dayNotes, chip) });
-                                  }}
-                                  disabled={bookingModalIsLocked}
-                                >
-                                  {chip}
-                                </button>
-                              );
-                            })}
-                            <button
-                              type="button"
-                              className="month-booking-day-chip"
-                              onClick={() => {
-                                const input = dayNoteInputRefs.current[date];
-                                if (!dayNotes.trim()) {
-                                  updateBookingDayOverride(date, { notes: "Other: " });
-                                  setTimeout(() => input?.focus(), 0);
-                                } else {
-                                  input?.focus();
-                                }
-                              }}
-                              disabled={bookingModalIsLocked}
-                            >
-                              Other
-                            </button>
-                          </div>
+                            <div className="month-booking-presets">
+                              <button
+                                type="button"
+                                className={`month-booking-presets-toggle${dayPresetsExpanded ? " is-open" : ""}`}
+                                onClick={() => {
+                                  setExpandedDayPresetsByDate((current) => {
+                                    const currentValue = current[date] ?? defaultPresetsExpanded;
+                                    return {
+                                      ...current,
+                                      [date]: !currentValue,
+                                    };
+                                  });
+                                }}
+                                disabled={bookingModalIsLocked}
+                                aria-expanded={dayPresetsExpanded}
+                                aria-controls={`day-presets-${date}`}
+                              >
+                                <span>Presets</span>
+                                <span className="month-booking-presets-toggle-caret" aria-hidden="true">▾</span>
+                              </button>
+                              {dayPresetsExpanded ? (
+                                <div id={`day-presets-${date}`} className="month-booking-day-chips">
+                                  {DAY_NOTE_CHIPS.map((chip) => {
+                                    const isActive = isDayNoteChipActive(dayNotes, chip);
+                                    return (
+                                      <button
+                                        key={chip}
+                                        type="button"
+                                        className={`month-booking-day-chip${isActive ? " month-booking-day-chip--active" : ""}`}
+                                        onClick={() => {
+                                          updateBookingDayOverride(date, { notes: applyDayNoteChip(dayNotes, chip) });
+                                        }}
+                                        disabled={bookingModalIsLocked}
+                                      >
+                                        {chip}
+                                      </button>
+                                    );
+                                  })}
+                                  <button
+                                    type="button"
+                                    className="month-booking-day-chip"
+                                    onClick={() => {
+                                      const input = dayNoteInputRefs.current[date];
+                                      if (!dayNotes.trim()) {
+                                        updateBookingDayOverride(date, { notes: "Other: " });
+                                        setTimeout(() => input?.focus(), 0);
+                                      } else {
+                                        input?.focus();
+                                      }
+                                    }}
+                                    disabled={bookingModalIsLocked}
+                                  >
+                                    Other
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
                           )}
                         </div>
                       );
@@ -1864,6 +1918,7 @@ export function MonthBoard({
                 {overallJobNotesLabel}
               </label>
               <textarea
+                ref={bookingNotesInputRef}
                 id="booking-notes"
                 name="job-notes"
                 className="month-booking-textarea"
@@ -1879,6 +1934,63 @@ export function MonthBoard({
                 rows={4}
                 disabled={bookingModalIsLocked}
               />
+              {!bookingHasMultiDayRange && !isOvertureBookingMode ? (
+                <div className="month-booking-presets">
+                  <button
+                    type="button"
+                    className={`month-booking-presets-toggle${singleDayPresetsOpen ? " is-open" : ""}`}
+                    onClick={() => {
+                      setSingleDayPresetsExpanded((current) => {
+                        const currentValue = current ?? defaultPresetsExpanded;
+                        return !currentValue;
+                      });
+                    }}
+                    disabled={bookingModalIsLocked}
+                    aria-expanded={singleDayPresetsOpen}
+                    aria-controls="single-day-presets"
+                  >
+                    <span>Presets</span>
+                    <span className="month-booking-presets-toggle-caret" aria-hidden="true">▾</span>
+                  </button>
+                  {singleDayPresetsOpen ? (
+                    <div id="single-day-presets" className="month-booking-day-chips">
+                      {DAY_NOTE_CHIPS.map((chip) => {
+                        const isActive = isDayNoteChipActive(bookingNotes, chip);
+                        return (
+                          <button
+                            key={chip}
+                            type="button"
+                            className={`month-booking-day-chip${isActive ? " month-booking-day-chip--active" : ""}`}
+                            onClick={() => {
+                              setBookingNotes((current) => applyDayNoteChip(current, chip));
+                              if (bookingError) setBookingError(null);
+                            }}
+                            disabled={bookingModalIsLocked}
+                          >
+                            {chip}
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        className="month-booking-day-chip"
+                        onClick={() => {
+                          if (!bookingNotes.trim()) {
+                            setBookingNotes("Other: ");
+                            if (bookingError) setBookingError(null);
+                            setTimeout(() => bookingNotesInputRef.current?.focus(), 0);
+                          } else {
+                            bookingNotesInputRef.current?.focus();
+                          }
+                        }}
+                        disabled={bookingModalIsLocked}
+                      >
+                        Other
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
             </div>
 
