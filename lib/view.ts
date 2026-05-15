@@ -376,6 +376,7 @@ export interface MonthEventBarDetail {
   jobNumber?: string;
   eventId?: string;
   description?: string;
+  location?: string;
   ownerEditor?: string;
   startUtc?: string;
   endUtc?: string;

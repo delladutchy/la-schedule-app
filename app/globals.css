@@ -1360,6 +1360,11 @@ html.modal-open body {
   text-decoration: underline;
 }
 
+.board-day-modal-maps-link--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .board-day-modal-empty {
   margin: 0;
   font-size: 12px;

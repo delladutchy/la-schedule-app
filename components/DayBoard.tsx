@@ -2055,16 +2055,14 @@ export function DayBoard({
                   maxLength={500}
                   disabled={bookingModalIsLocked}
                 />
-                {bookingLocation.trim() ? (
-                  <a
-                    href={`https://maps.apple.com/?q=${encodeURIComponent(bookingLocation.trim())}`}
-                    className="board-day-modal-maps-link"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Preview in Apple Maps
-                  </a>
-                ) : null}
+                <a
+                  href={bookingLocation.trim() ? `https://maps.apple.com/?q=${encodeURIComponent(bookingLocation.trim())}` : undefined}
+                  className={`board-day-modal-maps-link${bookingLocation.trim() ? "" : " board-day-modal-maps-link--hidden"}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Preview in Apple Maps
+                </a>
                 {!bookingHasMultiDayRange && !isOvertureBookingMode ? (
                   <div className="month-booking-presets month-booking-presets--linked">
                     <button
