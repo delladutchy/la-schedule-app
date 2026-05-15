@@ -1092,35 +1092,22 @@ html.modal-open body {
 /* Booking/edit modal layout: header + scrollable form + action row */
 .board-day-modal--booking {
   --booking-footer-clearance: 112px;
-  --booking-surface-primary: color-mix(in srgb, #131313 72%, var(--surface));
-  --booking-surface-secondary: color-mix(in srgb, #141414 78%, var(--surface));
-  --booking-surface-tertiary: color-mix(in srgb, #0d0d0d 88%, var(--surface));
-  --booking-field-bg: color-mix(in srgb, #1a1a1a 72%, var(--surface));
-  --booking-border-soft: color-mix(in srgb, var(--border-strong) 80%, #121212);
-  --booking-border-strong: color-mix(in srgb, var(--border-strong) 92%, #1a1a1a);
-  --booking-notes-surface: color-mix(in srgb, #0a0a0a 84%, var(--booking-surface-secondary));
-  --booking-notes-border: color-mix(in srgb, var(--booking-border-soft) 88%, transparent);
-  --booking-chip-bg: color-mix(in srgb, var(--booking-surface-tertiary) 88%, var(--booking-surface-secondary));
-  --booking-chip-text: color-mix(in srgb, var(--text-muted) 94%, var(--text-subtle));
-  --booking-chip-border: color-mix(in srgb, var(--booking-border-soft) 84%, var(--text-subtle));
+  --booking-surface-primary: var(--bg);
+  --booking-field-bg: color-mix(in srgb, #1e1e1e 55%, var(--surface));
+  --booking-border-soft: var(--border);
+  --booking-border-strong: var(--border-strong);
+  --booking-chip-bg: color-mix(in srgb, var(--surface) 60%, #222222);
+  --booking-chip-text: var(--text-muted);
+  --booking-chip-border: var(--border);
   --booking-chip-active-bg: color-mix(in srgb, var(--available-bg) 82%, var(--surface));
   --booking-chip-active-border: color-mix(in srgb, var(--available-dot) 78%, var(--border));
   --booking-chip-active-text: color-mix(in srgb, var(--available-text) 96%, var(--text));
-  --booking-day-heading-bg: color-mix(in srgb, var(--booking-surface-tertiary) 86%, var(--booking-surface-secondary));
-  --booking-day-heading-border: color-mix(in srgb, var(--booking-border-soft) 84%, transparent);
-  --booking-day-heading-text: color-mix(in srgb, var(--text) 88%, var(--text-muted));
-  --booking-day-heading-subtle: color-mix(in srgb, var(--text-muted) 86%, var(--text-subtle));
-  --booking-section-shadow:
-    0 1px 1px rgba(0, 0, 0, 0.42),
-    0 6px 16px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  --booking-row-shadow:
-    0 1px 1px rgba(0, 0, 0, 0.3),
-    0 3px 10px rgba(0, 0, 0, 0.16);
-  --booking-row-inner-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  --booking-presets-toggle-bg: color-mix(in srgb, #101010 82%, var(--booking-surface-tertiary));
-  --booking-presets-toggle-border: color-mix(in srgb, var(--booking-border-soft) 86%, var(--text-subtle));
-  --booking-presets-toggle-text: color-mix(in srgb, var(--text-muted) 90%, var(--text));
+  --booking-day-heading-text: var(--text);
+  --booking-day-heading-subtle: var(--text-muted);
+  --booking-presets-toggle-bg: var(--surface);
+  --booking-presets-toggle-border: var(--border);
+  --booking-presets-toggle-text: var(--text-muted);
+  background: var(--bg);
   width: min(720px, calc(100vw - 48px));
   max-height: calc(100dvh - 48px);
   display: flex;
@@ -1132,34 +1119,20 @@ html.modal-open body {
 
 :root[data-theme="light"] .board-day-modal--booking {
   --booking-surface-primary: #ffffff;
-  --booking-surface-secondary: #faf7f4;
-  --booking-surface-tertiary: #f4efe9;
   --booking-field-bg: #ffffff;
-  --booking-border-soft: #d9d1c9;
-  --booking-border-strong: #cec4ba;
-  --booking-notes-surface: #f8f4ef;
-  --booking-notes-border: #d8cfc4;
-  --booking-chip-bg: #f6f3ef;
-  --booking-chip-text: #5f554c;
-  --booking-chip-border: #d5cbc1;
+  --booking-border-soft: #d8d8d8;
+  --booking-border-strong: #c8c8c8;
+  --booking-chip-bg: #f0f0f0;
+  --booking-chip-text: #5a5a5a;
+  --booking-chip-border: #d4d4d4;
   --booking-chip-active-bg: color-mix(in srgb, var(--available-bg) 76%, #ffffff);
   --booking-chip-active-border: color-mix(in srgb, var(--available-dot) 74%, #b4b4b4);
   --booking-chip-active-text: color-mix(in srgb, var(--available-text) 90%, #073a2e);
-  --booking-day-heading-bg: #f3eee8;
-  --booking-day-heading-border: #d5cbc0;
-  --booking-day-heading-text: #433b33;
-  --booking-day-heading-subtle: #6d6359;
-  --booking-section-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.06),
-    0 8px 18px rgba(36, 26, 15, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.45);
-  --booking-row-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.05),
-    0 3px 10px rgba(36, 26, 15, 0.06);
-  --booking-row-inner-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.4);
-  --booking-presets-toggle-bg: #f2ebe4;
-  --booking-presets-toggle-border: #d6ccbf;
-  --booking-presets-toggle-text: #544b42;
+  --booking-day-heading-text: #1a1a1a;
+  --booking-day-heading-subtle: #6a6a6a;
+  --booking-presets-toggle-bg: #f0f0f0;
+  --booking-presets-toggle-border: #d4d4d4;
+  --booking-presets-toggle-text: #5a5a5a;
 }
 
 .board-day-modal--booking .month-booking-actions {
@@ -2685,11 +2658,10 @@ html.modal-open body {
 .month-booking-daily-details {
   display: grid;
   gap: 10px;
-  border: 1px solid var(--booking-border-soft);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--booking-surface-secondary) 84%, var(--booking-surface-primary));
-  box-shadow: var(--shadow-sm);
-  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--booking-border-soft) 50%, transparent);
+  border-radius: 10px;
+  background: transparent;
+  padding: 10px 12px;
   margin-top: 0;
 }
 
@@ -2703,24 +2675,24 @@ html.modal-open body {
 
 .month-booking-daily-list {
   display: grid;
-  gap: 8px;
+  gap: 0;
   margin-top: 4px;
 }
 
 .month-booking-daily-row {
   display: grid;
   gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--booking-border-soft) 46%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--booking-surface-tertiary) 68%, var(--booking-surface-secondary));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 4%, transparent);
-  padding: 8px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
 }
 
 .month-booking-daily-row + .month-booking-daily-row {
-  border-top: 0;
-  padding-top: 0;
-  margin-top: 0;
+  border-top: 1px solid color-mix(in srgb, var(--booking-border-soft) 40%, transparent);
+  padding-top: 10px;
+  margin-top: 6px;
 }
 
 .month-booking-daily-row-header {
@@ -2768,8 +2740,8 @@ html.modal-open body {
 }
 
 .month-booking-presets--linked .month-booking-presets-toggle {
-  border-color: color-mix(in srgb, var(--booking-border-soft) 74%, transparent);
-  background: color-mix(in srgb, var(--booking-presets-toggle-bg) 86%, var(--booking-surface-primary));
+  border-color: color-mix(in srgb, var(--booking-border-soft) 70%, transparent);
+  background: var(--booking-presets-toggle-bg);
 }
 
 .month-booking-presets--linked .month-booking-day-chips {
@@ -2875,50 +2847,10 @@ html.modal-open body {
   cursor: not-allowed;
 }
 
-.board-day-modal--booking .month-booking-daily-details {
-  background: color-mix(in srgb, var(--booking-surface-secondary) 90%, var(--booking-surface-primary));
-}
-
-.board-day-modal--booking .month-booking-daily-row {
-  border-color: color-mix(in srgb, var(--booking-border-soft) 38%, transparent);
-  background: color-mix(in srgb, var(--booking-surface-tertiary) 80%, var(--booking-surface-secondary));
-}
-
 .board-day-modal--booking .month-booking-day-notes-group,
 .board-day-modal--booking .month-booking-notes-group {
   border: 0;
   background: transparent;
-}
-
-.board-day-modal--booking .month-booking-presets--linked .month-booking-presets-toggle {
-  background: color-mix(in srgb, var(--booking-presets-toggle-bg) 90%, var(--booking-surface-primary));
-}
-
-.board-day-modal--booking .month-booking-day-chip {
-  background: color-mix(in srgb, var(--booking-chip-bg) 92%, var(--booking-surface-secondary));
-}
-
-:root[data-theme="light"] .board-day-modal--booking .month-booking-daily-details {
-  background: color-mix(in srgb, var(--booking-surface-secondary) 84%, var(--booking-surface-primary));
-}
-
-:root[data-theme="light"] .board-day-modal--booking .month-booking-daily-row {
-  border-color: color-mix(in srgb, var(--booking-border-soft) 46%, transparent);
-  background: color-mix(in srgb, var(--booking-surface-tertiary) 68%, var(--booking-surface-secondary));
-}
-
-:root[data-theme="light"] .board-day-modal--booking .month-booking-day-notes-group,
-:root[data-theme="light"] .board-day-modal--booking .month-booking-notes-group {
-  border: 0;
-  background: transparent;
-}
-
-:root[data-theme="light"] .board-day-modal--booking .month-booking-presets--linked .month-booking-presets-toggle {
-  background: color-mix(in srgb, var(--booking-presets-toggle-bg) 86%, var(--booking-surface-primary));
-}
-
-:root[data-theme="light"] .board-day-modal--booking .month-booking-day-chip {
-  background: var(--booking-chip-bg);
 }
 
 .month-booking-daily-row .month-booking-day-time-field {
@@ -4045,7 +3977,15 @@ html.modal-open body {
 
   .board-day-modal--booking-mobile-sheet .month-booking-daily-row {
     gap: 6px;
-    padding: 7px;
+    padding: 0;
+    border: none;
+    background: transparent;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-daily-row + .month-booking-daily-row {
+    border-top: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
+    padding-top: 12px;
+    margin-top: 6px;
   }
 
   .board-day-modal--booking-mobile-sheet .month-booking-day-chips {
