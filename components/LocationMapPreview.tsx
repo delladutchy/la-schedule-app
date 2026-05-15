@@ -64,9 +64,7 @@ export interface LocationMapPreviewProps {
   geocodingEnabled?: boolean;
 }
 
-// Outer wrapper handles the feature flag — no hooks here, safe to return null early.
 export function LocationMapPreview(props: LocationMapPreviewProps) {
-  if (process.env.NEXT_PUBLIC_LOCATION_MAPS_ENABLED !== 'true') return null;
   return <LocationMapPreviewInner {...props} />;
 }
 
