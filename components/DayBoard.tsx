@@ -11,6 +11,8 @@ import {
 } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
 import { LocationMapPreview } from "@/components/LocationMapPreview";
+import { LocationSuggestions } from "@/components/LocationSuggestions";
+import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import {
   buildGigDayDetailsForRange,
   buildGigDescription,
@@ -398,6 +400,8 @@ export function DayBoard({
   });
   const dayNoteInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const bookingNotesInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const mapsLinkRef = useRef<HTMLAnchorElement | null>(null);
+  const locationInputRef = useRef<HTMLInputElement | null>(null);
   const [activeDetailPanel, setActiveDetailPanel] = useState<ActiveDetailPanel | null>(null);
   const [editorToken, setEditorToken] = useState<string | null>(null);
   const [resolvedEditorId, setResolvedEditorId] = useState<string | null>(initialResolvedEditorId);
@@ -411,6 +415,9 @@ export function DayBoard({
   const [bookingCallTimeOther, setBookingCallTimeOther] = useState("");
   const [bookingNotes, setBookingNotes] = useState("");
   const [bookingLocation, setBookingLocation] = useState("");
+  const [locationQuery, setLocationQuery] = useState("");
+  const [locationCoords, setLocationCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [locationActiveIndex, setLocationActiveIndex] = useState(-1);
   const [bookingDayOverrides, setBookingDayOverrides] = useState<BookingDayOverrideMap>({});
   const [bookingExistingDescriptionRaw, setBookingExistingDescriptionRaw] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
@@ -425,6 +432,29 @@ export function DayBoard({
   const isMikeEditor = normalizedEditorId === "mike";
   const isJeffCreateModeSelectable = normalizedEditorId === "jeff" || normalizedEditorId === "legacy";
   const defaultBookingMode: "la" | "overture" = isMikeEditor ? "overture" : "la";
+
+  const { suggestions: locationSuggestions, isLoading: isLocationLoading } =
+    useLocationAutocomplete(locationQuery);
+
+  useEffect(() => {
+    setLocationActiveIndex(-1);
+  }, [locationSuggestions]);
+
+  const handleSuggestionSelect = (suggestion: LocationSuggestion) => {
+    setBookingLocation(suggestion.displayName);
+    setLocationQuery("");
+    setLocationCoords({ lat: suggestion.lat, lon: suggestion.lon });
+    setLocationActiveIndex(-1);
+    if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      locationInputRef.current?.blur();
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          const form = mapsLinkRef.current?.closest('.month-booking-form') as HTMLElement | null;
+          form?.scrollTo({ top: form.scrollHeight, behavior: 'auto' });
+        }, 100);
+      });
+    }
+  };
 
   useEffect(() => {
     if (!activeDetailPanel && !activeBookingPanel) return undefined;
@@ -508,6 +538,9 @@ export function DayBoard({
     setBookingCallTimeOther("");
     setBookingNotes("");
     setBookingLocation("");
+    setLocationQuery("");
+    setLocationCoords(null);
+    setLocationActiveIndex(-1);
     setBookingDayOverrides({});
     setBookingExistingDescriptionRaw("");
     setBookingError(null);
@@ -532,6 +565,9 @@ export function DayBoard({
     setBookingCallTimeOther("");
     setBookingNotes("");
     setBookingLocation("");
+    setLocationQuery("");
+    setLocationCoords(null);
+    setLocationActiveIndex(-1);
     setBookingDayOverrides({});
     setBookingExistingDescriptionRaw("");
     setBookingError(null);
@@ -600,6 +636,9 @@ export function DayBoard({
     setBookingCallTimeOther(globalCallTimeOther);
     setBookingNotes(parsedDescription.jobNotes ?? "");
     setBookingLocation(detail.location?.trim() ?? "");
+    setLocationQuery("");
+    setLocationCoords(null);
+    setLocationActiveIndex(-1);
     setBookingDayOverrides(rehydratedDayOverrides);
     setBookingExistingDescriptionRaw(detail.description ?? "");
     setBookingError(null);
@@ -2099,6 +2138,7 @@ export function DayBoard({
                   Job Location
                 </label>
                 <input
+                  ref={locationInputRef}
                   id="week-booking-location"
                   name="job-location"
                   type="text"
@@ -2106,18 +2146,79 @@ export function DayBoard({
                   autoComplete="off"
                   autoCapitalize="words"
                   value={bookingLocation}
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-haspopup="listbox"
+                  aria-expanded={locationSuggestions.length > 0}
+                  aria-controls={locationQuery.trim().length >= 3 ? "week-location-suggestions" : undefined}
+                  aria-activedescendant={locationActiveIndex >= 0 ? `week-location-suggestions-${locationActiveIndex}` : undefined}
                   onChange={(event) => {
                     setBookingLocation(event.target.value);
+                    setLocationQuery(event.target.value);
+                    setLocationCoords(null);
                     if (bookingError) setBookingError(null);
+                  }}
+                  onFocus={() => {
+                    const isDesktop = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+                    setTimeout(() => {
+                      mapsLinkRef.current?.scrollIntoView({
+                        block: isDesktop ? 'end' : 'nearest',
+                        behavior: 'auto',
+                      });
+                    }, 100);
+                    setTimeout(() => {
+                      if (isDesktop) {
+                        const form = mapsLinkRef.current?.closest('.month-booking-form') as HTMLElement | null;
+                        form?.scrollTo({ top: form.scrollHeight, behavior: 'auto' });
+                      } else {
+                        mapsLinkRef.current?.scrollIntoView({
+                          block: 'end',
+                          behavior: 'auto',
+                        });
+                      }
+                    }, 350);
+                  }}
+                  onBlur={() => {
+                    setTimeout(() => { setLocationQuery(""); }, 200);
+                  }}
+                  onKeyDown={(e) => {
+                    if (locationSuggestions.length > 0 || isLocationLoading) {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setLocationActiveIndex((i) => Math.min(i + 1, locationSuggestions.length - 1));
+                      } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setLocationActiveIndex((i) => Math.max(i - 1, -1));
+                      } else if (e.key === "Enter" && locationActiveIndex >= 0 && locationSuggestions[locationActiveIndex]) {
+                        e.preventDefault();
+                        handleSuggestionSelect(locationSuggestions[locationActiveIndex]);
+                      } else if (e.key === "Escape") {
+                        setLocationQuery("");
+                      }
+                    }
                   }}
                   placeholder="Venue name or address"
                   maxLength={500}
                   disabled={bookingModalIsLocked}
                 />
+                <LocationSuggestions
+                  listboxId="week-location-suggestions"
+                  query={locationQuery}
+                  suggestions={locationSuggestions}
+                  isLoading={isLocationLoading}
+                  activeIndex={locationActiveIndex}
+                  onSelect={handleSuggestionSelect}
+                />
                 {bookingLocation.trim() ? (
-                  <LocationMapPreview location={bookingLocation} debounceMs={400} />
+                  <LocationMapPreview
+                    location={bookingLocation}
+                    debounceMs={400}
+                    coords={locationCoords}
+                    geocodingEnabled={locationQuery.trim().length === 0}
+                  />
                 ) : null}
                 <a
+                  ref={mapsLinkRef}
                   href={bookingLocation.trim() ? `https://maps.apple.com/?q=${encodeURIComponent(bookingLocation.trim())}` : undefined}
                   className={`board-day-modal-maps-link${bookingLocation.trim() ? "" : " board-day-modal-maps-link--hidden"}`}
                   target="_blank"
