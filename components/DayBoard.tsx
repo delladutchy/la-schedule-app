@@ -1765,7 +1765,7 @@ export function DayBoard({
                       setBookingJobName(event.target.value);
                       if (bookingError) setBookingError(null);
                     }}
-                    placeholder="Wilmington Flower Market"
+                    placeholder="Event name"
                     maxLength={200}
                     disabled={bookingModalIsLocked}
                   />
