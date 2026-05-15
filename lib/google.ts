@@ -48,6 +48,7 @@ export interface NamedCalendarEvent {
   summary: string;
   eventId?: string;
   description?: string;
+  location?: string;
   ownerEditor?: string;
   calendarId: string;
 }
@@ -62,6 +63,7 @@ export interface CreateAllDayEventOptions extends CalendarAuthOptions {
   calendarId: string;
   summary: string;
   description?: string;
+  location?: string;
   ownerEditor?: string;
   eventId?: string;
   /** Inclusive local day in YYYY-MM-DD format. */
@@ -81,6 +83,7 @@ export interface UpdateAllDayEventOptions extends CalendarAuthOptions {
   eventId: string;
   summary: string;
   description?: string;
+  location?: string;
   ownerEditor?: string;
   /** Inclusive local day in YYYY-MM-DD format. */
   startDate: string;
@@ -246,7 +249,7 @@ export async function fetchCalendarEvents(
             maxResults: 2500,
             pageToken,
             timeZone: opts.displayTimezone,
-            fields: "items(id,status,transparency,summary,description,extendedProperties(private(ownerEditor)),start(date,dateTime),end(date,dateTime)),nextPageToken",
+            fields: "items(id,status,transparency,summary,description,location,extendedProperties(private(ownerEditor)),start(date,dateTime),end(date,dateTime)),nextPageToken",
           });
         } catch {
           errored.add(calendarId);
@@ -271,6 +274,7 @@ export async function fetchCalendarEvents(
             summary,
             ...(item.id ? { eventId: item.id } : {}),
             ...(item.description ? { description: item.description } : {}),
+            ...(item.location ? { location: item.location } : {}),
             ...(ownerEditor ? { ownerEditor } : {}),
             calendarId,
           });
@@ -354,6 +358,7 @@ export async function createAllDayEvent(
         ...(opts.description?.trim()
           ? { description: opts.description.trim() }
           : {}),
+        ...(opts.location?.trim() ? { location: opts.location.trim() } : {}),
         ...(opts.ownerEditor
           ? {
               extendedProperties: {
@@ -404,6 +409,7 @@ export async function updateAllDayEvent(
       ...(opts.description?.trim()
         ? { description: opts.description.trim() }
         : { description: "" }),
+      ...(opts.location?.trim() ? { location: opts.location.trim() } : { location: "" }),
       ...(opts.ownerEditor
         ? {
             extendedProperties: {

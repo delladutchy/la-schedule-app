@@ -78,6 +78,7 @@ function parsePayload(body: unknown) {
       ok: true as const,
       summary: parsed.data.summary.trim(),
       description: parsed.data.description?.trim(),
+      location: parsed.data.location?.trim(),
       ...resolveAllDayRange(parsed.data),
     };
   } catch (error) {
@@ -288,6 +289,7 @@ export async function PATCH(
       eventId,
       summary: payload.summary,
       ...(payload.description ? { description: payload.description } : {}),
+      location: payload.location ?? "",
       ...(ownerEditor ? { ownerEditor } : {}),
       startDate: payload.startDate,
       endDateExclusive: payload.endDateExclusive,
@@ -305,6 +307,7 @@ export async function PATCH(
           calendarId: editorCalendarId,
           summary: payload.summary,
           ...(payload.description ? { description: payload.description } : {}),
+          ...(payload.location ? { location: payload.location } : {}),
           ...(ownerEditor ? { ownerEditor } : {}),
           startDate: payload.startDate,
           endDateExclusive: payload.endDateExclusive,
