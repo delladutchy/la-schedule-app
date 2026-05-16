@@ -2182,9 +2182,21 @@ html.modal-open body {
   .board-day-label { font-size: 15px; }
   .board-day-badge { font-size: 12px; padding: 5px 10px; }
   .page.page--week .board-day-badge {
-    font-size: 12.6px;
-    padding: 6px 12px;
-    transform: translateX(3px);
+    font-size: 13.4px;
+    padding: 8px 15px;
+    min-height: 31px;
+    border-width: 1px;
+    border-style: solid;
+    box-shadow: 0 1px 2px color-mix(in srgb, #000 20%, transparent);
+    transform: translateX(4px);
+  }
+  .page.page--week .board-day-badge.available {
+    background: color-mix(in srgb, var(--available-bg) 86%, var(--available-dot));
+    border-color: color-mix(in srgb, var(--available-dot) 52%, transparent);
+  }
+  .page.page--week .board-day-badge.booked {
+    background: color-mix(in srgb, var(--booked-bg) 86%, var(--booked-dot));
+    border-color: color-mix(in srgb, var(--booked-dot) 44%, transparent);
   }
   .page.page--week .board-day-right {
     margin-right: -2px;
