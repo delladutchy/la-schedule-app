@@ -2181,6 +2181,14 @@ html.modal-open body {
   .board-day { padding: 16px 34px 16px 16px; }
   .board-day-label { font-size: 15px; }
   .board-day-badge { font-size: 12px; padding: 5px 10px; }
+  .page.page--week .board-day-badge {
+    font-size: 12.6px;
+    padding: 6px 12px;
+    transform: translateX(3px);
+  }
+  .page.page--week .board-day-right {
+    margin-right: -2px;
+  }
   .board-day-modal-backdrop { padding: 12px; }
   .board-day-modal {
     width: min(440px, calc(100vw - 16px));
