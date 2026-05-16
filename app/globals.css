@@ -2555,6 +2555,18 @@ html.modal-open body {
   border-color: color-mix(in srgb, var(--today-accent) 58%, var(--booking-border-strong));
 }
 
+/* Desktop/native select hardening:
+   keep Call Time selects the same control height as sibling booking fields.
+   (Mobile booking sheet has its own select styling under
+   .board-day-modal--booking-mobile-sheet and remains unchanged.) */
+.board-day-modal--booking:not(.board-day-modal--booking-mobile-sheet) select.month-booking-input,
+.board-day-modal--booking:not(.board-day-modal--booking-mobile-sheet) select.month-booking-input--small,
+.board-day-modal--booking:not(.board-day-modal--booking-mobile-sheet) select.month-booking-day-time-field {
+  min-height: 44px;
+  height: 44px;
+  line-height: 1.25;
+}
+
 .month-booking-textarea {
   resize: vertical;
   min-height: 74px;
