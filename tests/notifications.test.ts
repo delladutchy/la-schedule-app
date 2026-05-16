@@ -65,4 +65,40 @@ describe("sendCreateJobNotification", () => {
     expect(body.text).toContain("Booking: Overture");
     expect(body.subject).not.toContain("LA job");
   });
+
+  it("includes location line only when location is present", async () => {
+    const withLocation = await sendCreateJobNotification(env, {
+      editorId: "jeff",
+      bookingMode: "la",
+      jobNumber: "70924",
+      startDate: "2026-05-19",
+      endDate: "2026-05-23",
+      callTime: "8:00 AM",
+      location: "  The Lighthouse Dewey Beach, Dewey Beach, DE  ",
+    });
+
+    expect(withLocation).toBe("sent");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, withLocationInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const withLocationBody = JSON.parse(String(withLocationInit.body)) as { text: string };
+    expect(withLocationBody.text).toContain("Location: The Lighthouse Dewey Beach, Dewey Beach, DE");
+
+    fetchMock.mockClear();
+
+    const withoutLocation = await sendCreateJobNotification(env, {
+      editorId: "jeff",
+      bookingMode: "la",
+      jobNumber: "70924",
+      startDate: "2026-05-19",
+      endDate: "2026-05-23",
+      callTime: "8:00 AM",
+      location: "   ",
+    });
+
+    expect(withoutLocation).toBe("sent");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, withoutLocationInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const withoutLocationBody = JSON.parse(String(withoutLocationInit.body)) as { text: string };
+    expect(withoutLocationBody.text).not.toContain("Location:");
+  });
 });

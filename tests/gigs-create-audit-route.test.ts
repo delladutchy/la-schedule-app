@@ -188,6 +188,12 @@ describe("/api/gigs/create audit logging", () => {
         }),
       }),
     );
+    expect(sendCreateJobNotification).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        location: "100 Universal City Plaza, Universal City, CA",
+      }),
+    );
   });
 
   it("stores owner metadata for limited editor create", async () => {

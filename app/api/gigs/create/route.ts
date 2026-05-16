@@ -292,6 +292,7 @@ export async function POST(req: Request) {
             startDate: auditFields.startDate,
             endDate: auditFields.endDate,
             callTime: auditFields.callTime,
+            location: payload.location,
           });
         } catch (notifyError) {
           const msg = notifyError instanceof Error ? notifyError.message : String(notifyError);
@@ -437,6 +438,7 @@ export async function POST(req: Request) {
                 startDate: auditFields.startDate,
                 endDate: auditFields.endDate,
                 callTime: auditFields.callTime,
+                location: payload.location,
               });
             } catch (notifyError) {
               const msg = notifyError instanceof Error ? notifyError.message : String(notifyError);

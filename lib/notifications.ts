@@ -8,6 +8,7 @@ interface CreateJobNotificationInput {
   startDate?: string;
   endDate?: string;
   callTime?: string;
+  location?: string;
 }
 
 function titleCaseEditorId(editorId: string): string {
@@ -41,11 +42,13 @@ export async function sendCreateJobNotification(
     ? `${input.jobNumber}${input.jobTitle ? ` — ${input.jobTitle}` : ""}`
     : (input.jobTitle || (bookingMode === "overture" ? "Overture" : "N/A"));
   const bookingLabel = bookingMode === "overture" ? "Booking" : "Job";
+  const location = input.location?.trim();
   const text = [
     `Editor: ${editorName}`,
     `${bookingLabel}: ${bookingLine}`,
     `Dates: ${dateRangeLabel(input.startDate, input.endDate)}`,
     `Call Time: ${input.callTime ?? "N/A"}`,
+    ...(location ? [`Location: ${location}`] : []),
   ].join("\n");
 
   const response = await fetch("https://api.resend.com/emails", {
