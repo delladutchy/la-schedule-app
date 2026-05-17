@@ -4167,7 +4167,7 @@ html.modal-open body {
   }
 
   .board-day-modal--booking-mobile-sheet {
-    --booking-sheet-footer-height: 190px;
+    --booking-sheet-footer-height: 206px;
     pointer-events: auto;
     display: flex;
     flex-direction: column;
@@ -4223,7 +4223,7 @@ html.modal-open body {
     width: 100%;
     margin-top: 0;
     padding-top: 8px;
-    padding-bottom: max(34px, calc(env(safe-area-inset-bottom, 0px) + 20px));
+    padding-bottom: max(44px, calc(env(safe-area-inset-bottom, 0px) + 30px));
     border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
     background: var(--bg);
     gap: 8px;
