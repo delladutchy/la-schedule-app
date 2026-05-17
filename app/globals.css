@@ -3186,11 +3186,6 @@ html.modal-open body {
   padding: 0 1px;
 }
 
-.month-booking-presets {
-  display: grid;
-  gap: 7px;
-}
-
 .month-booking-notes-group,
 .month-booking-day-notes-group {
   display: grid;
@@ -3211,77 +3206,13 @@ html.modal-open body {
   min-height: 96px;
 }
 
+.month-booking-notes-presets-context-group {
+  display: grid;
+  gap: 8px;
+}
+
 .month-booking-day-notes-input {
   min-height: 44px;
-}
-
-.month-booking-presets--linked {
-  gap: 6px;
-}
-
-.month-booking-presets--linked .month-booking-presets-toggle {
-  border-color: color-mix(in srgb, var(--booking-border-soft) 70%, transparent);
-  background: var(--booking-presets-toggle-bg);
-}
-
-.month-booking-presets--linked .month-booking-day-chips {
-  margin-top: 0;
-  margin-bottom: 6px;
-  padding-top: 1px;
-}
-
-.month-booking-presets-toggle {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: fit-content;
-  max-width: 100%;
-  border: 1px solid var(--booking-presets-toggle-border);
-  border-radius: 999px;
-  background: var(--booking-presets-toggle-bg);
-  color: var(--booking-presets-toggle-text);
-  font: inherit;
-  font-size: 11.5px;
-  line-height: 1;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  min-height: 32px;
-  padding: 6px 11px;
-  cursor: pointer;
-  justify-self: end;
-}
-
-.month-booking-presets-toggle:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--booking-presets-toggle-bg) 78%, var(--booking-surface-primary));
-  border-color: color-mix(in srgb, var(--booking-presets-toggle-border) 78%, var(--text-muted));
-  color: var(--text);
-}
-
-.month-booking-presets-toggle:disabled {
-  opacity: 0.58;
-  cursor: not-allowed;
-}
-
-.month-booking-presets-toggle-caret {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: color-mix(in srgb, var(--text-muted) 84%, var(--text-subtle));
-  transition: transform 140ms ease;
-}
-
-.month-booking-presets-toggle.is-open .month-booking-presets-toggle-caret {
-  transform: rotate(180deg);
-}
-
-.month-booking-day-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px 8px;
-  margin-top: 1px;
-  margin-bottom: 8px;
 }
 
 .month-booking-day-chip {
@@ -4332,8 +4263,7 @@ html.modal-open body {
   .board-day-modal--booking-mobile-sheet .month-booking-daily-list,
   .board-day-modal--booking-mobile-sheet .month-booking-daily-row,
   .board-day-modal--booking-mobile-sheet .month-booking-day-notes-group,
-  .board-day-modal--booking-mobile-sheet .month-booking-notes-group,
-  .board-day-modal--booking-mobile-sheet .month-booking-day-chips {
+  .board-day-modal--booking-mobile-sheet .month-booking-notes-group {
     scroll-margin-bottom: calc(var(--booking-sheet-footer-height) + 12px);
   }
 
@@ -4353,17 +4283,6 @@ html.modal-open body {
 
   .board-day-modal--booking-mobile-sheet .month-booking-notes-group .month-booking-textarea {
     min-height: 100px;
-  }
-
-  .board-day-modal--booking-mobile-sheet .month-booking-day-chips {
-    padding-bottom: 2px;
-    margin-bottom: 8px;
-  }
-
-  .board-day-modal--booking-mobile-sheet .month-booking-presets-toggle {
-    min-height: 36px;
-    padding: 7px 12px;
-    font-size: 12px;
   }
 
   .board-day-modal--booking-mobile-sheet .month-booking-day-chip {
@@ -4524,10 +4443,6 @@ html.modal-open body {
     border-top: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
     padding-top: 12px;
     margin-top: 6px;
-  }
-
-  .board-day-modal--booking-mobile-sheet .month-booking-day-chips {
-    margin-bottom: 6px;
   }
 
   .board-day-modal--booking-mobile-sheet .month-booking-input,

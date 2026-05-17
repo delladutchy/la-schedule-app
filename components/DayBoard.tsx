@@ -422,7 +422,7 @@ export function DayBoard({
   const [bookingExistingDescriptionRaw, setBookingExistingDescriptionRaw] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isBookingSavePending, setIsBookingSavePending] = useState(false);
-  const [singleDayPresetsExpanded, setSingleDayPresetsExpanded] = useState<boolean | null>(null);
+  const [singleDayNotesPresetsActive, setSingleDayNotesPresetsActive] = useState(false);
   const [activeDayNotesPresetDate, setActiveDayNotesPresetDate] = useState<string | null>(null);
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -554,7 +554,7 @@ export function DayBoard({
     setBookingExistingDescriptionRaw("");
     setBookingError(null);
     setIsBookingSavePending(false);
-    setSingleDayPresetsExpanded(null);
+    setSingleDayNotesPresetsActive(false);
     setActiveDayNotesPresetDate(null);
     setConfirmDeleteEventId(null);
     setDeleteError(null);
@@ -580,7 +580,7 @@ export function DayBoard({
     setBookingDayOverrides({});
     setBookingExistingDescriptionRaw("");
     setBookingError(null);
-    setSingleDayPresetsExpanded(null);
+    setSingleDayNotesPresetsActive(false);
     setActiveDayNotesPresetDate(null);
     setConfirmDeleteEventId(null);
     setDeleteError(null);
@@ -665,7 +665,7 @@ export function DayBoard({
     setBookingDayOverrides(rehydratedDayOverrides);
     setBookingExistingDescriptionRaw(detail.description ?? "");
     setBookingError(null);
-    setSingleDayPresetsExpanded(null);
+    setSingleDayNotesPresetsActive(false);
     setActiveDayNotesPresetDate(null);
     setConfirmDeleteEventId(null);
     setDeleteError(null);
@@ -1028,8 +1028,6 @@ export function DayBoard({
     ? enumerateIsoDatesInRange(bookingStartDate, parsedBookingEndDate >= bookingStartDate ? parsedBookingEndDate : bookingStartDate)
     : [];
   const bookingHasMultiDayRange = bookingSelectedDates.length > 1;
-  const defaultPresetsExpanded = false;
-  const singleDayPresetsOpen = singleDayPresetsExpanded ?? defaultPresetsExpanded;
   const overallJobNotesLabel = "Job Notes";
   const resolveCallTimeFromInputs = (option: string, other: string): string => (
     option === "Other" ? other.trim() : option.trim()
@@ -2038,7 +2036,6 @@ export function DayBoard({
                                       }}
                                       onClick={() => {
                                         updateBookingDayOverride(date, { notes: applyDayNoteChip(dayNotes, chip) });
-                                        setActiveDayNotesPresetDate(null);
                                       }}
                                       disabled={bookingModalIsLocked}
                                     >
@@ -2046,24 +2043,6 @@ export function DayBoard({
                                     </button>
                                   );
                                 })}
-                                <button
-                                  type="button"
-                                  className="month-booking-day-chip"
-                                  onMouseDown={(event) => {
-                                    event.preventDefault();
-                                  }}
-                                  onClick={() => {
-                                    const input = dayNoteInputRefs.current[date];
-                                    if (!dayNotes.trim()) {
-                                      updateBookingDayOverride(date, { notes: "Other: " });
-                                    }
-                                    setActiveDayNotesPresetDate(null);
-                                    setTimeout(() => input?.focus(), 0);
-                                  }}
-                                  disabled={bookingModalIsLocked}
-                                >
-                                  Other...
-                                </button>
                               </div>
                             ) : null}
                           </div>
@@ -2078,80 +2057,62 @@ export function DayBoard({
                 {overallJobNotesLabel}
               </label>
               <div className="month-booking-notes-group">
-                <textarea
-                  ref={bookingNotesInputRef}
-                  id="week-booking-notes"
-                  name="job-notes"
-                  className="month-booking-textarea"
-                  autoComplete="off"
-                  autoCapitalize="sentences"
-                  value={bookingNotes}
-                  onChange={(event) => {
-                    setBookingNotes(event.target.value);
-                    if (bookingError) setBookingError(null);
+                <div
+                  className="month-booking-notes-presets-context-group"
+                  onFocusCapture={() => {
+                    if (!bookingHasMultiDayRange && !isOvertureBookingMode) {
+                      setSingleDayNotesPresetsActive(true);
+                    }
                   }}
-                  placeholder="Venue notes, contact, etc."
-                  maxLength={4000}
-                  rows={4}
-                  disabled={bookingModalIsLocked}
-                />
-                {!bookingHasMultiDayRange && !isOvertureBookingMode ? (
-                  <div className="month-booking-presets month-booking-presets--linked">
-                    <button
-                      type="button"
-                      className={`month-booking-presets-toggle${singleDayPresetsOpen ? " is-open" : ""}`}
-                      onClick={() => {
-                        setSingleDayPresetsExpanded((current) => {
-                          const currentValue = current ?? defaultPresetsExpanded;
-                          return !currentValue;
-                        });
-                      }}
-                      disabled={bookingModalIsLocked}
-                      aria-expanded={singleDayPresetsOpen}
-                      aria-controls="single-day-presets"
-                    >
-                      <span>Presets</span>
-                      <span className="month-booking-presets-toggle-caret" aria-hidden="true">▾</span>
-                    </button>
-                    {singleDayPresetsOpen ? (
-                      <div id="single-day-presets" className="month-booking-day-chips">
-                        {DAY_NOTE_CHIPS.map((chip) => {
-                          const isActive = isDayNoteChipActive(bookingNotes, chip);
-                          return (
-                            <button
-                              key={chip}
-                              type="button"
-                              className={`month-booking-day-chip${isActive ? " month-booking-day-chip--active" : ""}`}
-                              onClick={() => {
-                                setBookingNotes((current) => applyDayNoteChip(current, chip));
-                                if (bookingError) setBookingError(null);
-                              }}
-                              disabled={bookingModalIsLocked}
-                            >
-                              {chip}
-                            </button>
-                          );
-                        })}
-                        <button
-                          type="button"
-                          className="month-booking-day-chip"
-                          onClick={() => {
-                            if (!bookingNotes.trim()) {
-                              setBookingNotes("Other: ");
+                  onBlurCapture={(event) => {
+                    const next = event.relatedTarget as Node | null;
+                    if (!event.currentTarget.contains(next)) {
+                      setSingleDayNotesPresetsActive(false);
+                    }
+                  }}
+                >
+                  <textarea
+                    ref={bookingNotesInputRef}
+                    id="week-booking-notes"
+                    name="job-notes"
+                    className="month-booking-textarea"
+                    autoComplete="off"
+                    autoCapitalize="sentences"
+                    value={bookingNotes}
+                    onChange={(event) => {
+                      setBookingNotes(event.target.value);
+                      if (bookingError) setBookingError(null);
+                    }}
+                    placeholder="Venue notes, contact, etc."
+                    maxLength={4000}
+                    rows={4}
+                    disabled={bookingModalIsLocked}
+                  />
+                  {!bookingHasMultiDayRange && !isOvertureBookingMode && singleDayNotesPresetsActive ? (
+                    <div className="month-booking-day-presets-context">
+                      {DAY_NOTE_CHIPS.map((chip) => {
+                        const isActive = isDayNoteChipActive(bookingNotes, chip);
+                        return (
+                          <button
+                            key={chip}
+                            type="button"
+                            className={`month-booking-day-chip${isActive ? " month-booking-day-chip--active" : ""}`}
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                            }}
+                            onClick={() => {
+                              setBookingNotes((current) => applyDayNoteChip(current, chip));
                               if (bookingError) setBookingError(null);
-                              setTimeout(() => bookingNotesInputRef.current?.focus(), 0);
-                            } else {
-                              bookingNotesInputRef.current?.focus();
-                            }
-                          }}
-                          disabled={bookingModalIsLocked}
-                        >
-                          Other
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
+                            }}
+                            disabled={bookingModalIsLocked}
+                          >
+                            {chip}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
                 <label className="month-booking-label" htmlFor="week-booking-location">
                   Job Location
                 </label>
