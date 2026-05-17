@@ -3327,6 +3327,37 @@ html.modal-open body {
   cursor: not-allowed;
 }
 
+.month-booking-day-preset-select {
+  appearance: none;
+  justify-self: end;
+  width: auto;
+  max-width: 100%;
+  min-width: 138px;
+  border-radius: 999px;
+  border-color: color-mix(in srgb, var(--booking-presets-toggle-border) 82%, transparent);
+  background:
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%) calc(100% - 15px) calc(50% - 2px) / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%) calc(100% - 10px) calc(50% - 2px) / 5px 5px no-repeat,
+    var(--booking-presets-toggle-bg);
+  color: var(--booking-presets-toggle-text);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  padding: 6px 30px 6px 10px;
+}
+
+.month-booking-day-preset-select:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 1px;
+}
+
+.board-day-modal--booking:not(.board-day-modal--booking-mobile-sheet) select.month-booking-day-preset-select {
+  min-height: 34px;
+  height: 34px;
+  line-height: 1.2;
+}
+
 .board-day-modal--booking .month-booking-day-notes-group,
 .board-day-modal--booking .month-booking-notes-group {
   border: 0;
@@ -3334,9 +3365,11 @@ html.modal-open body {
 }
 
 .month-booking-daily-row .month-booking-day-time-field {
-  min-height: 42px;
-  font-size: 13.5px;
-  padding: 9px 10px;
+  min-height: 44px;
+  font-size: 14px;
+  line-height: 1.25;
+  padding: 10px 11px;
+  box-sizing: border-box;
 }
 
 .month-booking-daily-row .board-day-modal-day-date {
@@ -4299,6 +4332,13 @@ html.modal-open body {
   .board-day-modal--booking-mobile-sheet select.month-booking-input::-ms-expand,
   .board-day-modal--booking-mobile-sheet select.month-booking-input--small::-ms-expand {
     display: none;
+  }
+
+  .board-day-modal--booking-mobile-sheet .month-booking-day-preset-select {
+    justify-self: stretch;
+    width: 100%;
+    min-width: 0;
+    border-radius: 10px;
   }
 
   .board-day-modal--booking-mobile-sheet .month-booking-input--with-clear {
