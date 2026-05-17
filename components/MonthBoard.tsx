@@ -1732,7 +1732,7 @@ export function MonthBoard({
                         setBookingLaNumber(event.target.value.replace(/\D/g, ""));
                         if (bookingError) setBookingError(null);
                       }}
-                      placeholder="..."
+                      placeholder="71411..."
                       inputMode="numeric"
                       pattern="[0-9]*"
                       maxLength={12}
