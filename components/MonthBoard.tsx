@@ -376,6 +376,7 @@ export function MonthBoard({
     moved: false,
   });
   const dayNoteInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const bookingJobNameInputRef = useRef<HTMLInputElement | null>(null);
   const bookingNotesInputRef = useRef<HTMLTextAreaElement | null>(null);
   const mapsLinkRef = useRef<HTMLAnchorElement | null>(null);
   const locationInputRef = useRef<HTMLInputElement | null>(null);
@@ -441,6 +442,23 @@ export function MonthBoard({
     setLocationActiveIndex(-1);
     if (bookingError) setBookingError(null);
     locationInputRef.current?.focus();
+  };
+
+  const clearBookingJobName = () => {
+    setBookingJobName("");
+    if (bookingError) setBookingError(null);
+    bookingJobNameInputRef.current?.focus();
+  };
+
+  const clearBookingNotes = () => {
+    setBookingNotes("");
+    if (bookingError) setBookingError(null);
+    bookingNotesInputRef.current?.focus();
+  };
+
+  const clearBookingDayNotes = (date: string) => {
+    updateBookingDayOverride(date, { notes: "" });
+    dayNoteInputRefs.current[date]?.focus();
   };
 
   useEffect(() => {
@@ -1649,21 +1667,39 @@ export function MonthBoard({
                   <label className="month-booking-label" htmlFor="booking-overture-title">
                     Job Title
                   </label>
-                  <input
-                    id="booking-overture-title"
-                    name="overture-job-title"
-                    className="month-booking-input"
-                    autoComplete="off"
-                    autoCapitalize="words"
-                    value={bookingJobName}
-                    onChange={(event) => {
-                      setBookingJobName(event.target.value);
-                      if (bookingError) setBookingError(null);
-                    }}
-                    placeholder="Event name"
-                    maxLength={200}
-                    disabled={bookingModalIsLocked}
-                  />
+                  <div className="month-booking-clearable-field">
+                    <input
+                      ref={bookingJobNameInputRef}
+                      id="booking-overture-title"
+                      name="overture-job-title"
+                      className={`month-booking-input${bookingJobName.trim() ? " month-booking-input--with-clear" : ""}`}
+                      autoComplete="off"
+                      autoCapitalize="words"
+                      value={bookingJobName}
+                      onChange={(event) => {
+                        setBookingJobName(event.target.value);
+                        if (bookingError) setBookingError(null);
+                      }}
+                      placeholder="Event name"
+                      maxLength={200}
+                      disabled={bookingModalIsLocked}
+                    />
+                    {bookingJobName.trim() ? (
+                      <button
+                        type="button"
+                        className="month-booking-location-clear"
+                        aria-label="Clear job title"
+                        title="Clear job title"
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                        }}
+                        onClick={clearBookingJobName}
+                        disabled={bookingModalIsLocked}
+                      >
+                        ×
+                      </button>
+                    ) : null}
+                  </div>
                 </>
               ) : (
                 <>
@@ -1696,7 +1732,7 @@ export function MonthBoard({
                         setBookingLaNumber(event.target.value.replace(/\D/g, ""));
                         if (bookingError) setBookingError(null);
                       }}
-                      placeholder="71411"
+                      placeholder="..."
                       inputMode="numeric"
                       pattern="[0-9]*"
                       maxLength={12}
@@ -1707,21 +1743,39 @@ export function MonthBoard({
                   <label className="month-booking-label" htmlFor="booking-job-title">
                     Job Title
                   </label>
-                  <input
-                    id="booking-job-title"
-                    name="job-title"
-                    className="month-booking-input"
-                    autoComplete="off"
-                    autoCapitalize="words"
-                    value={bookingJobName}
-                    onChange={(event) => {
-                      setBookingJobName(event.target.value);
-                      if (bookingError) setBookingError(null);
-                    }}
-                    placeholder="Event name"
-                    maxLength={200}
-                    disabled={bookingModalIsLocked}
-                  />
+                  <div className="month-booking-clearable-field">
+                    <input
+                      ref={bookingJobNameInputRef}
+                      id="booking-job-title"
+                      name="job-title"
+                      className={`month-booking-input${bookingJobName.trim() ? " month-booking-input--with-clear" : ""}`}
+                      autoComplete="off"
+                      autoCapitalize="words"
+                      value={bookingJobName}
+                      onChange={(event) => {
+                        setBookingJobName(event.target.value);
+                        if (bookingError) setBookingError(null);
+                      }}
+                      placeholder="Event name"
+                      maxLength={200}
+                      disabled={bookingModalIsLocked}
+                    />
+                    {bookingJobName.trim() ? (
+                      <button
+                        type="button"
+                        className="month-booking-location-clear"
+                        aria-label="Clear job title"
+                        title="Clear job title"
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                        }}
+                        onClick={clearBookingJobName}
+                        disabled={bookingModalIsLocked}
+                      >
+                        ×
+                      </button>
+                    ) : null}
+                  </div>
                 </>
               )}
 
@@ -1940,19 +1994,38 @@ export function MonthBoard({
                               }
                             }}
                           >
-                            <input
-                              ref={(el) => { dayNoteInputRefs.current[date] = el; }}
-                              className="month-booking-input month-booking-input--small month-booking-day-notes-input"
-                              autoComplete="off"
-                              autoCapitalize="sentences"
-                              value={dayNotes}
-                              onChange={(event) => {
-                                updateBookingDayOverride(date, { notes: event.target.value });
-                              }}
-                              placeholder="Notes"
-                              maxLength={4000}
-                              disabled={bookingModalIsLocked}
-                            />
+                            <div className="month-booking-clearable-field">
+                              <input
+                                ref={(el) => { dayNoteInputRefs.current[date] = el; }}
+                                className={`month-booking-input month-booking-input--small month-booking-day-notes-input${dayNotes.trim() ? " month-booking-input--with-clear" : ""}`}
+                                autoComplete="off"
+                                autoCapitalize="sentences"
+                                value={dayNotes}
+                                onChange={(event) => {
+                                  updateBookingDayOverride(date, { notes: event.target.value });
+                                }}
+                                placeholder="Notes"
+                                maxLength={4000}
+                                disabled={bookingModalIsLocked}
+                              />
+                              {dayNotes.trim() ? (
+                                <button
+                                  type="button"
+                                  className="month-booking-location-clear"
+                                  aria-label="Clear notes"
+                                  title="Clear notes"
+                                  onMouseDown={(event) => {
+                                    event.preventDefault();
+                                  }}
+                                  onClick={() => {
+                                    clearBookingDayNotes(date);
+                                  }}
+                                  disabled={bookingModalIsLocked}
+                                >
+                                  ×
+                                </button>
+                              ) : null}
+                            </div>
                             {!isOvertureBookingMode && activeDayNotesPresetDate === date ? (
                               <div className="month-booking-day-presets-context">
                                 {DAY_NOTE_CHIPS.map((chip) => {
@@ -2002,23 +2075,40 @@ export function MonthBoard({
                     }
                   }}
                 >
-                  <textarea
-                    ref={bookingNotesInputRef}
-                    id="booking-notes"
-                    name="job-notes"
-                    className="month-booking-textarea"
-                    autoComplete="off"
-                    autoCapitalize="sentences"
-                    value={bookingNotes}
-                    onChange={(event) => {
-                      setBookingNotes(event.target.value);
-                      if (bookingError) setBookingError(null);
-                    }}
-                    placeholder="Venue notes, contact, etc."
-                    maxLength={4000}
-                    rows={4}
-                    disabled={bookingModalIsLocked}
-                  />
+                  <div className="month-booking-clearable-field month-booking-clearable-field--textarea">
+                    <textarea
+                      ref={bookingNotesInputRef}
+                      id="booking-notes"
+                      name="job-notes"
+                      className={`month-booking-textarea${bookingNotes.trim() ? " month-booking-textarea--with-clear" : ""}`}
+                      autoComplete="off"
+                      autoCapitalize="sentences"
+                      value={bookingNotes}
+                      onChange={(event) => {
+                        setBookingNotes(event.target.value);
+                        if (bookingError) setBookingError(null);
+                      }}
+                      placeholder="Venue notes, contact, etc."
+                      maxLength={4000}
+                      rows={4}
+                      disabled={bookingModalIsLocked}
+                    />
+                    {bookingNotes.trim() ? (
+                      <button
+                        type="button"
+                        className="month-booking-location-clear month-booking-location-clear--textarea"
+                        aria-label="Clear notes"
+                        title="Clear notes"
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                        }}
+                        onClick={clearBookingNotes}
+                        disabled={bookingModalIsLocked}
+                      >
+                        ×
+                      </button>
+                    ) : null}
+                  </div>
                   {!bookingHasMultiDayRange && !isOvertureBookingMode && singleDayNotesPresetsActive ? (
                     <div className="month-booking-day-presets-context">
                       {DAY_NOTE_CHIPS.map((chip) => {
