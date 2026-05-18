@@ -1549,7 +1549,7 @@ export function DayBoard({
                     </a>
                   </>
                 ) : null}
-                {isJeffEditor && activePrimaryDetail?.eventId ? (
+                {(isJeffEditor || !!editorToken) && activePrimaryDetail?.eventId ? (
                   <JobTimeSection
                     eventId={activePrimaryDetail.eventId}
                     editorToken={editorToken}

@@ -1487,7 +1487,7 @@ export function MonthBoard({
                     </a>
                   </>
                 ) : null}
-                {isJeffEditor && activeDetailPanel.details[0]?.eventId ? (
+                {(isJeffEditor || !!editorToken) && activeDetailPanel.details[0]?.eventId ? (
                   <JobTimeSection
                     eventId={activeDetailPanel.details[0].eventId}
                     editorToken={editorToken}
