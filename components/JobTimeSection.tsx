@@ -112,10 +112,16 @@ function JobTimeDayRow({
 
   // Sync when parent's fetch completes and provides an initial entry.
   useEffect(() => {
+    console.log(
+      "[JobTimeDayRow] initialEntry changed for workDate:", workDate,
+      "| initialEntry:", initialEntry
+        ? { id: initialEntry.id, work_date: initialEntry.work_date, clock_in_at: initialEntry.clock_in_at }
+        : null,
+    );
     setEntry(initialEntry);
     setActionError(null);
     setShowEditForm(false);
-  }, [initialEntry]);
+  }, [initialEntry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Running clock — ticks every second while clocked in but not out.
   useEffect(() => {
@@ -133,15 +139,28 @@ function JobTimeDayRow({
     setIsActionPending(true);
     setActionError(null);
     try {
+      const requestBody = { eventId, workDate };
+      console.log("[JobTimeDayRow:clock-in] POST body:", requestBody);
       const res = await fetch("/api/job-time/clock-in", {
         method: "POST",
         headers: jsonHeaders,
         credentials: "same-origin",
-        body: JSON.stringify({ eventId, workDate }),
+        body: JSON.stringify(requestBody),
       });
+      console.log("[JobTimeDayRow:clock-in] response status:", res.status);
       if (res.status === 503) { setActionError("Hours tracking unavailable."); return; }
-      if (!res.ok) { setActionError("Could not clock in. Try again."); return; }
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
+        console.error("[JobTimeDayRow:clock-in] failed:", res.status, errBody);
+        setActionError("Could not clock in. Try again.");
+        return;
+      }
       const json = await res.json() as { entry: JobTimeEntry };
+      console.log("[JobTimeDayRow:clock-in] success, entry:", {
+        id: json.entry?.id,
+        work_date: json.entry?.work_date,
+        clock_in_at: json.entry?.clock_in_at,
+      });
       setEntry(json.entry);
       setNowMs(Date.now());
     } catch {
@@ -469,7 +488,7 @@ export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
     setEntriesMap(new Map());
     let cancelled = false;
 
-    console.log("[JobTimeSection] fetching entries for eventId:", eventId);
+    console.log("[JobTimeSection] fetching entries | eventId:", eventId, "workDates:", workDates);
     fetch(`/api/job-time?eventId=${encodeURIComponent(eventId)}`, {
       headers: buildAuthHeaders(editorToken),
       credentials: "same-origin",
@@ -477,17 +496,32 @@ export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
     })
       .then(async (res) => {
         if (cancelled) return;
+        console.log("[JobTimeSection] GET response status:", res.status);
         if (res.status === 503) { setFetchState({ status: "unavailable" }); return; }
         if (!res.ok) { setFetchState({ status: "error" }); return; }
         const json = await res.json() as { entries: JobTimeEntry[] };
+        console.log(
+          "[JobTimeSection] GET entries:", json.entries.length,
+          "| work_dates returned:", json.entries.map((e) => e.work_date),
+          "| workDates prop:", workDates,
+        );
         if (!cancelled) {
           const map = new Map<string, JobTimeEntry>();
           for (const e of json.entries) map.set(e.work_date, e);
+          console.log("[JobTimeSection] map keys:", [...map.keys()]);
+          for (const d of workDates) {
+            console.log(`[JobTimeSection] entriesMap.get(${d}):`, map.get(d) ? "FOUND" : "NOT FOUND");
+          }
           setEntriesMap(map);
           setFetchState({ status: "ready" });
         }
       })
-      .catch(() => { if (!cancelled) setFetchState({ status: "error" }); });
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          console.error("[JobTimeSection] GET fetch error:", err);
+          setFetchState({ status: "error" });
+        }
+      });
 
     return () => { cancelled = true; };
   }, [eventId, editorToken]); // workDates intentionally omitted — changes only with eventId

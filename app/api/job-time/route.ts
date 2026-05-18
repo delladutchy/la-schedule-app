@@ -36,7 +36,10 @@ export async function GET(req: Request) {
       normalizeEditorProfile(auth.editorId),
       workDate,
     );
-    console.log("[job-time:get] result:", entries.length, "entries");
+    console.log(
+      "[job-time:get] result:", entries.length, "entries |",
+      entries.map((e) => ({ id: e.id, work_date: e.work_date, clock_in_at: e.clock_in_at })),
+    );
     return NextResponse.json({ entries }, {
       headers: { "Cache-Control": "no-store" },
     });
