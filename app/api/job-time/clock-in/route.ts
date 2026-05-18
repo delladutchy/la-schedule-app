@@ -45,12 +45,15 @@ export async function POST(req: Request) {
   }
   const laNumberStr = typeof laNumber === "string" ? laNumber.trim() : undefined;
 
+  console.log("[job-time:clock-in] eventId:", eventIdStr, "editor:", auth.editorId);
+
   try {
     const entry = await upsertClockIn(
       eventIdStr,
       normalizeEditorProfile(auth.editorId),
       laNumberStr,
     );
+    console.log("[job-time:clock-in] wrote row id:", entry.id);
     return NextResponse.json({ entry });
   } catch (error) {
     if (error instanceof SupabaseConfigError) {

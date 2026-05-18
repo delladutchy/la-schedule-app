@@ -54,10 +54,12 @@ export function JobTimeSection({ eventId, editorToken }: Props) {
     setActionError(null);
     let cancelled = false;
 
+    console.log("[JobTimeSection] fetching entry for eventId:", eventId);
     const headers = buildAuthHeaders(editorToken);
     fetch(`/api/job-time?eventId=${encodeURIComponent(eventId)}`, {
       headers,
       credentials: "same-origin",
+      cache: "no-store",
     })
       .then(async (res) => {
         if (cancelled) return;
@@ -146,8 +148,12 @@ export function JobTimeSection({ eventId, editorToken }: Props) {
   }
 
   if (fetchState.status === "error") {
-    // Silent failure — don't show errors to surface issues to public users
-    return null;
+    return (
+      <div className="job-time-section">
+        <p className="board-day-modal-event-label">Hours</p>
+        <p className="job-time-error" role="alert">Could not load hours. Check connection and try reopening.</p>
+      </div>
+    );
   }
 
   const entry = fetchState.entry;

@@ -27,9 +27,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
   }
 
+  console.log("[job-time:get] eventId:", eventId, "editor:", auth.editorId);
+
   try {
     const entry = await getJobTimeEntry(eventId, normalizeEditorProfile(auth.editorId));
-    return NextResponse.json({ entry: entry ?? null });
+    console.log("[job-time:get] result:", entry ? "found row" : "null");
+    return NextResponse.json({ entry: entry ?? null }, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     if (error instanceof SupabaseConfigError) {
       return NextResponse.json(
