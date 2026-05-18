@@ -23,6 +23,7 @@ import {
 import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
+import { JobTimeSection } from "@/components/JobTimeSection";
 
 interface Props {
   month: MonthBoardData;
@@ -404,7 +405,8 @@ export function MonthBoard({
   const editorModeActive = !!(editorToken || resolvedEditorId);
   const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
   const isMikeEditor = normalizedEditorId === "mike";
-  const isJeffCreateModeSelectable = normalizedEditorId === "jeff" || normalizedEditorId === "legacy";
+  const isJeffEditor = normalizedEditorId === "jeff" || normalizedEditorId === "legacy";
+  const isJeffCreateModeSelectable = isJeffEditor;
   const defaultBookingMode: "la" | "overture" = isMikeEditor ? "overture" : "la";
 
   const { suggestions: locationSuggestions, isLoading: isLocationLoading } =
@@ -1484,6 +1486,12 @@ export function MonthBoard({
                       Open in Apple Maps
                     </a>
                   </>
+                ) : null}
+                {isJeffEditor && activeDetailPanel.details[0]?.eventId ? (
+                  <JobTimeSection
+                    eventId={activeDetailPanel.details[0].eventId}
+                    editorToken={editorToken}
+                  />
                 ) : null}
               </div>
             ) : (

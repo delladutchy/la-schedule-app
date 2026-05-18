@@ -4412,3 +4412,106 @@ html.modal-open body {
     max-height: 22dvh;
   }
 }
+
+/* ---------- Job Time Section (Jeff-only clock in/out) ---------- */
+
+.job-time-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+
+.job-time-status {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.job-time-status--muted {
+  color: var(--text-muted);
+}
+
+.job-time-elapsed {
+  margin: 0 0 10px;
+  font-size: 1.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--today-accent);
+}
+
+.job-time-summary {
+  margin: 0 0 4px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.job-time-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.job-time-row dt {
+  font-weight: 500;
+  color: var(--text-subtle);
+  min-width: 52px;
+}
+
+.job-time-row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.job-time-row--total {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.job-time-row--total dt {
+  color: var(--text-muted);
+}
+
+.job-time-row--ot dd {
+  color: #f59e0b;
+}
+
+.job-time-error {
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  color: #f87171;
+}
+
+.job-time-button {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 13px 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.job-time-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.job-time-button--clock-in {
+  background: var(--today-accent);
+  color: var(--today-badge-text);
+}
+
+.job-time-button--clock-out {
+  background: color-mix(in srgb, var(--today-accent) 18%, var(--surface));
+  color: var(--today-accent);
+  border: 1px solid color-mix(in srgb, var(--today-accent) 40%, transparent);
+}

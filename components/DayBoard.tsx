@@ -12,6 +12,7 @@ import {
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
 import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
+import { JobTimeSection } from "@/components/JobTimeSection";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import {
   buildGigDayDetailsForRange,
@@ -426,7 +427,8 @@ export function DayBoard({
   const stagedLoadingCopy = useStagedLoadingCopy(isBookingSavePending || isDeletePending);
   const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
   const isMikeEditor = normalizedEditorId === "mike";
-  const isJeffCreateModeSelectable = normalizedEditorId === "jeff" || normalizedEditorId === "legacy";
+  const isJeffEditor = normalizedEditorId === "jeff" || normalizedEditorId === "legacy";
+  const isJeffCreateModeSelectable = isJeffEditor;
   const defaultBookingMode: "la" | "overture" = isMikeEditor ? "overture" : "la";
 
   const { suggestions: locationSuggestions, isLoading: isLocationLoading } =
@@ -1546,6 +1548,12 @@ export function DayBoard({
                       Open in Apple Maps
                     </a>
                   </>
+                ) : null}
+                {isJeffEditor && activePrimaryDetail?.eventId ? (
+                  <JobTimeSection
+                    eventId={activePrimaryDetail.eventId}
+                    editorToken={editorToken}
+                  />
                 ) : null}
                 {activeDetailPanel.details.length > 1 ? (
                   <p className="board-day-modal-event-meta">
