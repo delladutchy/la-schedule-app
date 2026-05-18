@@ -3220,70 +3220,8 @@ html.modal-open body {
   min-height: 96px;
 }
 
-.month-booking-notes-presets-context-group {
-  display: grid;
-  gap: 8px;
-}
-
 .month-booking-day-notes-input {
   min-height: 44px;
-}
-
-.month-booking-day-chip {
-  appearance: none;
-  border: 1px solid var(--booking-chip-border);
-  border-radius: 999px;
-  background: var(--booking-chip-bg);
-  color: var(--booking-chip-text);
-  font: inherit;
-  font-size: 11.5px;
-  line-height: 1;
-  min-height: 30px;
-  padding: 5px 11px;
-  cursor: pointer;
-  white-space: nowrap;
-  font-weight: 560;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 5%, transparent);
-}
-
-.month-booking-day-chip:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--booking-chip-bg) 82%, var(--booking-surface-primary));
-  border-color: color-mix(in srgb, var(--booking-chip-border) 70%, var(--text-muted));
-  color: var(--text);
-}
-
-.month-booking-day-chip--active {
-  border-color: var(--booking-chip-active-border);
-  background: var(--booking-chip-active-bg);
-  color: var(--booking-chip-active-text);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #ffffff 11%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--available-dot) 24%, transparent);
-}
-
-.month-booking-day-chip--active:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--booking-chip-active-bg) 86%, var(--booking-surface-primary));
-  border-color: color-mix(in srgb, var(--booking-chip-active-border) 86%, var(--available-dot));
-  color: color-mix(in srgb, var(--booking-chip-active-text) 96%, var(--text));
-}
-
-.month-booking-day-chip:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.month-booking-day-presets-context {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 7px;
-  margin-top: 2px;
-  margin-bottom: 4px;
-}
-
-.month-booking-day-presets-context .month-booking-day-chip {
-  min-height: 28px;
-  padding: 4px 10px;
-  font-size: 11px;
 }
 
 .board-day-modal--booking .month-booking-day-notes-group,
@@ -4306,12 +4244,6 @@ html.modal-open body {
 
   .board-day-modal--booking-mobile-sheet .month-booking-notes-group .month-booking-textarea {
     min-height: 100px;
-  }
-
-  .board-day-modal--booking-mobile-sheet .month-booking-day-chip {
-    min-height: 34px;
-    padding: 6px 12px;
-    font-size: 12px;
   }
 
   .board-day-modal--booking-mobile-sheet .month-booking-daily-row .month-booking-day-time-field {
