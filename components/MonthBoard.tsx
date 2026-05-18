@@ -1673,7 +1673,7 @@ export function MonthBoard({
                       id="booking-overture-title"
                       name="overture-job-title"
                       className={`month-booking-input${bookingJobName.trim() ? " month-booking-input--with-clear" : ""}`}
-                      autoComplete="off"
+                      autoComplete="new-password"
                       autoCapitalize="words"
                       value={bookingJobName}
                       onChange={(event) => {
@@ -1723,7 +1723,7 @@ export function MonthBoard({
                       id="booking-la-number"
                       name="job-number"
                       className="month-booking-input month-booking-input--la"
-                      autoComplete="off"
+                      autoComplete="new-password"
                       autoCorrect="off"
                       autoCapitalize="off"
                       spellCheck={false}
@@ -1749,7 +1749,7 @@ export function MonthBoard({
                       id="booking-job-title"
                       name="job-title"
                       className={`month-booking-input${bookingJobName.trim() ? " month-booking-input--with-clear" : ""}`}
-                      autoComplete="off"
+                      autoComplete="new-password"
                       autoCapitalize="words"
                       value={bookingJobName}
                       onChange={(event) => {
@@ -1998,7 +1998,7 @@ export function MonthBoard({
                               <input
                                 ref={(el) => { dayNoteInputRefs.current[date] = el; }}
                                 className={`month-booking-input month-booking-input--small month-booking-day-notes-input${dayNotes.trim() ? " month-booking-input--with-clear" : ""}`}
-                                autoComplete="off"
+                                autoComplete="new-password"
                                 autoCapitalize="sentences"
                                 value={dayNotes}
                                 onChange={(event) => {
@@ -2081,7 +2081,7 @@ export function MonthBoard({
                       id="booking-notes"
                       name="job-notes"
                       className={`month-booking-textarea${bookingNotes.trim() ? " month-booking-textarea--with-clear" : ""}`}
-                      autoComplete="off"
+                      autoComplete="new-password"
                       autoCapitalize="sentences"
                       value={bookingNotes}
                       onChange={(event) => {
