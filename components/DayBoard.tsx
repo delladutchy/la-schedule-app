@@ -1079,6 +1079,12 @@ export function DayBoard({
   const activeSelectedDayMeta = activePrimaryDetail && activeSelectedDate
     ? resolveSelectedDayPopupMeta(activePrimaryDetail, activeSelectedDate)
     : null;
+  const jobTimeWorkDates = activePrimaryDetail?.startDate
+    ? enumerateIsoDatesInRange(
+        activePrimaryDetail.startDate,
+        activePrimaryDetail.endDateInclusive ?? activePrimaryDetail.startDate,
+      )
+    : [];
   const activeDetailRangeBounds = activeDetailPanel
     ? activeDetailPanel.details
       .map((detail) => {
@@ -1549,9 +1555,10 @@ export function DayBoard({
                     </a>
                   </>
                 ) : null}
-                {(isJeffEditor || !!editorToken) && activePrimaryDetail?.eventId ? (
+                {(isJeffEditor || !!editorToken) && activePrimaryDetail?.eventId && jobTimeWorkDates.length > 0 ? (
                   <JobTimeSection
                     eventId={activePrimaryDetail.eventId}
+                    workDates={jobTimeWorkDates}
                     editorToken={editorToken}
                   />
                 ) : null}

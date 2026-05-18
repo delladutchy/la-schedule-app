@@ -1003,6 +1003,11 @@ export function MonthBoard({
   const activeDetailRangeLabel = activeDetailRangeBounds
     ? formatMonthPopupRange(activeDetailRangeBounds.startDate, activeDetailRangeBounds.endDateInclusive)
     : activeDetailPanel?.details[0]?.dateRangeLabel ?? null;
+  const jobTimeWorkDates = (() => {
+    const d = activeDetailPanel?.details[0];
+    if (!d?.startDate) return [];
+    return enumerateIsoDatesInRange(d.startDate, d.endDateInclusive ?? d.startDate);
+  })();
   const activeDetailIsMultiDay = !!(
     activeDetailRangeBounds
     && activeDetailRangeBounds.startDate !== activeDetailRangeBounds.endDateInclusive
@@ -1487,9 +1492,10 @@ export function MonthBoard({
                     </a>
                   </>
                 ) : null}
-                {(isJeffEditor || !!editorToken) && activeDetailPanel.details[0]?.eventId ? (
+                {(isJeffEditor || !!editorToken) && activeDetailPanel.details[0]?.eventId && jobTimeWorkDates.length > 0 ? (
                   <JobTimeSection
                     eventId={activeDetailPanel.details[0].eventId}
+                    workDates={jobTimeWorkDates}
                     editorToken={editorToken}
                   />
                 ) : null}

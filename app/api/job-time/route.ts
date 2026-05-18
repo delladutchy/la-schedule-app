@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import {
-  getJobTimeEntry,
+  getJobTimeEntries,
   isJeffEditorId,
   normalizeEditorProfile,
 } from "@/lib/job-time";
@@ -26,13 +26,18 @@ export async function GET(req: Request) {
   if (!eventId) {
     return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
   }
+  const workDate = url.searchParams.get("workDate")?.trim() || undefined;
 
-  console.log("[job-time:get] eventId:", eventId, "editor:", auth.editorId);
+  console.log("[job-time:get] eventId:", eventId, "workDate:", workDate ?? "all", "editor:", auth.editorId);
 
   try {
-    const entry = await getJobTimeEntry(eventId, normalizeEditorProfile(auth.editorId));
-    console.log("[job-time:get] result:", entry ? "found row" : "null");
-    return NextResponse.json({ entry: entry ?? null }, {
+    const entries = await getJobTimeEntries(
+      eventId,
+      normalizeEditorProfile(auth.editorId),
+      workDate,
+    );
+    console.log("[job-time:get] result:", entries.length, "entries");
+    return NextResponse.json({ entries }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {

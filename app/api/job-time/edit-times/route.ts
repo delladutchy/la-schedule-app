@@ -5,7 +5,7 @@ import {
   isSameOriginEditorMutation,
 } from "@/lib/editor-auth";
 import {
-  upsertClockOut,
+  upsertEditTimes,
   isJeffEditorId,
   normalizeEditorProfile,
 } from "@/lib/job-time";
@@ -35,12 +35,14 @@ export async function POST(req: Request) {
   }
 
   if (!body || typeof body !== "object") {
-    return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
+    return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
 
-  const { eventId, workDate } = body as Record<string, unknown>;
+  const { eventId, workDate, clockInAt, clockOutAt } = body as Record<string, unknown>;
   const eventIdStr = typeof eventId === "string" ? eventId.trim() : "";
   const workDateStr = typeof workDate === "string" ? workDate.trim() : "";
+  const clockInAtStr = typeof clockInAt === "string" ? clockInAt.trim() : "";
+  const clockOutAtStr = typeof clockOutAt === "string" && clockOutAt.trim() ? clockOutAt.trim() : null;
 
   if (!eventIdStr) {
     return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
@@ -48,23 +50,29 @@ export async function POST(req: Request) {
   if (!workDateStr || !/^\d{4}-\d{2}-\d{2}$/.test(workDateStr)) {
     return NextResponse.json({ error: "missing_work_date" }, { status: 400 });
   }
+  if (!clockInAtStr || Number.isNaN(Date.parse(clockInAtStr))) {
+    return NextResponse.json({ error: "invalid_clock_in_at" }, { status: 400 });
+  }
+  if (clockOutAtStr !== null && Number.isNaN(Date.parse(clockOutAtStr))) {
+    return NextResponse.json({ error: "invalid_clock_out_at" }, { status: 400 });
+  }
+  if (clockOutAtStr && Date.parse(clockOutAtStr) <= Date.parse(clockInAtStr)) {
+    return NextResponse.json(
+      { error: "clock_out_before_clock_in", message: "Clock-out must be after clock-in." },
+      { status: 422 },
+    );
+  }
 
-  console.log("[job-time:clock-out] eventId:", eventIdStr, "workDate:", workDateStr, "editor:", auth.editorId);
+  console.log("[job-time:edit-times] eventId:", eventIdStr, "workDate:", workDateStr, "editor:", auth.editorId);
 
   try {
-    const entry = await upsertClockOut(
+    const entry = await upsertEditTimes(
       eventIdStr,
       normalizeEditorProfile(auth.editorId),
       workDateStr,
+      clockInAtStr,
+      clockOutAtStr,
     );
-    if (!entry) {
-      console.log("[job-time:clock-out] no active clock-in found for eventId:", eventIdStr, "workDate:", workDateStr);
-      return NextResponse.json(
-        { error: "not_clocked_in", message: "No active clock-in found for this job." },
-        { status: 404 },
-      );
-    }
-    console.log("[job-time:clock-out] clocked out row id:", entry.id);
     return NextResponse.json({ entry });
   } catch (error) {
     if (error instanceof SupabaseConfigError) {
@@ -73,7 +81,7 @@ export async function POST(req: Request) {
         { status: 503 },
       );
     }
-    console.error("[job-time:clock-out]", error instanceof Error ? error.message : error);
+    console.error("[job-time:edit-times]", error instanceof Error ? error.message : error);
     return NextResponse.json({ error: "internal_error" }, { status: 500 });
   }
 }

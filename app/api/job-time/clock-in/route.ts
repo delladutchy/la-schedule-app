@@ -38,19 +38,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
   }
 
-  const { eventId, laNumber } = body as Record<string, unknown>;
+  const { eventId, workDate, laNumber } = body as Record<string, unknown>;
   const eventIdStr = typeof eventId === "string" ? eventId.trim() : "";
+  const workDateStr = typeof workDate === "string" ? workDate.trim() : "";
+  const laNumberStr = typeof laNumber === "string" ? laNumber.trim() : undefined;
+
   if (!eventIdStr) {
     return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
   }
-  const laNumberStr = typeof laNumber === "string" ? laNumber.trim() : undefined;
+  if (!workDateStr || !/^\d{4}-\d{2}-\d{2}$/.test(workDateStr)) {
+    return NextResponse.json({ error: "missing_work_date" }, { status: 400 });
+  }
 
-  console.log("[job-time:clock-in] eventId:", eventIdStr, "editor:", auth.editorId);
+  // TODO: Final production rule: validate workDate === today before allowing clock-in.
+  // Deferred until Edit Times/Clear Entry are verified in production.
+
+  console.log("[job-time:clock-in] eventId:", eventIdStr, "workDate:", workDateStr, "editor:", auth.editorId);
 
   try {
     const entry = await upsertClockIn(
       eventIdStr,
       normalizeEditorProfile(auth.editorId),
+      workDateStr,
       laNumberStr,
     );
     console.log("[job-time:clock-in] wrote row id:", entry.id);

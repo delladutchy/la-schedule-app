@@ -5,7 +5,7 @@ import {
   isSameOriginEditorMutation,
 } from "@/lib/editor-auth";
 import {
-  upsertClockOut,
+  deleteJobTimeEntry,
   isJeffEditorId,
   normalizeEditorProfile,
 } from "@/lib/job-time";
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   }
 
   if (!body || typeof body !== "object") {
-    return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
+    return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
 
   const { eventId, workDate } = body as Record<string, unknown>;
@@ -49,23 +49,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "missing_work_date" }, { status: 400 });
   }
 
-  console.log("[job-time:clock-out] eventId:", eventIdStr, "workDate:", workDateStr, "editor:", auth.editorId);
+  console.log("[job-time:clear] eventId:", eventIdStr, "workDate:", workDateStr, "editor:", auth.editorId);
 
   try {
-    const entry = await upsertClockOut(
-      eventIdStr,
-      normalizeEditorProfile(auth.editorId),
-      workDateStr,
-    );
-    if (!entry) {
-      console.log("[job-time:clock-out] no active clock-in found for eventId:", eventIdStr, "workDate:", workDateStr);
-      return NextResponse.json(
-        { error: "not_clocked_in", message: "No active clock-in found for this job." },
-        { status: 404 },
-      );
-    }
-    console.log("[job-time:clock-out] clocked out row id:", entry.id);
-    return NextResponse.json({ entry });
+    await deleteJobTimeEntry(eventIdStr, normalizeEditorProfile(auth.editorId), workDateStr);
+    return NextResponse.json({ ok: true });
   } catch (error) {
     if (error instanceof SupabaseConfigError) {
       return NextResponse.json(
@@ -73,7 +61,7 @@ export async function POST(req: Request) {
         { status: 503 },
       );
     }
-    console.error("[job-time:clock-out]", error instanceof Error ? error.message : error);
+    console.error("[job-time:clear]", error instanceof Error ? error.message : error);
     return NextResponse.json({ error: "internal_error" }, { status: 500 });
   }
 }
