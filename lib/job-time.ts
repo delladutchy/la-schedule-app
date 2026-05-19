@@ -66,6 +66,27 @@ export function normalizeEntryIdFromUnknown(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function parseSortableTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function resolveDeterministicActiveEntry(entries: JobTimeEntry[]): JobTimeEntry | null {
+  const running = entries.filter((entry) => !!entry.clock_in_at && !entry.clock_out_at);
+  if (running.length === 0) return null;
+  const sorted = [...running].sort((a, b) => {
+    const updatedDiff = parseSortableTimestamp(b.updated_at) - parseSortableTimestamp(a.updated_at);
+    if (updatedDiff !== 0) return updatedDiff;
+    const createdDiff = parseSortableTimestamp(b.created_at) - parseSortableTimestamp(a.created_at);
+    if (createdDiff !== 0) return createdDiff;
+    const clockInDiff = parseSortableTimestamp(b.clock_in_at) - parseSortableTimestamp(a.clock_in_at);
+    if (clockInDiff !== 0) return clockInDiff;
+    return b.id.localeCompare(a.id);
+  });
+  return sorted[0] ?? null;
+}
+
 /** Normalize "legacy" token to canonical "jeff" profile in the DB. */
 export function normalizeEditorProfile(editorId: string): string {
   return editorId === "legacy" ? "jeff" : editorId;

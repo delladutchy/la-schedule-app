@@ -391,6 +391,35 @@ function JobTimeDayRow({
     return entries.find((candidate) => isEntryForWorkDate(candidate, normalizedEventId, normalizedWorkDate)) ?? null;
   };
 
+  const fetchActiveEntryById = async (entryId: string): Promise<JobTimeEntry | null> => {
+    const activeRes = await fetch("/api/job-time/active", {
+      headers: authHeaders,
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (activeRes.status === 503) {
+      throw new Error("unavailable");
+    }
+    if (!activeRes.ok) {
+      throw new Error("failed");
+    }
+    const activeJson = await activeRes.json() as { entries?: JobTimeEntry[] };
+    const activeEntries = Array.isArray(activeJson.entries) ? activeJson.entries : [];
+    console.log("[job-time:clock-in:active-refetch] result", {
+      eventId: normalizedEventId,
+      workDate: normalizedWorkDate,
+      rowCount: activeEntries.length,
+      rows: activeEntries.map((candidate) => ({
+        id: candidate.id,
+        eventId: candidate.google_event_id,
+        work_date: candidate.work_date,
+        clock_in_at: candidate.clock_in_at,
+        clock_out_at: candidate.clock_out_at,
+      })),
+    });
+    return activeEntries.find((candidate) => candidate.id === entryId) ?? null;
+  };
+
   const handleClockIn = async () => {
     if (isActionPending) return;
     if (!normalizedWorkDate || !normalizedEventId) {
@@ -418,14 +447,42 @@ function JobTimeDayRow({
       }
       const json = await res.json() as { entry?: JobTimeEntry };
       const returnedEntry = json.entry;
-      if (
-        returnedEntry
-        && isEntryForWorkDate(returnedEntry, normalizedEventId, normalizedWorkDate)
-        && !!returnedEntry.clock_in_at
-        && !returnedEntry.clock_out_at
-      ) {
+      if (returnedEntry && !!returnedEntry.clock_in_at && !returnedEntry.clock_out_at) {
+        const returnedEntryId = returnedEntry.id.trim();
         setEntry(returnedEntry);
         setNowMs(Date.now());
+
+        if (!returnedEntryId) return;
+
+        try {
+          const confirmed = await fetchExactWorkDateEntry();
+          if (
+            confirmed
+            && confirmed.id.trim() === returnedEntryId
+            && !!confirmed.clock_in_at
+            && !confirmed.clock_out_at
+          ) {
+            setEntry(confirmed);
+            return;
+          }
+          const activeConfirmed = await fetchActiveEntryById(returnedEntryId);
+          if (activeConfirmed && !!activeConfirmed.clock_in_at && !activeConfirmed.clock_out_at) {
+            setEntry(activeConfirmed);
+            return;
+          }
+          console.warn("[job-time:clock-in] diagnostic server did not confirm active row", {
+            eventId: normalizedEventId,
+            workDate: normalizedWorkDate,
+            entryId: returnedEntryId,
+          });
+        } catch (error) {
+          console.warn("[job-time:clock-in] diagnostic refetch failed", {
+            eventId: normalizedEventId,
+            workDate: normalizedWorkDate,
+            entryId: returnedEntryId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
         return;
       }
       const confirmed = await fetchExactWorkDateEntry();

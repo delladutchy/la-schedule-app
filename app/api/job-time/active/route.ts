@@ -5,6 +5,7 @@ import {
   getActiveJobTimeEntries,
   isJeffEditorId,
   normalizeEditorProfile,
+  resolveDeterministicActiveEntry,
 } from "@/lib/job-time";
 import { SupabaseConfigError } from "@/lib/supabase";
 
@@ -23,6 +24,19 @@ export async function GET(req: Request) {
 
   try {
     const entries = await getActiveJobTimeEntries(normalizeEditorProfile(auth.editorId));
+    const primaryEntry = resolveDeterministicActiveEntry(entries);
+    if (entries.length > 1) {
+      console.warn("[job-time:active] duplicate_active_rows_detected", {
+        rowCount: entries.length,
+        rows: entries.map((entry) => ({
+          id: entry.id,
+          eventId: entry.google_event_id,
+          workDate: entry.work_date,
+          clockInAt: entry.clock_in_at,
+        })),
+        selectedPrimaryId: primaryEntry?.id ?? null,
+      });
+    }
     console.log("[job-time:active] rows", {
       rowCount: entries.length,
       rows: entries.map((entry) => ({
@@ -32,9 +46,10 @@ export async function GET(req: Request) {
         clockInAt: entry.clock_in_at,
         clockOutAt: entry.clock_out_at,
       })),
+      primaryId: primaryEntry?.id ?? null,
     });
     return NextResponse.json(
-      { entries },
+      { entries: primaryEntry ? [primaryEntry] : [] },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

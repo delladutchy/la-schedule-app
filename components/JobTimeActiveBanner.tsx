@@ -30,10 +30,24 @@ function isRunningEntry(entry: JobTimeEntry): boolean {
   return !!entry.clock_in_at && !entry.clock_out_at;
 }
 
+function parseSortableTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export function resolvePrimaryActiveEntry(entries: JobTimeEntry[]): JobTimeEntry | null {
   const running = entries.filter(isRunningEntry);
   if (running.length === 0) return null;
-  const sorted = [...running].sort((a, b) => Date.parse(b.clock_in_at ?? "") - Date.parse(a.clock_in_at ?? ""));
+  const sorted = [...running].sort((a, b) => {
+    const updatedDiff = parseSortableTimestamp(b.updated_at) - parseSortableTimestamp(a.updated_at);
+    if (updatedDiff !== 0) return updatedDiff;
+    const createdDiff = parseSortableTimestamp(b.created_at) - parseSortableTimestamp(a.created_at);
+    if (createdDiff !== 0) return createdDiff;
+    const clockInDiff = parseSortableTimestamp(b.clock_in_at) - parseSortableTimestamp(a.clock_in_at);
+    if (clockInDiff !== 0) return clockInDiff;
+    return b.id.localeCompare(a.id);
+  });
   return sorted[0] ?? null;
 }
 

@@ -5,6 +5,8 @@ import {
   isSameOriginEditorMutation,
 } from "@/lib/editor-auth";
 import {
+  getActiveJobTimeEntries,
+  resolveDeterministicActiveEntry,
   upsertClockIn,
   isJeffEditorId,
   normalizeEditorProfile,
@@ -57,13 +59,31 @@ export async function POST(req: Request) {
   console.log("[job-time:clock-in] eventId:", eventIdStr, "workDate:", workDateStr, "editor:", auth.editorId);
 
   try {
+    const editorProfile = normalizeEditorProfile(auth.editorId);
+    const activeEntries = await getActiveJobTimeEntries(editorProfile);
+    const activeEntry = resolveDeterministicActiveEntry(activeEntries);
+
+    if (activeEntry) {
+      console.log("[job-time:clock-in] existing active row reused", {
+        id: activeEntry.id,
+        eventId: activeEntry.google_event_id,
+        workDate: activeEntry.work_date,
+      });
+      return NextResponse.json({ entry: activeEntry });
+    }
+
     const entry = await upsertClockIn(
       eventIdStr,
-      normalizeEditorProfile(auth.editorId),
+      editorProfile,
       workDateStr,
       laNumberStr,
     );
-    console.log("[job-time:clock-in] wrote row | id:", entry.id, "work_date:", entry.work_date, "clock_in_at:", entry.clock_in_at);
+    console.log("[job-time:clock-in] created new row", {
+      id: entry.id,
+      eventId: entry.google_event_id,
+      workDate: entry.work_date,
+      clock_in_at: entry.clock_in_at,
+    });
     return NextResponse.json({ entry });
   } catch (error) {
     if (error instanceof SupabaseConfigError) {

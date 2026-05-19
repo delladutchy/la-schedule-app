@@ -56,6 +56,27 @@ const makeClockOutEntry = (workDate: string = WORK_DATE) => ({
   clock_out_at: new Date().toISOString(),
 });
 
+function parseSortableTimestampForTest(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function resolveDeterministicActiveEntryForTest(entries: Array<ReturnType<typeof makeClockInEntry>>) {
+  const running = entries.filter((entry) => !!entry.clock_in_at && !entry.clock_out_at);
+  if (running.length === 0) return null;
+  const sorted = [...running].sort((a, b) => {
+    const updatedDiff = parseSortableTimestampForTest(b.updated_at) - parseSortableTimestampForTest(a.updated_at);
+    if (updatedDiff !== 0) return updatedDiff;
+    const createdDiff = parseSortableTimestampForTest(b.created_at) - parseSortableTimestampForTest(a.created_at);
+    if (createdDiff !== 0) return createdDiff;
+    const clockInDiff = parseSortableTimestampForTest(b.clock_in_at) - parseSortableTimestampForTest(a.clock_in_at);
+    if (clockInDiff !== 0) return clockInDiff;
+    return b.id.localeCompare(a.id);
+  });
+  return sorted[0] ?? null;
+}
+
 vi.mock("@/lib/config", () => ({
   getConfig: () => ({ env: editorEnv, file: { timezone: "America/Los_Angeles" } }),
 }));
@@ -67,6 +88,9 @@ vi.mock("@/lib/job-time", () => ({
   normalizeWorkDateFromUnknown: (value: unknown) => normalizeWorkDateForTest(value),
   normalizeEntryIdFromUnknown: (value: unknown) => (
     typeof value === "string" && value.trim().length > 0 ? value.trim() : null
+  ),
+  resolveDeterministicActiveEntry: (entries: Array<ReturnType<typeof makeClockInEntry>>) => (
+    resolveDeterministicActiveEntryForTest(entries)
   ),
   getJobTimeEntries: vi.fn().mockResolvedValue([]),
   getActiveJobTimeEntries: vi.fn().mockResolvedValue([]),
@@ -317,6 +341,49 @@ describe("GET /api/job-time/active — authorization and shape", () => {
     expect(json.entries.some((entry) => entry.id === "row-running-1")).toBe(false);
   });
 
+  it("returns a deterministic single active entry and warns when duplicates exist", async () => {
+    const { getActiveJobTimeEntries } = await import("@/lib/job-time");
+    const older = {
+      ...makeClockInEntry(WORK_DATE),
+      id: "row-older",
+      google_event_id: "evt-older",
+      clock_in_at: "2026-05-18T09:00:00.000Z",
+      created_at: "2026-05-18T09:00:00.000Z",
+      updated_at: "2026-05-18T09:00:00.000Z",
+    };
+    const newer = {
+      ...makeClockInEntry(WORK_DATE_2),
+      id: "row-newer",
+      google_event_id: "evt-newer",
+      clock_in_at: "2026-05-19T09:00:00.000Z",
+      created_at: "2026-05-19T09:00:00.000Z",
+      updated_at: "2026-05-19T10:00:00.000Z",
+    };
+    vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([older, newer]);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const GET = await loadActiveRoute();
+    const res = await GET(
+      new Request("http://localhost/api/job-time/active", {
+        headers: jeffBearer(),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entries: Array<{ id: string; google_event_id: string }> };
+    expect(json.entries).toHaveLength(1);
+    expect(json.entries[0]?.id).toBe("row-newer");
+    expect(json.entries[0]?.google_event_id).toBe("evt-newer");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[job-time:active] duplicate_active_rows_detected",
+      expect.objectContaining({
+        rowCount: 2,
+        selectedPrimaryId: "row-newer",
+      }),
+    );
+    warnSpy.mockRestore();
+  });
+
   it("returns active row fields for Jeff", async () => {
     const { getActiveJobTimeEntries } = await import("@/lib/job-time");
     vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([
@@ -376,6 +443,82 @@ describe("POST /api/job-time/clock-in — authorization", () => {
     const json = await res.json() as { entry: { work_date: string } };
     expect(json.entry).toBeDefined();
     expect(json.entry.work_date).toBe(WORK_DATE);
+  });
+
+  it("creates a new row when Jeff has no active entry", async () => {
+    const { getActiveJobTimeEntries, upsertClockIn } = await import("@/lib/job-time");
+    vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([]);
+
+    const POST = await loadClockInRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt-create", workDate: WORK_DATE }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(getActiveJobTimeEntries).toHaveBeenCalledWith("jeff");
+    expect(upsertClockIn).toHaveBeenCalledWith("evt-create", "jeff", WORK_DATE, undefined);
+  });
+
+  it("reuses the existing active row instead of creating a duplicate", async () => {
+    const { getActiveJobTimeEntries, upsertClockIn } = await import("@/lib/job-time");
+    const existing = {
+      ...makeClockInEntry("2026-05-17"),
+      id: "row-existing-active",
+      google_event_id: "evt-existing-active",
+      work_date: "2026-05-17",
+      clock_in_at: "2026-05-17T12:00:00.000Z",
+      clock_out_at: null,
+      updated_at: "2026-05-17T12:00:00.000Z",
+    };
+    vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([existing]);
+
+    const POST = await loadClockInRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt-new-target", workDate: WORK_DATE }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(upsertClockIn).not.toHaveBeenCalled();
+    const json = await res.json() as { entry: { id: string; google_event_id: string; work_date: string } };
+    expect(json.entry.id).toBe("row-existing-active");
+    expect(json.entry.google_event_id).toBe("evt-existing-active");
+    expect(json.entry.work_date).toBe("2026-05-17");
+  });
+
+  it("prevents duplicate active rows even when request eventId/workDate differ", async () => {
+    const { getActiveJobTimeEntries, upsertClockIn } = await import("@/lib/job-time");
+    const activeFromOtherEvent = {
+      ...makeClockInEntry("2026-05-20"),
+      id: "row-other-event",
+      google_event_id: "evt-other",
+      work_date: "2026-05-20",
+      clock_in_at: "2026-05-20T08:00:00.000Z",
+      clock_out_at: null,
+      updated_at: "2026-05-20T08:30:00.000Z",
+    };
+    vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([activeFromOtherEvent]);
+
+    const POST = await loadClockInRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt-requested", workDate: "2026-05-18" }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(upsertClockIn).not.toHaveBeenCalled();
+    const json = await res.json() as { entry: { id: string } };
+    expect(json.entry.id).toBe("row-other-event");
   });
 
   it("normalizes ISO workDate input to YYYY-MM-DD", async () => {
