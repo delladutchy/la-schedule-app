@@ -148,6 +148,20 @@ interface RowControlState {
   showClear: boolean;
 }
 
+export function buildClockMutationPayload(
+  eventId: string,
+  workDate: string,
+  entry: JobTimeEntry | null,
+): { eventId: string; workDate: string; entryId?: string } {
+  const payload: { eventId: string; workDate: string; entryId?: string } = {
+    eventId,
+    workDate,
+  };
+  const entryId = entry?.id?.trim();
+  if (entryId) payload.entryId = entryId;
+  return payload;
+}
+
 export function resolveRowControlState(
   entry: JobTimeEntry | null,
   allowClockInWhenEmpty: boolean,
@@ -442,19 +456,31 @@ function JobTimeDayRow({
     setIsActionPending(true);
     setActionError(null);
     try {
+      const payload = buildClockMutationPayload(normalizedEventId, normalizedWorkDate, entry);
+      console.log("[job-time:clock-out] request", payload);
       const res = await fetch("/api/job-time/clock-out", {
         method: "POST",
         headers: jsonHeaders,
         credentials: "same-origin",
-        body: JSON.stringify({ eventId: normalizedEventId, workDate: normalizedWorkDate }),
+        body: JSON.stringify(payload),
       });
       if (res.status === 503) { setActionError("Hours tracking unavailable."); return; }
       if (!res.ok) {
         if (res.status === 404) {
           try {
             const confirmed = await fetchExactWorkDateEntry();
+            if (!confirmed) {
+              setEntry(null);
+              setShowEditForm(false);
+              return;
+            }
             if (confirmed?.clock_out_at) {
               setEntry(confirmed);
+              return;
+            }
+            if (confirmed.clock_in_at && !confirmed.clock_out_at) {
+              setEntry(confirmed);
+              setActionError("Diagnostic: server still shows an active entry for this date.");
               return;
             }
           } catch { /* fall through to error */ }
@@ -515,14 +541,34 @@ function JobTimeDayRow({
     setIsActionPending(true);
     setActionError(null);
     try {
+      const payload = buildClockMutationPayload(normalizedEventId, normalizedWorkDate, entry);
+      console.log("[job-time:clear] request", payload);
       const res = await fetch("/api/job-time/clear", {
         method: "POST",
         headers: jsonHeaders,
         credentials: "same-origin",
-        body: JSON.stringify({ eventId: normalizedEventId, workDate: normalizedWorkDate }),
+        body: JSON.stringify(payload),
       });
       if (res.status === 503) { setActionError("Hours tracking unavailable."); return; }
       if (!res.ok) {
+        if (res.status === 404) {
+          try {
+            const confirmed = await fetchExactWorkDateEntry();
+            if (!confirmed) {
+              setEntry(null);
+              setShowEditForm(false);
+              return;
+            }
+            if (confirmed.clock_in_at && !confirmed.clock_out_at) {
+              setEntry(confirmed);
+              setActionError("Diagnostic: server still shows an active entry for this date.");
+              return;
+            }
+            setEntry(confirmed);
+            setActionError("Could not confirm clear. Try again.");
+            return;
+          } catch { /* fall through */ }
+        }
         const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
         if (res.status === 400 && errBody.error === "missing_work_date") {
           setActionError(invalidContextError);
@@ -531,11 +577,12 @@ function JobTimeDayRow({
         }
         return;
       }
-      const json = await res.json().catch(() => null) as { success?: boolean; workDate?: string } | null;
+      const json = await res.json().catch(() => null) as { success?: boolean; workDate?: string; entryId?: string } | null;
       console.log("[job-time:clear] response", {
         eventId: normalizedEventId,
         workDate: normalizedWorkDate,
         success: !!json?.success,
+        returnedEntryId: json?.entryId ?? null,
         returnedWorkDate: json?.workDate ?? null,
       });
       const clearedDate = typeof json?.workDate === "string" ? normalizeWorkDate(json.workDate) : null;

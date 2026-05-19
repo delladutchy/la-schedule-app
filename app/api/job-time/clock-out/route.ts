@@ -6,7 +6,9 @@ import {
 } from "@/lib/editor-auth";
 import {
   upsertClockOut,
+  upsertClockOutById,
   isJeffEditorId,
+  normalizeEntryIdFromUnknown,
   normalizeEditorProfile,
   normalizeWorkDateFromUnknown,
 } from "@/lib/job-time";
@@ -39,9 +41,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
   }
 
-  const { eventId, workDate } = body as Record<string, unknown>;
+  const { eventId, workDate, entryId } = body as Record<string, unknown>;
   const eventIdStr = typeof eventId === "string" ? eventId.trim() : "";
   const workDateStr = normalizeWorkDateFromUnknown(workDate);
+  const entryIdStr = normalizeEntryIdFromUnknown(entryId);
 
   if (!eventIdStr) {
     return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
@@ -50,14 +53,34 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "missing_work_date" }, { status: 400 });
   }
 
-  console.log("[job-time:clock-out] eventId:", eventIdStr, "workDate:", workDateStr, "editor:", auth.editorId);
+  console.log("[job-time:clock-out] receive", {
+    entryId: entryIdStr,
+    eventId: eventIdStr,
+    workDate: workDateStr,
+    editor: auth.editorId,
+  });
 
   try {
-    const entry = await upsertClockOut(
-      eventIdStr,
-      normalizeEditorProfile(auth.editorId),
-      workDateStr,
-    );
+    const editorProfile = normalizeEditorProfile(auth.editorId);
+    let entry = null;
+
+    if (entryIdStr) {
+      entry = await upsertClockOutById(entryIdStr, editorProfile);
+      if (!entry) {
+        console.log("[job-time:clock-out] no active row found for entryId", {
+          entryId: entryIdStr,
+          eventId: eventIdStr,
+          workDate: workDateStr,
+        });
+        return NextResponse.json(
+          { error: "not_clocked_in", message: "No active clock-in found for this entry id." },
+          { status: 404 },
+        );
+      }
+    } else {
+      entry = await upsertClockOut(eventIdStr, editorProfile, workDateStr);
+    }
+
     if (!entry) {
       console.log("[job-time:clock-out] no active clock-in found for eventId:", eventIdStr, "workDate:", workDateStr);
       return NextResponse.json(
@@ -65,10 +88,12 @@ export async function POST(req: Request) {
         { status: 404 },
       );
     }
-    console.log(
-      "[job-time:clock-out] clocked out row",
-      { id: entry.id, work_date: entry.work_date, clock_out_at: entry.clock_out_at },
-    );
+    console.log("[job-time:clock-out] updated", {
+      id: entry.id,
+      eventId: entry.google_event_id,
+      workDate: entry.work_date,
+      clock_out_at: entry.clock_out_at,
+    });
     return NextResponse.json({ entry });
   } catch (error) {
     if (error instanceof SupabaseConfigError) {

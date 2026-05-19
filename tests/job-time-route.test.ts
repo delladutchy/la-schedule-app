@@ -65,6 +65,9 @@ vi.mock("@/lib/job-time", () => ({
   normalizeEditorProfile: (id: string) => (id === "legacy" ? "jeff" : id),
   normalizeWorkDate: (value: string) => normalizeWorkDateForTest(value),
   normalizeWorkDateFromUnknown: (value: unknown) => normalizeWorkDateForTest(value),
+  normalizeEntryIdFromUnknown: (value: unknown) => (
+    typeof value === "string" && value.trim().length > 0 ? value.trim() : null
+  ),
   getJobTimeEntries: vi.fn().mockResolvedValue([]),
   getActiveJobTimeEntries: vi.fn().mockResolvedValue([]),
   upsertClockIn: vi.fn().mockImplementation((eventId: string, editor: string, workDate: string) => Promise.resolve({
@@ -77,7 +80,21 @@ vi.mock("@/lib/job-time", () => ({
     google_event_id: eventId,
     editor_profile: editor,
   })),
-  deleteJobTimeEntry: vi.fn().mockResolvedValue(undefined),
+  upsertClockOutById: vi.fn().mockImplementation((entryId: string, editor: string) => Promise.resolve({
+    ...makeClockOutEntry(WORK_DATE),
+    id: entryId,
+    editor_profile: editor,
+  })),
+  deleteJobTimeEntry: vi.fn().mockImplementation((eventId: string, editor: string, workDate: string) => Promise.resolve({
+    ...makeClockInEntry(workDate),
+    google_event_id: eventId,
+    editor_profile: editor,
+  })),
+  deleteJobTimeEntryById: vi.fn().mockImplementation((entryId: string, editor: string) => Promise.resolve({
+    ...makeClockInEntry(WORK_DATE),
+    id: entryId,
+    editor_profile: editor,
+  })),
   upsertEditTimes: vi.fn().mockImplementation((
     eventId: string,
     editor: string,
@@ -284,6 +301,22 @@ describe("GET /api/job-time/active — authorization and shape", () => {
     expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
+  it("excludes a clocked-out id after clock-out has completed", async () => {
+    const { getActiveJobTimeEntries } = await import("@/lib/job-time");
+    vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([]);
+
+    const GET = await loadActiveRoute();
+    const res = await GET(
+      new Request("http://localhost/api/job-time/active", {
+        headers: jeffBearer(),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entries: Array<{ id: string }> };
+    expect(json.entries).toEqual([]);
+    expect(json.entries.some((entry) => entry.id === "row-running-1")).toBe(false);
+  });
+
   it("returns active row fields for Jeff", async () => {
     const { getActiveJobTimeEntries } = await import("@/lib/job-time");
     vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([
@@ -478,6 +511,36 @@ describe("POST /api/job-time/clock-out — authorization", () => {
     expect(upsertClockOut).toHaveBeenCalledWith("evt-two", "jeff", WORK_DATE_2);
   });
 
+  it("clocks out by entry id when entryId is provided", async () => {
+    const { upsertClockOutById, upsertClockOut } = await import("@/lib/job-time");
+    const POST = await loadClockOutRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ entryId: "row-running-1", eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(upsertClockOutById).toHaveBeenCalledWith("row-running-1", "jeff");
+    expect(upsertClockOut).not.toHaveBeenCalled();
+  });
+
+  it("allows clock-out by entry id even when eventId payload differs", async () => {
+    const { upsertClockOutById, upsertClockOut } = await import("@/lib/job-time");
+    const POST = await loadClockOutRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ entryId: "row-running-2", eventId: "evt-mismatch", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(upsertClockOutById).toHaveBeenCalledWith("row-running-2", "jeff");
+    expect(upsertClockOut).not.toHaveBeenCalled();
+  });
+
   it("returns 400 when workDate is missing", async () => {
     const POST = await loadClockOutRoute();
     const res = await POST(
@@ -501,6 +564,21 @@ describe("POST /api/job-time/clock-out — authorization", () => {
           Authorization: "Bearer milos-editor-token-0123456789",
         },
         body: JSON.stringify({ eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects Milos from clock-out by entry id with 403", async () => {
+    const POST = await loadClockOutRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-out", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer milos-editor-token-0123456789",
+        },
+        body: JSON.stringify({ entryId: "row-123", eventId: "evt1", workDate: WORK_DATE }),
       }),
     );
     expect(res.status).toBe(403);
@@ -535,6 +613,21 @@ describe("POST /api/job-time/clear — authorization and validation", () => {
     );
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({ success: true, workDate: WORK_DATE });
+  });
+
+  it("clears by entry id when provided", async () => {
+    const { deleteJobTimeEntryById, deleteJobTimeEntry } = await import("@/lib/job-time");
+    const POST = await loadClearRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ entryId: "row-clear-1", eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(deleteJobTimeEntryById).toHaveBeenCalledWith("row-clear-1", "jeff");
+    expect(deleteJobTimeEntry).not.toHaveBeenCalled();
   });
 
   it("rejects Dave with 403", async () => {
@@ -602,6 +695,22 @@ describe("POST /api/job-time/clear — authorization and validation", () => {
       }),
     );
     expect(deleteJobTimeEntry).toHaveBeenCalledWith("evt-two", "jeff", WORK_DATE);
+  });
+
+  it("returns 404 when clear by entry id does not find a row", async () => {
+    const { deleteJobTimeEntryById } = await import("@/lib/job-time");
+    vi.mocked(deleteJobTimeEntryById).mockResolvedValueOnce(null);
+
+    const POST = await loadClearRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ entryId: "missing-row", eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({ error: "not_found" });
   });
 });
 
@@ -755,6 +864,22 @@ describe("POST /api/job-time/clock-out — 404 when no active clock-in", () => {
         method: "POST",
         headers: { "Content-Type": "application/json", ...jeffBearer() },
         body: JSON.stringify({ eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({ error: "not_clocked_in" });
+  });
+
+  it("returns 404 when entry id is provided but not found", async () => {
+    const { upsertClockOutById } = await import("@/lib/job-time");
+    vi.mocked(upsertClockOutById).mockResolvedValueOnce(null);
+
+    const POST = await loadClockOutRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ entryId: "missing-row", eventId: "evt1", workDate: WORK_DATE }),
       }),
     );
     expect(res.status).toBe(404);

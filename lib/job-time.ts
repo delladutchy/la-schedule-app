@@ -60,6 +60,12 @@ export function normalizeWorkDateFromUnknown(value: unknown): string | null {
   return normalizeWorkDate(value);
 }
 
+export function normalizeEntryIdFromUnknown(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 /** Normalize "legacy" token to canonical "jeff" profile in the DB. */
 export function normalizeEditorProfile(editorId: string): string {
   return editorId === "legacy" ? "jeff" : editorId;
@@ -174,20 +180,60 @@ export async function upsertClockOut(
   return data ? normalizeJobTimeEntry(data) : null;
 }
 
+export async function upsertClockOutById(
+  entryId: string,
+  editorProfile: string,
+): Promise<JobTimeEntry | null> {
+  const client = getSupabaseServerClient();
+  const now = new Date().toISOString();
+  const { data, error } = await client
+    .from("job_time_entries")
+    .update({ clock_out_at: now, updated_at: now })
+    .eq("id", entryId)
+    .eq("editor_profile", editorProfile)
+    .not("clock_in_at", "is", null)
+    .is("clock_out_at", null)
+    .select()
+    .maybeSingle<JobTimeEntry>();
+
+  if (error) throw new Error(`[job-time] clock-out by id failed: ${error.message}`);
+  return data ? normalizeJobTimeEntry(data) : null;
+}
+
 export async function deleteJobTimeEntry(
   googleEventId: string,
   editorProfile: string,
   workDate: string,
-): Promise<void> {
+): Promise<JobTimeEntry | null> {
   const client = getSupabaseServerClient();
-  const { error } = await client
+  const { data, error } = await client
     .from("job_time_entries")
     .delete()
     .eq("google_event_id", googleEventId)
     .eq("editor_profile", editorProfile)
-    .eq("work_date", workDate);
+    .eq("work_date", workDate)
+    .select()
+    .maybeSingle<JobTimeEntry>();
 
   if (error) throw new Error(`[job-time] clear failed: ${error.message}`);
+  return data ? normalizeJobTimeEntry(data) : null;
+}
+
+export async function deleteJobTimeEntryById(
+  entryId: string,
+  editorProfile: string,
+): Promise<JobTimeEntry | null> {
+  const client = getSupabaseServerClient();
+  const { data, error } = await client
+    .from("job_time_entries")
+    .delete()
+    .eq("id", entryId)
+    .eq("editor_profile", editorProfile)
+    .select()
+    .maybeSingle<JobTimeEntry>();
+
+  if (error) throw new Error(`[job-time] clear by id failed: ${error.message}`);
+  return data ? normalizeJobTimeEntry(data) : null;
 }
 
 export async function upsertEditTimes(

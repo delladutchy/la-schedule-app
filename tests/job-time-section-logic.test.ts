@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildClockMutationPayload,
   buildEntriesMapFromResponse,
   parseScheduledStartTimeToHHMM,
   resolveEditFormDefaults,
@@ -168,6 +169,25 @@ describe("resolveRowControlState", () => {
       showClockOut: true,
       showEditTimes: true,
       showClear: true,
+    });
+  });
+});
+
+describe("buildClockMutationPayload", () => {
+  it("includes entryId when a running/completed row exists", () => {
+    const payload = buildClockMutationPayload("evt-1", "2026-05-20", makeEntry({ id: "row-abc" }));
+    expect(payload).toEqual({
+      eventId: "evt-1",
+      workDate: "2026-05-20",
+      entryId: "row-abc",
+    });
+  });
+
+  it("omits entryId when no entry exists", () => {
+    const payload = buildClockMutationPayload("evt-1", "2026-05-20", null);
+    expect(payload).toEqual({
+      eventId: "evt-1",
+      workDate: "2026-05-20",
     });
   });
 });
