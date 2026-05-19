@@ -66,6 +66,7 @@ vi.mock("@/lib/job-time", () => ({
   normalizeWorkDate: (value: string) => normalizeWorkDateForTest(value),
   normalizeWorkDateFromUnknown: (value: unknown) => normalizeWorkDateForTest(value),
   getJobTimeEntries: vi.fn().mockResolvedValue([]),
+  getActiveJobTimeEntries: vi.fn().mockResolvedValue([]),
   upsertClockIn: vi.fn().mockImplementation((eventId: string, editor: string, workDate: string) => Promise.resolve({
     ...makeClockInEntry(workDate),
     google_event_id: eventId,
@@ -124,6 +125,10 @@ async function loadClearRoute() {
 async function loadEditTimesRoute() {
   const mod = await import("@/app/api/job-time/edit-times/route");
   return mod.POST;
+}
+async function loadActiveRoute() {
+  const mod = await import("@/app/api/job-time/active/route");
+  return mod.GET;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +244,72 @@ describe("GET /api/job-time — authorization", () => {
     );
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({ error: "invalid_work_date" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/job-time/active
+// ---------------------------------------------------------------------------
+
+describe("GET /api/job-time/active — authorization and shape", () => {
+  it("rejects unauthenticated requests with 401", async () => {
+    const GET = await loadActiveRoute();
+    const res = await GET(new Request("http://localhost/api/job-time/active"));
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects non-Jeff requests with 403", async () => {
+    const GET = await loadActiveRoute();
+    const res = await GET(
+      new Request("http://localhost/api/job-time/active", {
+        headers: { Authorization: "Bearer dave-editor-token-0123456789" },
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("returns an empty entries array when there are no active rows", async () => {
+    const { getActiveJobTimeEntries } = await import("@/lib/job-time");
+    vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([]);
+
+    const GET = await loadActiveRoute();
+    const res = await GET(
+      new Request("http://localhost/api/job-time/active", {
+        headers: jeffBearer(),
+      }),
+    );
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ entries: [] });
+    expect(getActiveJobTimeEntries).toHaveBeenCalledWith("jeff");
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("returns active row fields for Jeff", async () => {
+    const { getActiveJobTimeEntries } = await import("@/lib/job-time");
+    vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([
+      makeClockInEntry(WORK_DATE),
+    ]);
+
+    const GET = await loadActiveRoute();
+    const res = await GET(
+      new Request("http://localhost/api/job-time/active", {
+        headers: jeffBearer(),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as {
+      entries: Array<{
+        google_event_id: string;
+        work_date: string;
+        clock_in_at: string | null;
+        clock_out_at: string | null;
+      }>;
+    };
+    expect(json.entries).toHaveLength(1);
+    expect(json.entries[0]?.google_event_id).toBe("evt1");
+    expect(json.entries[0]?.work_date).toBe(WORK_DATE);
+    expect(json.entries[0]?.clock_in_at).toBeTruthy();
+    expect(json.entries[0]?.clock_out_at).toBeNull();
   });
 });
 

@@ -1,0 +1,156 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { calculateTimeHours, formatElapsed } from "@/lib/job-time-calculations";
+import type { JobTimeEntry } from "@/components/JobTimeSection";
+
+const ACTIVE_CLOCK_REFRESH_MS = 5000;
+
+interface ActiveEntriesResponse {
+  entries?: JobTimeEntry[];
+}
+
+interface Props {
+  isJeffEditor: boolean;
+  editorToken: string | null;
+  suppressed?: boolean;
+}
+
+function buildAuthHeaders(editorToken: string | null): Record<string, string> {
+  if (editorToken) return { Authorization: `Bearer ${editorToken}` };
+  return {};
+}
+
+function isRunningEntry(entry: JobTimeEntry): boolean {
+  return !!entry.clock_in_at && !entry.clock_out_at;
+}
+
+export function resolvePrimaryActiveEntry(entries: JobTimeEntry[]): JobTimeEntry | null {
+  const running = entries.filter(isRunningEntry);
+  if (running.length === 0) return null;
+  const sorted = [...running].sort((a, b) => Date.parse(b.clock_in_at ?? "") - Date.parse(a.clock_in_at ?? ""));
+  return sorted[0] ?? null;
+}
+
+export function shouldRenderActiveClockBanner(
+  isJeffEditor: boolean,
+  suppressed: boolean,
+  primaryEntry: JobTimeEntry | null,
+): boolean {
+  return !!(isJeffEditor && !suppressed && primaryEntry?.clock_in_at && !primaryEntry.clock_out_at);
+}
+
+function formatBannerWorkDate(isoDate: string): string {
+  const [yRaw, mRaw, dRaw] = isoDate.split("-").map(Number);
+  const y = yRaw ?? 1970;
+  const m = mRaw ?? 1;
+  const d = dRaw ?? 1;
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function resolveBannerLabel(entry: JobTimeEntry): string {
+  if (entry.la_number?.trim()) return `LA#${entry.la_number.trim()}`;
+  return "Clocked in";
+}
+
+export function JobTimeActiveBanner({
+  isJeffEditor,
+  editorToken,
+  suppressed = false,
+}: Props) {
+  const [entries, setEntries] = useState<JobTimeEntry[]>([]);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    if (!isJeffEditor) {
+      setEntries([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const fetchActiveEntries = async () => {
+      try {
+        const res = await fetch("/api/job-time/active", {
+          headers: buildAuthHeaders(editorToken),
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+
+        if (cancelled) return;
+
+        if (res.status === 401 || res.status === 403) {
+          setEntries([]);
+          return;
+        }
+        if (!res.ok) {
+          setEntries([]);
+          return;
+        }
+
+        const json = await res.json() as ActiveEntriesResponse;
+        const rows = Array.isArray(json.entries) ? json.entries : [];
+        setEntries(rows.filter(isRunningEntry));
+      } catch {
+        if (!cancelled) setEntries([]);
+      }
+    };
+
+    void fetchActiveEntries();
+    const intervalId = window.setInterval(() => {
+      void fetchActiveEntries();
+    }, ACTIVE_CLOCK_REFRESH_MS);
+
+    const handleVisibilityRefresh = () => {
+      if (document.visibilityState === "visible") {
+        void fetchActiveEntries();
+      }
+    };
+
+    window.addEventListener("focus", handleVisibilityRefresh);
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleVisibilityRefresh);
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+    };
+  }, [editorToken, isJeffEditor]);
+
+  const primaryEntry = useMemo(() => resolvePrimaryActiveEntry(entries), [entries]);
+
+  useEffect(() => {
+    if (!primaryEntry?.clock_in_at || primaryEntry.clock_out_at) return undefined;
+    setNowMs(Date.now());
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [primaryEntry?.id, primaryEntry?.clock_in_at, primaryEntry?.clock_out_at]);
+
+  if (!shouldRenderActiveClockBanner(isJeffEditor, suppressed, primaryEntry)) return null;
+  const activeEntry = primaryEntry;
+  if (!activeEntry?.clock_in_at) return null;
+
+  const elapsed = formatElapsed(
+    calculateTimeHours(activeEntry.clock_in_at, null, new Date(nowMs).toISOString()).totalHours,
+  );
+  const extraCount = Math.max(0, entries.length - 1);
+  const workDateLabel = formatBannerWorkDate(activeEntry.work_date);
+  const headline = resolveBannerLabel(activeEntry);
+
+  return (
+    <section className="job-time-active-banner" aria-live="polite" aria-label="Active clock status">
+      <div className="job-time-active-banner__badge" aria-hidden="true" />
+      <p className="job-time-active-banner__label">
+        {headline}
+        {extraCount > 0 ? ` (+${extraCount} more)` : ""}
+      </p>
+      <p className="job-time-active-banner__elapsed">{elapsed}</p>
+      <p className="job-time-active-banner__meta">{workDateLabel}</p>
+    </section>
+  );
+}

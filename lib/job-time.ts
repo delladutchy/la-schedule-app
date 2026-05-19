@@ -99,6 +99,29 @@ export async function getJobTimeEntries(
   return ((data as JobTimeEntry[]) ?? []).map(normalizeJobTimeEntry);
 }
 
+/**
+ * Return only active/running entries for an editor profile.
+ * Active means clock_in_at is set and clock_out_at is null.
+ */
+export async function getActiveJobTimeEntries(
+  editorProfile: string,
+): Promise<JobTimeEntry[]> {
+  const client = getSupabaseServerClient();
+  const { data, error } = await client
+    .from("job_time_entries")
+    .select("*")
+    .eq("editor_profile", editorProfile)
+    .not("clock_in_at", "is", null)
+    .is("clock_out_at", null)
+    .order("clock_in_at", { ascending: false });
+
+  if (error) {
+    if (error.code === "PGRST116") return [];
+    throw new Error(`[job-time] active read failed: ${error.message}`);
+  }
+  return ((data as JobTimeEntry[]) ?? []).map(normalizeJobTimeEntry);
+}
+
 export async function upsertClockIn(
   googleEventId: string,
   editorProfile: string,
