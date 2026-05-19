@@ -54,4 +54,18 @@ describe("shouldRenderActiveClockBanner", () => {
     expect(shouldRenderActiveClockBanner(true, false, false, active)).toBe(false);
     expect(shouldRenderActiveClockBanner(false, true, false, active)).toBe(false);
   });
+
+  it("shows immediately once suppression lifts (fresh snapshot + active entry)", () => {
+    const active = makeEntry();
+    // suppressed=true: banner hidden even with a valid snapshot and active entry
+    expect(shouldRenderActiveClockBanner(true, true, true, active)).toBe(false);
+    // suppressed=false: banner shows as soon as the modal closes
+    expect(shouldRenderActiveClockBanner(true, true, false, active)).toBe(true);
+  });
+
+  it("stays hidden after suppression lifts when active route returned no rows", () => {
+    // Banner refetches when suppression lifts, but if the row was never written
+    // the refetch returns nothing and the banner must remain hidden.
+    expect(shouldRenderActiveClockBanner(true, true, false, null)).toBe(false);
+  });
 });

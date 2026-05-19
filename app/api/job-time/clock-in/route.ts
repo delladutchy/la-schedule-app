@@ -68,6 +68,8 @@ export async function POST(req: Request) {
         id: activeEntry.id,
         eventId: activeEntry.google_event_id,
         workDate: activeEntry.work_date,
+        clock_in_at: activeEntry.clock_in_at,
+        clock_out_at: activeEntry.clock_out_at,
       });
       return NextResponse.json({ entry: activeEntry });
     }
@@ -83,6 +85,7 @@ export async function POST(req: Request) {
       eventId: entry.google_event_id,
       workDate: entry.work_date,
       clock_in_at: entry.clock_in_at,
+      clock_out_at: entry.clock_out_at,
     });
     return NextResponse.json({ entry });
   } catch (error) {

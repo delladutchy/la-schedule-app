@@ -426,6 +426,10 @@ function JobTimeDayRow({
       setActionError(invalidContextError);
       return;
     }
+    console.log("[job-time:clock-in-click]", {
+      eventId: normalizedEventId,
+      workDate: normalizedWorkDate,
+    });
     setIsActionPending(true);
     setActionError(null);
     try {
@@ -438,6 +442,12 @@ function JobTimeDayRow({
       if (res.status === 503) { setActionError("Hours tracking unavailable."); return; }
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
+        console.log("[job-time:clock-in-response]", {
+          status: res.status,
+          error: errBody?.error ?? "unknown",
+          eventId: normalizedEventId,
+          workDate: normalizedWorkDate,
+        });
         if (res.status === 400 && errBody.error === "missing_work_date") {
           setActionError(invalidContextError);
         } else {
@@ -447,6 +457,15 @@ function JobTimeDayRow({
       }
       const json = await res.json() as { entry?: JobTimeEntry };
       const returnedEntry = json.entry;
+      console.log("[job-time:clock-in-response]", {
+        status: res.status,
+        hasEntry: !!returnedEntry,
+        id: returnedEntry?.id ?? null,
+        eventId: returnedEntry?.google_event_id ?? null,
+        workDate: returnedEntry?.work_date ?? null,
+        clock_in_at: returnedEntry?.clock_in_at ?? null,
+        clock_out_at: returnedEntry?.clock_out_at ?? null,
+      });
       if (returnedEntry && !!returnedEntry.clock_in_at && !returnedEntry.clock_out_at) {
         const returnedEntryId = returnedEntry.id.trim();
         setEntry(returnedEntry);
@@ -470,18 +489,23 @@ function JobTimeDayRow({
             setEntry(activeConfirmed);
             return;
           }
-          console.warn("[job-time:clock-in] diagnostic server did not confirm active row", {
+          // Neither GET nor active route confirmed the row — revert to not-clocked-in.
+          console.warn("[job-time:clock-in] server confirmation failed after write", {
             eventId: normalizedEventId,
             workDate: normalizedWorkDate,
             entryId: returnedEntryId,
           });
+          setEntry(null);
+          setActionError("Could not confirm clock-in. Try again.");
         } catch (error) {
-          console.warn("[job-time:clock-in] diagnostic refetch failed", {
+          console.warn("[job-time:clock-in] confirmation refetch threw", {
             eventId: normalizedEventId,
             workDate: normalizedWorkDate,
             entryId: returnedEntryId,
             error: error instanceof Error ? error.message : String(error),
           });
+          setEntry(null);
+          setActionError("Could not confirm clock-in. Try again.");
         }
         return;
       }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { calculateTimeHours, formatElapsed } from "@/lib/job-time-calculations";
 import type { JobTimeEntry } from "@/components/JobTimeSection";
 
@@ -95,6 +95,10 @@ export function JobTimeActiveBanner({
     requestKey,
   });
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  // Holds the latest fetch function so suppression-lift effect can call it
+  // without adding it as a dependency (avoids restarting the interval).
+  const latestFetchRef = useRef<(() => Promise<void>) | null>(null);
+  const prevSuppressedRef = useRef(suppressed);
 
   useEffect(() => {
     if (!isJeffEditor) {
@@ -175,6 +179,7 @@ export function JobTimeActiveBanner({
       }
     };
 
+    latestFetchRef.current = fetchActiveEntries;
     setEntries([]);
     setFetchState({ status: "loading", requestKey });
     void fetchActiveEntries();
@@ -198,6 +203,16 @@ export function JobTimeActiveBanner({
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
   }, [editorToken, isJeffEditor, requestKey]);
+
+  // Trigger an immediate refetch the moment the modal suppression lifts so the
+  // banner appears without waiting for the next 5-second poll interval.
+  useEffect(() => {
+    const wasSuppressed = prevSuppressedRef.current;
+    prevSuppressedRef.current = suppressed;
+    if (wasSuppressed && !suppressed && isJeffEditor) {
+      void latestFetchRef.current?.();
+    }
+  }, [suppressed, isJeffEditor]);
 
   const primaryEntry = useMemo(() => resolvePrimaryActiveEntry(entries), [entries]);
   const hasFreshServerSnapshot = fetchState.status === "ready" && fetchState.requestKey === requestKey;

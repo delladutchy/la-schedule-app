@@ -609,6 +609,49 @@ describe("POST /api/job-time/clock-in — authorization", () => {
     expect(json.error).toBe("internal_error");
     expect("entry" in json).toBe(false);
   });
+
+  it("returns complete entry with all fields clients need to confirm the write", async () => {
+    const POST = await loadClockInRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entry: Record<string, unknown> };
+    expect(json.entry).toMatchObject({
+      id: expect.any(String),
+      google_event_id: "evt1",
+      work_date: WORK_DATE,
+      editor_profile: "jeff",
+      clock_in_at: expect.any(String),
+      clock_out_at: null,
+    });
+    // id must be non-empty so clients can use it for targeted clock-out/confirmation
+    expect((json.entry.id as string).length).toBeGreaterThan(0);
+  });
+
+  it("returns 500 when DB column is missing (simulates un-run migration)", async () => {
+    const { upsertClockIn } = await import("@/lib/job-time");
+    vi.mocked(upsertClockIn).mockRejectedValueOnce(
+      new Error('column "work_date" of relation "job_time_entries" does not exist'),
+    );
+
+    const POST = await loadClockInRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(500);
+    const json = await res.json() as { error: string; entry?: unknown };
+    expect(json.error).toBe("internal_error");
+    expect("entry" in json).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
