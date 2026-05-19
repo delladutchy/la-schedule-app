@@ -13,7 +13,6 @@ import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-sess
 import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { JobTimeSection } from "@/components/JobTimeSection";
-import { JobTimeActiveBanner } from "@/components/JobTimeActiveBanner";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import {
   buildGigDayDetailsForRange,
@@ -1259,11 +1258,6 @@ export function DayBoard({
         onTouchCancel={onTouchCancel}
       >
         {weekendMarker}
-        <JobTimeActiveBanner
-          isJeffEditor={isJeffEditor}
-          editorToken={editorToken}
-          suppressed={!!activeDetailPanel || !!activeBookingPanel}
-        />
         <div className="board-empty" role="status">
           No availability rows for this range.
         </div>
@@ -1280,11 +1274,6 @@ export function DayBoard({
       onTouchCancel={onTouchCancel}
     >
       {weekendMarker}
-      <JobTimeActiveBanner
-        isJeffEditor={isJeffEditor}
-        editorToken={editorToken}
-        suppressed={!!activeDetailPanel || !!activeBookingPanel}
-      />
       {weekRows.map((week) => (
         <section
           key={week.wk.weekOf}

@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import {
   calculateTimeHours,
   formatHoursDisplay,
-  formatElapsed,
 } from "@/lib/job-time-calculations";
 
 const LIVE_CLOCK_TIMEZONE = "America/New_York";
@@ -148,6 +147,14 @@ interface RowControlState {
   showClear: boolean;
 }
 
+export type ManualRowDisplayState = "empty" | "incomplete" | "completed";
+
+export function resolveManualRowDisplayState(entry: JobTimeEntry | null): ManualRowDisplayState {
+  if (!entry?.clock_in_at) return "empty";
+  if (!entry.clock_out_at) return "incomplete";
+  return "completed";
+}
+
 export function buildClockMutationPayload(
   eventId: string,
   workDate: string,
@@ -164,13 +171,11 @@ export function buildClockMutationPayload(
 
 export function resolveRowControlState(
   entry: JobTimeEntry | null,
-  allowClockInWhenEmpty: boolean,
+  _allowClockInWhenEmpty: boolean,
 ): RowControlState {
-  const hasClockIn = !!entry?.clock_in_at;
-  const isRunning = hasClockIn && !entry?.clock_out_at;
   return {
-    showClockIn: !hasClockIn && allowClockInWhenEmpty,
-    showClockOut: isRunning,
+    showClockIn: false,
+    showClockOut: false,
     showEditTimes: true,
     showClear: !!entry,
   };
@@ -305,12 +310,11 @@ function JobTimeDayRow({
   scheduledStartTime,
   isToday,
   compact,
-  allowClockInWhenEmpty,
+  allowClockInWhenEmpty: _allowClockInWhenEmpty,
 }: DayRowProps) {
   const [entry, setEntry] = useState<JobTimeEntry | null>(() => (
     resolveRowInitialEntry(initialEntry, eventId, workDate)
   ));
-  const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [isActionPending, setIsActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
@@ -321,45 +325,14 @@ function JobTimeDayRow({
   const normalizedWorkDate = normalizeWorkDate(workDate);
   const hasValidContext = normalizedEventId.length > 0 && !!normalizedWorkDate;
   const invalidContextError = "Hours error: invalid job context for this date.";
-  const rowStateDiagnostic = entry
-    ? {
-        id: entry.id,
-        work_date: entry.work_date,
-        clock_in_at: entry.clock_in_at,
-        clock_out_at: entry.clock_out_at,
-      }
-    : null;
 
   // Sync when parent's fetch completes and provides an initial entry.
   useEffect(() => {
-    setEntry(resolveRowInitialEntry(initialEntry, normalizedEventId, workDate));
+    const resolved = resolveRowInitialEntry(initialEntry, normalizedEventId, workDate);
+    setEntry(resolved);
+    setShowEditForm(!resolved?.clock_in_at);
     setActionError(null);
-    setShowEditForm(false);
   }, [initialEntry, normalizedEventId, normalizedWorkDate, workDate]);
-
-  useEffect(() => {
-    console.log("[job-time:row] render", {
-      eventId: normalizedEventId,
-      workDate: normalizedWorkDate ?? workDate,
-      entry: rowStateDiagnostic,
-    });
-  }, [
-    normalizedEventId,
-    normalizedWorkDate,
-    workDate,
-    rowStateDiagnostic?.id,
-    rowStateDiagnostic?.work_date,
-    rowStateDiagnostic?.clock_in_at,
-    rowStateDiagnostic?.clock_out_at,
-  ]);
-
-  // Running clock — ticks every second while clocked in but not out.
-  useEffect(() => {
-    if (!entry?.clock_in_at || entry.clock_out_at) return undefined;
-    setNowMs(Date.now());
-    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [entry]);
 
   const authHeaders = buildAuthHeaders(editorToken);
   const jsonHeaders = { "Content-Type": "application/json", ...authHeaders };
@@ -378,213 +351,7 @@ function JobTimeDayRow({
     }
     const getJson = await getRes.json() as { entries?: JobTimeEntry[] };
     const entries = Array.isArray(getJson.entries) ? getJson.entries : [];
-    console.log("[job-time:get-refetch] result", {
-      eventId: normalizedEventId,
-      workDate: normalizedWorkDate,
-      rowCount: entries.length,
-      rows: entries.map((candidate) => ({
-        id: candidate.id,
-        work_date: candidate.work_date,
-        clock_out_at: candidate.clock_out_at,
-      })),
-    });
     return entries.find((candidate) => isEntryForWorkDate(candidate, normalizedEventId, normalizedWorkDate)) ?? null;
-  };
-
-  const fetchActiveEntryById = async (entryId: string): Promise<JobTimeEntry | null> => {
-    const activeRes = await fetch("/api/job-time/active", {
-      headers: authHeaders,
-      credentials: "same-origin",
-      cache: "no-store",
-    });
-    if (activeRes.status === 503) {
-      throw new Error("unavailable");
-    }
-    if (!activeRes.ok) {
-      throw new Error("failed");
-    }
-    const activeJson = await activeRes.json() as { entries?: JobTimeEntry[] };
-    const activeEntries = Array.isArray(activeJson.entries) ? activeJson.entries : [];
-    console.log("[job-time:clock-in:active-refetch] result", {
-      eventId: normalizedEventId,
-      workDate: normalizedWorkDate,
-      rowCount: activeEntries.length,
-      rows: activeEntries.map((candidate) => ({
-        id: candidate.id,
-        eventId: candidate.google_event_id,
-        work_date: candidate.work_date,
-        clock_in_at: candidate.clock_in_at,
-        clock_out_at: candidate.clock_out_at,
-      })),
-    });
-    return activeEntries.find((candidate) => candidate.id === entryId) ?? null;
-  };
-
-  const handleClockIn = async () => {
-    if (isActionPending) return;
-    if (!normalizedWorkDate || !normalizedEventId) {
-      setActionError(invalidContextError);
-      return;
-    }
-    setIsActionPending(true);
-    setActionError(null);
-    try {
-      const res = await fetch("/api/job-time/clock-in", {
-        method: "POST",
-        headers: jsonHeaders,
-        credentials: "same-origin",
-        body: JSON.stringify({ eventId: normalizedEventId, workDate: normalizedWorkDate }),
-      });
-      if (res.status === 503) { setActionError("Hours tracking unavailable."); return; }
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
-        if (res.status === 400 && errBody.error === "missing_work_date") {
-          setActionError(invalidContextError);
-        } else {
-          setActionError("Could not clock in. Try again.");
-        }
-        return;
-      }
-      const json = await res.json() as { entry?: JobTimeEntry };
-      const returnedEntry = json.entry;
-      if (returnedEntry && !!returnedEntry.clock_in_at && !returnedEntry.clock_out_at) {
-        const returnedEntryId = returnedEntry.id.trim();
-        setEntry(returnedEntry);
-        setNowMs(Date.now());
-
-        if (!returnedEntryId) return;
-
-        try {
-          const confirmed = await fetchExactWorkDateEntry();
-          if (
-            confirmed
-            && confirmed.id.trim() === returnedEntryId
-            && !!confirmed.clock_in_at
-            && !confirmed.clock_out_at
-          ) {
-            setEntry(confirmed);
-            return;
-          }
-          const activeConfirmed = await fetchActiveEntryById(returnedEntryId);
-          if (activeConfirmed && !!activeConfirmed.clock_in_at && !activeConfirmed.clock_out_at) {
-            setEntry(activeConfirmed);
-            return;
-          }
-          console.warn("[job-time:clock-in] diagnostic server did not confirm active row", {
-            eventId: normalizedEventId,
-            workDate: normalizedWorkDate,
-            entryId: returnedEntryId,
-          });
-        } catch (error) {
-          console.warn("[job-time:clock-in] diagnostic refetch failed", {
-            eventId: normalizedEventId,
-            workDate: normalizedWorkDate,
-            entryId: returnedEntryId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-        return;
-      }
-      const confirmed = await fetchExactWorkDateEntry();
-      if (
-        confirmed
-        && isEntryForWorkDate(confirmed, normalizedEventId, normalizedWorkDate)
-        && !!confirmed.clock_in_at
-        && !confirmed.clock_out_at
-      ) {
-        setEntry(confirmed);
-        setNowMs(Date.now());
-        return;
-      }
-      setActionError("Could not confirm clock-in. Try again.");
-    } catch {
-      setActionError("Network error. Try again.");
-    } finally {
-      setIsActionPending(false);
-    }
-  };
-
-  const handleClockOut = async () => {
-    if (isActionPending) return;
-    if (!normalizedWorkDate || !normalizedEventId) {
-      setActionError(invalidContextError);
-      return;
-    }
-    setIsActionPending(true);
-    setActionError(null);
-    try {
-      const payload = buildClockMutationPayload(normalizedEventId, normalizedWorkDate, entry);
-      console.log("[job-time:clock-out] request", payload);
-      const res = await fetch("/api/job-time/clock-out", {
-        method: "POST",
-        headers: jsonHeaders,
-        credentials: "same-origin",
-        body: JSON.stringify(payload),
-      });
-      if (res.status === 503) { setActionError("Hours tracking unavailable."); return; }
-      if (!res.ok) {
-        if (res.status === 404) {
-          try {
-            const confirmed = await fetchExactWorkDateEntry();
-            if (!confirmed) {
-              setEntry(null);
-              setShowEditForm(false);
-              return;
-            }
-            if (confirmed?.clock_out_at) {
-              setEntry(confirmed);
-              return;
-            }
-            if (confirmed.clock_in_at && !confirmed.clock_out_at) {
-              setEntry(confirmed);
-              setActionError("Diagnostic: server still shows an active entry for this date.");
-              return;
-            }
-          } catch { /* fall through to error */ }
-          setActionError("No active clock-in found.");
-          return;
-        }
-        const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
-        if (res.status === 400 && errBody.error === "missing_work_date") {
-          setActionError(invalidContextError);
-        } else {
-          setActionError("Could not clock out. Try again.");
-        }
-        return;
-      }
-      const json = await res.json() as { entry?: JobTimeEntry };
-      const returnedEntry = json.entry;
-      console.log("[job-time:clock-out] response", {
-        eventId: normalizedEventId,
-        workDate: normalizedWorkDate,
-        entryId: returnedEntry?.id ?? null,
-        clock_out_at: returnedEntry?.clock_out_at ?? null,
-      });
-      const confirmed = await fetchExactWorkDateEntry();
-      if (confirmed?.clock_out_at) {
-        setEntry(confirmed);
-        return;
-      }
-      if (confirmed?.clock_in_at && !confirmed.clock_out_at) {
-        console.warn("[job-time:clock-out] diagnostic active row still running after clock-out", {
-          eventId: normalizedEventId,
-          workDate: normalizedWorkDate,
-          entryId: confirmed.id,
-        });
-        setEntry(confirmed);
-        setActionError("Diagnostic: server still shows an active entry for this date.");
-        return;
-      }
-      if (returnedEntry && isEntryForWorkDate(returnedEntry, normalizedEventId, normalizedWorkDate)) {
-        setEntry(returnedEntry);
-        return;
-      }
-      setActionError("Could not confirm clock-out. Try again.");
-    } catch {
-      setActionError("Network error. Try again.");
-    } finally {
-      setIsActionPending(false);
-    }
   };
 
   const handleClear = async () => {
@@ -599,7 +366,6 @@ function JobTimeDayRow({
     setActionError(null);
     try {
       const payload = buildClockMutationPayload(normalizedEventId, normalizedWorkDate, entry);
-      console.log("[job-time:clear] request", payload);
       const res = await fetch("/api/job-time/clear", {
         method: "POST",
         headers: jsonHeaders,
@@ -613,12 +379,12 @@ function JobTimeDayRow({
             const confirmed = await fetchExactWorkDateEntry();
             if (!confirmed) {
               setEntry(null);
-              setShowEditForm(false);
+              setShowEditForm(true);
               return;
             }
             if (confirmed.clock_in_at && !confirmed.clock_out_at) {
               setEntry(confirmed);
-              setActionError("Diagnostic: server still shows an active entry for this date.");
+              setActionError("Could not clear. Try again.");
               return;
             }
             setEntry(confirmed);
@@ -635,29 +401,17 @@ function JobTimeDayRow({
         return;
       }
       const json = await res.json().catch(() => null) as { success?: boolean; workDate?: string; entryId?: string } | null;
-      console.log("[job-time:clear] response", {
-        eventId: normalizedEventId,
-        workDate: normalizedWorkDate,
-        success: !!json?.success,
-        returnedEntryId: json?.entryId ?? null,
-        returnedWorkDate: json?.workDate ?? null,
-      });
       const clearedDate = typeof json?.workDate === "string" ? normalizeWorkDate(json.workDate) : null;
       if (json?.success && (!clearedDate || clearedDate === normalizedWorkDate)) {
         const confirmed = await fetchExactWorkDateEntry();
         if (!confirmed) {
           setEntry(null);
-          setShowEditForm(false);
+          setShowEditForm(true);
           return;
         }
         if (confirmed.clock_in_at && !confirmed.clock_out_at) {
-          console.warn("[job-time:clear] diagnostic active row still running after clear", {
-            eventId: normalizedEventId,
-            workDate: normalizedWorkDate,
-            entryId: confirmed.id,
-          });
           setEntry(confirmed);
-          setActionError("Diagnostic: server still shows an active entry for this date.");
+          setActionError("Could not clear. Try again.");
           return;
         }
         setEntry(confirmed);
@@ -747,8 +501,8 @@ function JobTimeDayRow({
     }
   };
 
-  const isRunning = !!entry?.clock_in_at && !entry.clock_out_at;
-  const rowControls = resolveRowControlState(entry, allowClockInWhenEmpty);
+  const rowDisplayState = resolveManualRowDisplayState(entry);
+  const rowControls = resolveRowControlState(entry, false);
 
   const wrapClass = compact
     ? `job-time-day-row${isToday ? " job-time-day-row--today" : ""}`
@@ -791,16 +545,18 @@ function JobTimeDayRow({
           onClick={() => { void handleEditSave(); }}
           disabled={isActionPending || !editInTime}
         >
-          {isActionPending ? "Saving…" : "Save"}
+          {isActionPending ? "Saving…" : "Save Times"}
         </button>
-        <button
-          type="button"
-          className="job-time-edit-cancel"
-          onClick={() => setShowEditForm(false)}
-          disabled={isActionPending}
-        >
-          Cancel
-        </button>
+        {entry ? (
+          <button
+            type="button"
+            className="job-time-edit-cancel"
+            onClick={() => setShowEditForm(false)}
+            disabled={isActionPending}
+          >
+            Cancel
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -830,8 +586,6 @@ function JobTimeDayRow({
     </div>
   );
 
-  const btnClass = `job-time-button${compact ? " job-time-button--sm" : ""}`;
-
   if (!hasValidContext) {
     return (
       <div className={wrapClass}>
@@ -841,67 +595,31 @@ function JobTimeDayRow({
     );
   }
 
-  // ── State: not clocked in ────────────────────────────────────────────────
-  if (!entry?.clock_in_at) {
+  // ── State: empty manual entry ─────────────────────────────────────────────
+  if (rowDisplayState === "empty") {
     return (
       <div className={wrapClass}>
         {dateHeader}
-        {showEditForm ? editForm : (
-          <>
-            <p className="job-time-status job-time-status--muted">
-              {allowClockInWhenEmpty ? "Not clocked in" : "No entry for this day"}
-            </p>
-            {actionError ? <p className="job-time-error" role="alert">{actionError}</p> : null}
-            {rowControls.showClockIn ? (
-              <>
-                {/* TODO: Final production rule: limit live Clock In to NY "today" only after
-                    correction flow is fully verified in production. */}
-                <button
-                  type="button"
-                  className={`${btnClass} job-time-button--clock-in`}
-                  onClick={() => { void handleClockIn(); }}
-                  disabled={isActionPending}
-                >
-                  {isActionPending ? "Clocking in…" : "Clock In"}
-                </button>
-              </>
-            ) : null}
-            {correctionButtons}
-          </>
-        )}
+        <p className="job-time-status job-time-status--muted">No saved times for this day</p>
+        {actionError ? <p className="job-time-error" role="alert">{actionError}</p> : null}
+        {editForm}
       </div>
     );
   }
 
-  // ── State: clocked in, running ───────────────────────────────────────────
-  if (isRunning) {
-    const { totalHours } = calculateTimeHours(
-      entry.clock_in_at,
-      null,
-      new Date(nowMs).toISOString(),
-    );
+  // ── State: incomplete manual entry (In only) ─────────────────────────────
+  if (rowDisplayState === "incomplete") {
+    if (!entry?.clock_in_at) return null;
     return (
       <div className={wrapClass}>
         {dateHeader}
         {showEditForm ? editForm : (
           <>
             <p className="job-time-status">
-              Clocked in at {formatClockTime(entry.clock_in_at)}
+              In: {formatClockTime(entry.clock_in_at)}
             </p>
-            <p className="job-time-elapsed" aria-live="polite" aria-atomic="true">
-              {formatElapsed(totalHours)}
-            </p>
+            <p className="job-time-status job-time-status--muted">Incomplete — add Out time</p>
             {actionError ? <p className="job-time-error" role="alert">{actionError}</p> : null}
-            {rowControls.showClockOut ? (
-              <button
-                type="button"
-                className={`${btnClass} job-time-button--clock-out`}
-                onClick={() => { void handleClockOut(); }}
-                disabled={isActionPending}
-              >
-                {isActionPending ? "Clocking out…" : "Clock Out"}
-              </button>
-            ) : null}
             {correctionButtons}
           </>
         )}
@@ -911,7 +629,7 @@ function JobTimeDayRow({
 
   // ── State: completed ─────────────────────────────────────────────────────
   // Guard narrows clock_in_at / clock_out_at to string for TypeScript.
-  if (!entry.clock_in_at || !entry.clock_out_at) return null;
+  if (!entry?.clock_in_at || !entry.clock_out_at) return null;
   const { totalHours, regularHours, overtimeHours } = calculateTimeHours(
     entry.clock_in_at,
     entry.clock_out_at,
@@ -967,7 +685,6 @@ export function JobTimeSection({
 }: Props) {
   const requestKey = buildJobTimeRequestKey(eventId, workDates);
   const fetchEventIdsKey = buildFetchEventIds(eventId, workDates, eventIdsByWorkDate).join("|");
-  const fetchEventIdsForLog = fetchEventIdsKey ? fetchEventIdsKey.split("|") : [];
   const [fetchState, setFetchState] = useState<SectionFetchState>({
     status: "loading",
     requestKey,
@@ -977,9 +694,7 @@ export function JobTimeSection({
   const today = getTodayDateInTimeZone(LIVE_CLOCK_TIMEZONE);
   const {
     isSingleDay,
-    hasTodayInWorkDates,
     orderedWorkDates,
-    primaryLiveWorkDate,
   } = resolveJobTimeDisplayRows(workDates, today);
 
   useEffect(() => {
@@ -1000,7 +715,7 @@ export function JobTimeSection({
           credentials: "same-origin",
           cache: "no-store",
         });
-        return { queryEventId, res };
+        return { res };
       }),
     )
       .then(async (responses) => {
@@ -1009,7 +724,7 @@ export function JobTimeSection({
         let failed = false;
         const allEntries: JobTimeEntry[] = [];
 
-        for (const { queryEventId, res } of responses) {
+        for (const { res } of responses) {
           if (res.status === 503) {
             unavailable = true;
             break;
@@ -1021,18 +736,6 @@ export function JobTimeSection({
           const json = await res.json() as { entries: JobTimeEntry[] };
           const entries = Array.isArray(json.entries) ? json.entries : [];
           allEntries.push(...entries);
-          console.log("[job-time:get-initial] result", {
-            eventId: queryEventId,
-            requestKey,
-            rowCount: entries.length,
-            rows: entries.map((candidate) => ({
-              id: candidate.id,
-              eventId: candidate.google_event_id,
-              work_date: candidate.work_date,
-              clock_in_at: candidate.clock_in_at,
-              clock_out_at: candidate.clock_out_at,
-            })),
-          });
         }
 
         if (cancelled) return;
@@ -1058,50 +761,6 @@ export function JobTimeSection({
 
     return () => { cancelled = true; };
   }, [editorToken, fetchEventIdsKey, requestKey]);
-
-  const runningRendered = Array.from(entriesMap.values()).some(
-    (entry) => !!entry.clock_in_at && !entry.clock_out_at,
-  );
-
-  useEffect(() => {
-    console.log("[job-time:section-render]", {
-      source: "server",
-      eventId: eventId.trim(),
-      workDates,
-      fetchEventIds: fetchEventIdsForLog,
-      eventIdsByWorkDate,
-      entriesLength: entriesMap.size,
-      fetchStatus: fetchState.status,
-      runningRendered: fetchState.status === "ready" ? runningRendered : false,
-    });
-  }, [
-    eventId,
-    workDates,
-    fetchEventIdsKey,
-    eventIdsByWorkDate,
-    entriesMap.size,
-    fetchState.status,
-    runningRendered,
-  ]);
-
-  useEffect(() => {
-    if (fetchState.requestKey !== requestKey || fetchState.status !== "ready") return;
-    const mapKeys = Array.from(entriesMap.keys());
-    console.log("[JobTimeSection reopen]", {
-      source: "server",
-      eventId: eventId.trim(),
-      workDates,
-      entriesLength: entriesMap.size,
-      mapKeys,
-      rows: Array.from(entriesMap.values()).map((entry) => ({
-        id: entry.id,
-        eventId: entry.google_event_id,
-        workDate: entry.work_date,
-        clockInAt: entry.clock_in_at,
-        clockOutAt: entry.clock_out_at,
-      })),
-    });
-  }, [entriesMap, eventId, fetchState.requestKey, fetchState.status, requestKey, workDates]);
 
   if (fetchState.requestKey !== requestKey || fetchState.status === "loading") {
     return (
@@ -1162,13 +821,10 @@ export function JobTimeSection({
           scheduledStartTime={singleDayScheduledStart}
           isToday={workDates[0] === today}
           compact={false}
-          allowClockInWhenEmpty={workDates[0] === today}
+          allowClockInWhenEmpty={false}
         />
       ) : (
         <div className="job-time-days-list">
-          {!hasTodayInWorkDates ? (
-            <p className="job-time-status job-time-status--muted">No live clock-in available today.</p>
-          ) : null}
           {orderedWorkDates.map((date) => {
             const rowEntry = entriesMap.get(date) ?? null;
             const rowEventId = resolveEventIdForWorkDate(date, eventId, eventIdsByWorkDate);
@@ -1189,7 +845,7 @@ export function JobTimeSection({
                 scheduledStartTime={resolveScheduledStartTimeForWorkDate(date, scheduledStartTimesByWorkDate)}
                 isToday={date === today}
                 compact={true}
-                allowClockInWhenEmpty={date === primaryLiveWorkDate}
+                allowClockInWhenEmpty={false}
               />
             );
           })}

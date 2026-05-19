@@ -6,6 +6,7 @@ import {
   resolveEditFormDefaults,
   resolveEventIdForWorkDate,
   resolveJobTimeDisplayRows,
+  resolveManualRowDisplayState,
   resolveRowControlState,
   resolveScheduledStartTimeForWorkDate,
   resolveRowInitialEntry,
@@ -152,7 +153,7 @@ describe("resolveEventIdForWorkDate", () => {
 });
 
 describe("resolveRowControlState", () => {
-  it("does not show Clock In for empty non-today/non-primary rows", () => {
+  it("never shows live clock buttons in manual mode", () => {
     const state = resolveRowControlState(null, false);
     expect(state).toEqual({
       showClockIn: false,
@@ -162,14 +163,28 @@ describe("resolveRowControlState", () => {
     });
   });
 
-  it("keeps recovery controls for active non-today rows", () => {
+  it("still shows edit + clear controls for saved entries", () => {
     const state = resolveRowControlState(makeEntry({ clock_out_at: null }), false);
     expect(state).toEqual({
       showClockIn: false,
-      showClockOut: true,
+      showClockOut: false,
       showEditTimes: true,
       showClear: true,
     });
+  });
+});
+
+describe("resolveManualRowDisplayState", () => {
+  it("marks missing entry as empty", () => {
+    expect(resolveManualRowDisplayState(null)).toBe("empty");
+  });
+
+  it("marks In-only entry as incomplete", () => {
+    expect(resolveManualRowDisplayState(makeEntry({ clock_out_at: null }))).toBe("incomplete");
+  });
+
+  it("marks In+Out entry as completed", () => {
+    expect(resolveManualRowDisplayState(makeEntry({ clock_out_at: "2026-05-20T18:00:00.000Z" }))).toBe("completed");
   });
 });
 
