@@ -132,6 +132,7 @@ vi.mock("@/lib/job-time", () => ({
     clock_in_at: clockInAt,
     clock_out_at: clockOutAt,
   })),
+  closeAllRemainingActiveEntries: vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -725,6 +726,61 @@ describe("POST /api/job-time/clock-out — authorization", () => {
       }),
     );
     expect(res.status).toBe(403);
+  });
+
+  it("sweeps all other active Jeff rows after primary clock-out by eventId+workDate", async () => {
+    const { upsertClockOut, closeAllRemainingActiveEntries } = await import("@/lib/job-time");
+    const primary = { ...makeClockOutEntry(WORK_DATE), id: "row-primary", clock_out_at: "2026-05-18T18:00:00.000Z" };
+    vi.mocked(upsertClockOut).mockResolvedValueOnce(primary);
+
+    const POST = await loadClockOutRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(closeAllRemainingActiveEntries).toHaveBeenCalledWith("jeff", primary.clock_out_at, primary.id);
+    const json = await res.json() as { entry: { id: string } };
+    expect(json.entry.id).toBe("row-primary");
+  });
+
+  it("sweeps all other active Jeff rows after primary clock-out by entry id", async () => {
+    const { upsertClockOutById, closeAllRemainingActiveEntries } = await import("@/lib/job-time");
+    const primary = { ...makeClockOutEntry(WORK_DATE), id: "row-target", clock_out_at: "2026-05-18T17:30:00.000Z" };
+    vi.mocked(upsertClockOutById).mockResolvedValueOnce(primary);
+
+    const POST = await loadClockOutRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ entryId: "row-target", eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(closeAllRemainingActiveEntries).toHaveBeenCalledWith("jeff", primary.clock_out_at, primary.id);
+  });
+
+  it("still returns success even when the sweep itself fails", async () => {
+    const { upsertClockOut, closeAllRemainingActiveEntries } = await import("@/lib/job-time");
+    vi.mocked(closeAllRemainingActiveEntries).mockRejectedValueOnce(new Error("sweep db error"));
+    const primary = { ...makeClockOutEntry(WORK_DATE), id: "row-ok" };
+    vi.mocked(upsertClockOut).mockResolvedValueOnce(primary);
+
+    const POST = await loadClockOutRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entry: { id: string } };
+    expect(json.entry.id).toBe("row-ok");
   });
 });
 

@@ -221,6 +221,35 @@ export async function upsertClockOutById(
   return data ? normalizeJobTimeEntry(data) : null;
 }
 
+/**
+ * Close all remaining active entries for an editor profile after a clock-out.
+ * Sweeps orphaned rows that were left open (e.g. from stale test data or prior bugs).
+ * Uses the same clock_out_at timestamp as the primary entry for consistency.
+ * Does not modify already-completed rows (clock_out_at IS NOT NULL).
+ * Returns the count of additional rows closed.
+ */
+export async function closeAllRemainingActiveEntries(
+  editorProfile: string,
+  clockOutAt: string,
+  excludeId: string | null,
+): Promise<number> {
+  const client = getSupabaseServerClient();
+  let query = client
+    .from("job_time_entries")
+    .update({ clock_out_at: clockOutAt, updated_at: clockOutAt })
+    .eq("editor_profile", editorProfile)
+    .not("clock_in_at", "is", null)
+    .is("clock_out_at", null);
+
+  if (excludeId) {
+    query = query.neq("id", excludeId);
+  }
+
+  const { data, error } = await query.select("id");
+  if (error) throw new Error(`[job-time] sweep active failed: ${error.message}`);
+  return (data as Array<{ id: string }> | null)?.length ?? 0;
+}
+
 export async function deleteJobTimeEntry(
   googleEventId: string,
   editorProfile: string,

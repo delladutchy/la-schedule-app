@@ -7,6 +7,7 @@ import {
 import {
   upsertClockOut,
   upsertClockOutById,
+  closeAllRemainingActiveEntries,
   isJeffEditorId,
   normalizeEntryIdFromUnknown,
   normalizeEditorProfile,
@@ -94,6 +95,23 @@ export async function POST(req: Request) {
       workDate: entry.work_date,
       clock_out_at: entry.clock_out_at,
     });
+
+    // Sweep any other active Jeff rows with the same clock_out_at timestamp.
+    // Jeff can only have one active clock at a time; stale open rows are bugs.
+    // Best-effort: a sweep failure does not roll back the primary clock-out.
+    try {
+      const swept = await closeAllRemainingActiveEntries(
+        editorProfile,
+        entry.clock_out_at!,
+        entry.id,
+      );
+      if (swept > 0) {
+        console.log("[job-time:clock-out] swept_orphaned_active_rows", { swept, primaryId: entry.id });
+      }
+    } catch (sweepErr) {
+      console.error("[job-time:clock-out] sweep_failed", sweepErr instanceof Error ? sweepErr.message : sweepErr);
+    }
+
     return NextResponse.json({ entry });
   } catch (error) {
     if (error instanceof SupabaseConfigError) {
