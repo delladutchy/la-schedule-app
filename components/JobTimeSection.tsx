@@ -33,6 +33,7 @@ interface Props {
   eventId: string;
   workDates: string[]; // YYYY-MM-DD, at least 1
   editorToken: string | null;
+  scheduledStartTimesByWorkDate?: Record<string, string | null | undefined>;
 }
 
 export function resolveJobTimeDisplayRows(workDates: string[], today: string): {
@@ -54,6 +55,82 @@ export function resolveJobTimeDisplayRows(workDates: string[], today: string): {
 
 function buildJobTimeRequestKey(eventId: string, workDates: string[]): string {
   return `${eventId.trim()}::${workDates.join("|")}`;
+}
+
+export function resolveScheduledStartTimeForWorkDate(
+  workDate: string,
+  scheduledStartTimesByWorkDate?: Record<string, string | null | undefined>,
+): string | null {
+  if (!scheduledStartTimesByWorkDate) return null;
+  const normalizedWorkDate = normalizeWorkDate(workDate);
+  if (!normalizedWorkDate) return null;
+  const raw = scheduledStartTimesByWorkDate[normalizedWorkDate];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function parseScheduledStartTimeToHHMM(rawStartTime: string | null | undefined): string {
+  if (!rawStartTime) return "";
+  const trimmed = rawStartTime.trim();
+  if (!trimmed) return "";
+
+  const twentyFourHourMatch = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(trimmed);
+  if (twentyFourHourMatch) {
+    const hours = Number(twentyFourHourMatch[1] ?? 0);
+    const minutes = Number(twentyFourHourMatch[2] ?? 0);
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  }
+
+  const twelveHourMatch = /^(\d{1,2})(?::([0-5]\d))?\s*([AaPp][Mm])$/.exec(trimmed);
+  if (!twelveHourMatch) return "";
+
+  const rawHours = Number(twelveHourMatch[1] ?? 0);
+  const rawMinutes = Number(twelveHourMatch[2] ?? "00");
+  const meridiem = (twelveHourMatch[3] ?? "").toUpperCase();
+  if (!Number.isFinite(rawHours) || rawHours < 1 || rawHours > 12) return "";
+  if (!Number.isFinite(rawMinutes) || rawMinutes < 0 || rawMinutes > 59) return "";
+
+  let hours24 = rawHours % 12;
+  if (meridiem === "PM") hours24 += 12;
+  return `${String(hours24).padStart(2, "0")}:${String(rawMinutes).padStart(2, "0")}`;
+}
+
+export function resolveEditFormDefaults(
+  entry: JobTimeEntry | null,
+  scheduledStartTime: string | null | undefined,
+): { inTime: string; outTime: string } {
+  if (entry?.clock_in_at) {
+    return {
+      inTime: isoToLocalHHMM(entry.clock_in_at),
+      outTime: entry.clock_out_at ? isoToLocalHHMM(entry.clock_out_at) : "",
+    };
+  }
+  return {
+    inTime: parseScheduledStartTimeToHHMM(scheduledStartTime),
+    outTime: "",
+  };
+}
+
+interface RowControlState {
+  showClockIn: boolean;
+  showClockOut: boolean;
+  showEditTimes: boolean;
+  showClear: boolean;
+}
+
+export function resolveRowControlState(
+  entry: JobTimeEntry | null,
+  allowClockInWhenEmpty: boolean,
+): RowControlState {
+  const hasClockIn = !!entry?.clock_in_at;
+  const isRunning = hasClockIn && !entry?.clock_out_at;
+  return {
+    showClockIn: !hasClockIn && allowClockInWhenEmpty,
+    showClockOut: isRunning,
+    showEditTimes: true,
+    showClear: !!entry,
+  };
 }
 
 export function resolveRowInitialEntry(
@@ -171,6 +248,7 @@ interface DayRowProps {
   workDate: string;
   editorToken: string | null;
   initialEntry: JobTimeEntry | null;
+  scheduledStartTime: string | null;
   isToday: boolean;
   compact: boolean; // false = single-day full-size; true = multi-day compact card
   allowClockInWhenEmpty: boolean;
@@ -181,6 +259,7 @@ function JobTimeDayRow({
   workDate,
   editorToken,
   initialEntry,
+  scheduledStartTime,
   isToday,
   compact,
   allowClockInWhenEmpty,
@@ -461,8 +540,9 @@ function JobTimeDayRow({
   };
 
   const openEditForm = () => {
-    setEditInTime(entry?.clock_in_at ? isoToLocalHHMM(entry.clock_in_at) : "");
-    setEditOutTime(entry?.clock_out_at ? isoToLocalHHMM(entry.clock_out_at) : "");
+    const defaults = resolveEditFormDefaults(entry, scheduledStartTime);
+    setEditInTime(defaults.inTime);
+    setEditOutTime(defaults.outTime);
     setEditError(null);
     setShowEditForm(true);
   };
@@ -534,8 +614,8 @@ function JobTimeDayRow({
     }
   };
 
-  const hasEntry = !!entry;
   const isRunning = !!entry?.clock_in_at && !entry.clock_out_at;
+  const rowControls = resolveRowControlState(entry, allowClockInWhenEmpty);
 
   const wrapClass = compact
     ? `job-time-day-row${isToday ? " job-time-day-row--today" : ""}`
@@ -594,15 +674,17 @@ function JobTimeDayRow({
 
   const correctionButtons = (
     <div className="job-time-correction-buttons">
-      <button
-        type="button"
-        className="job-time-correction-link"
-        onClick={openEditForm}
-        disabled={isActionPending}
-      >
-        Edit times
-      </button>
-      {hasEntry ? (
+      {rowControls.showEditTimes ? (
+        <button
+          type="button"
+          className="job-time-correction-link"
+          onClick={openEditForm}
+          disabled={isActionPending}
+        >
+          Edit times
+        </button>
+      ) : null}
+      {rowControls.showClear ? (
         <button
           type="button"
           className="job-time-correction-link job-time-correction-link--danger"
@@ -637,7 +719,7 @@ function JobTimeDayRow({
               {allowClockInWhenEmpty ? "Not clocked in" : "No entry for this day"}
             </p>
             {actionError ? <p className="job-time-error" role="alert">{actionError}</p> : null}
-            {allowClockInWhenEmpty ? (
+            {rowControls.showClockIn ? (
               <>
                 {/* TODO: Final production rule: limit live Clock In to NY "today" only after
                     correction flow is fully verified in production. */}
@@ -677,14 +759,16 @@ function JobTimeDayRow({
               {formatElapsed(totalHours)}
             </p>
             {actionError ? <p className="job-time-error" role="alert">{actionError}</p> : null}
-            <button
-              type="button"
-              className={`${btnClass} job-time-button--clock-out`}
-              onClick={() => { void handleClockOut(); }}
-              disabled={isActionPending}
-            >
-              {isActionPending ? "Clocking out…" : "Clock Out"}
-            </button>
+            {rowControls.showClockOut ? (
+              <button
+                type="button"
+                className={`${btnClass} job-time-button--clock-out`}
+                onClick={() => { void handleClockOut(); }}
+                disabled={isActionPending}
+              >
+                {isActionPending ? "Clocking out…" : "Clock Out"}
+              </button>
+            ) : null}
             {correctionButtons}
           </>
         )}
@@ -741,7 +825,12 @@ function JobTimeDayRow({
 // JobTimeSection — outer container, bulk-fetches then renders day rows
 // ---------------------------------------------------------------------------
 
-export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
+export function JobTimeSection({
+  eventId,
+  workDates,
+  editorToken,
+  scheduledStartTimesByWorkDate,
+}: Props) {
   const requestKey = buildJobTimeRequestKey(eventId, workDates);
   const [fetchState, setFetchState] = useState<SectionFetchState>({
     status: "loading",
@@ -870,6 +959,9 @@ export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
       ? "running"
       : "empty";
   const singleDayKey = `${eventId}:${workDates[0] ?? "none"}:${singleDayEntry?.id ?? "none"}:${singleDayStatus}`;
+  const singleDayScheduledStart = workDates[0]
+    ? resolveScheduledStartTimeForWorkDate(workDates[0], scheduledStartTimesByWorkDate)
+    : null;
 
   return (
     <div className="job-time-section">
@@ -881,9 +973,10 @@ export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
           workDate={workDates[0]!}
           editorToken={editorToken}
           initialEntry={singleDayEntry}
+          scheduledStartTime={singleDayScheduledStart}
           isToday={workDates[0] === today}
           compact={false}
-          allowClockInWhenEmpty={true}
+          allowClockInWhenEmpty={workDates[0] === today}
         />
       ) : (
         <div className="job-time-days-list">
@@ -905,6 +998,7 @@ export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
                 workDate={date}
                 editorToken={editorToken}
                 initialEntry={rowEntry}
+                scheduledStartTime={resolveScheduledStartTimeForWorkDate(date, scheduledStartTimesByWorkDate)}
                 isToday={date === today}
                 compact={true}
                 allowClockInWhenEmpty={date === primaryLiveWorkDate}

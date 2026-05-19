@@ -1047,6 +1047,10 @@ export function MonthBoard({
     }
     return rows;
   })();
+  const jobTimeScheduledStartByWorkDate = activeDetailDayRows.reduce<Record<string, string | null>>((acc, row) => {
+    acc[row.date] = row.startTime ?? null;
+    return acc;
+  }, {});
   const activeDetailOverallNotes = (() => {
     if (!activeDetailPanel) return null;
     for (const detail of activeDetailPanel.details) {
@@ -1503,11 +1507,12 @@ export function MonthBoard({
                     </a>
                   </>
                 ) : null}
-                {(isJeffEditor || !!editorToken) && activeJobTimeDetail?.eventId && jobTimeWorkDates.length > 0 ? (
+                {isJeffEditor && activeJobTimeDetail?.eventId && jobTimeWorkDates.length > 0 ? (
                   <JobTimeSection
                     eventId={activeJobTimeDetail.eventId}
                     workDates={jobTimeWorkDates}
                     editorToken={editorToken}
+                    scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
                   />
                 ) : null}
               </div>

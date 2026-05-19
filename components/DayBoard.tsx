@@ -1131,6 +1131,10 @@ export function DayBoard({
       return { date, startTime, dayNotes };
     });
   })();
+  const jobTimeScheduledStartByWorkDate = activeDetailDayRows.reduce<Record<string, string | null>>((acc, row) => {
+    acc[row.date] = row.startTime ?? null;
+    return acc;
+  }, {});
   const activeDetailOverallNotes = (() => {
     if (!activeDetailPanel) return null;
     for (const detail of activeDetailPanel.details) {
@@ -1566,11 +1570,12 @@ export function DayBoard({
                     </a>
                   </>
                 ) : null}
-                {(isJeffEditor || !!editorToken) && activePrimaryDetail?.eventId && jobTimeWorkDates.length > 0 ? (
+                {isJeffEditor && activePrimaryDetail?.eventId && jobTimeWorkDates.length > 0 ? (
                   <JobTimeSection
                     eventId={activePrimaryDetail.eventId}
                     workDates={jobTimeWorkDates}
                     editorToken={editorToken}
+                    scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
                   />
                 ) : null}
                 {activeDetailPanel.details.length > 1 ? (
