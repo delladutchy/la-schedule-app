@@ -24,10 +24,10 @@ export interface JobTimeEntry {
 }
 
 type SectionFetchState =
-  | { status: "loading" }
-  | { status: "unavailable" }
-  | { status: "error" }
-  | { status: "ready" };
+  | { status: "loading"; requestKey: string }
+  | { status: "unavailable"; requestKey: string }
+  | { status: "error"; requestKey: string }
+  | { status: "ready"; requestKey: string };
 
 interface Props {
   eventId: string;
@@ -50,6 +50,32 @@ export function resolveJobTimeDisplayRows(workDates: string[], today: string): {
     ? (workDates[0] ?? null)
     : (hasTodayInWorkDates ? today : null);
   return { isSingleDay, hasTodayInWorkDates, orderedWorkDates, primaryLiveWorkDate };
+}
+
+function buildJobTimeRequestKey(eventId: string, workDates: string[]): string {
+  return `${eventId.trim()}::${workDates.join("|")}`;
+}
+
+export function resolveRowInitialEntry(
+  initialEntry: JobTimeEntry | null,
+  eventId: string,
+  workDate: string,
+): JobTimeEntry | null {
+  const normalizedWorkDate = normalizeWorkDate(workDate);
+  if (!initialEntry || !normalizedWorkDate) return null;
+  return isEntryForWorkDate(initialEntry, eventId.trim(), normalizedWorkDate)
+    ? initialEntry
+    : null;
+}
+
+export function buildEntriesMapFromResponse(entries: JobTimeEntry[]): Map<string, JobTimeEntry> {
+  const map = new Map<string, JobTimeEntry>();
+  for (const entry of entries) {
+    const normalized = normalizeWorkDate(entry.work_date);
+    if (!normalized) continue;
+    map.set(normalized, { ...entry, work_date: normalized });
+  }
+  return map;
 }
 
 function buildAuthHeaders(editorToken: string | null): Record<string, string> {
@@ -159,7 +185,9 @@ function JobTimeDayRow({
   compact,
   allowClockInWhenEmpty,
 }: DayRowProps) {
-  const [entry, setEntry] = useState<JobTimeEntry | null>(initialEntry);
+  const [entry, setEntry] = useState<JobTimeEntry | null>(() => (
+    resolveRowInitialEntry(initialEntry, eventId, workDate)
+  ));
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [isActionPending, setIsActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -182,18 +210,10 @@ function JobTimeDayRow({
 
   // Sync when parent's fetch completes and provides an initial entry.
   useEffect(() => {
-    if (
-      initialEntry
-      && normalizedWorkDate
-      && isEntryForWorkDate(initialEntry, normalizedEventId, normalizedWorkDate)
-    ) {
-      setEntry(initialEntry);
-    } else {
-      setEntry(null);
-    }
+    setEntry(resolveRowInitialEntry(initialEntry, normalizedEventId, workDate));
     setActionError(null);
     setShowEditForm(false);
-  }, [initialEntry, normalizedEventId, normalizedWorkDate]);
+  }, [initialEntry, normalizedEventId, normalizedWorkDate, workDate]);
 
   useEffect(() => {
     console.log("[job-time:row] render", {
@@ -722,7 +742,11 @@ function JobTimeDayRow({
 // ---------------------------------------------------------------------------
 
 export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
-  const [fetchState, setFetchState] = useState<SectionFetchState>({ status: "loading" });
+  const requestKey = buildJobTimeRequestKey(eventId, workDates);
+  const [fetchState, setFetchState] = useState<SectionFetchState>({
+    status: "loading",
+    requestKey,
+  });
   const [entriesMap, setEntriesMap] = useState<Map<string, JobTimeEntry>>(() => new Map());
 
   const today = getTodayDateInTimeZone(LIVE_CLOCK_TIMEZONE);
@@ -734,9 +758,13 @@ export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
   } = resolveJobTimeDisplayRows(workDates, today);
 
   useEffect(() => {
-    if (workDates.length === 0) { setFetchState({ status: "ready" }); return undefined; }
+    if (workDates.length === 0) {
+      setEntriesMap(new Map());
+      setFetchState({ status: "ready", requestKey });
+      return undefined;
+    }
 
-    setFetchState({ status: "loading" });
+    setFetchState({ status: "loading", requestKey });
     setEntriesMap(new Map());
     let cancelled = false;
 
@@ -747,31 +775,43 @@ export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
     })
       .then(async (res) => {
         if (cancelled) return;
-        if (res.status === 503) { setFetchState({ status: "unavailable" }); return; }
-        if (!res.ok) { setFetchState({ status: "error" }); return; }
+        if (res.status === 503) {
+          setFetchState({ status: "unavailable", requestKey });
+          return;
+        }
+        if (!res.ok) {
+          setFetchState({ status: "error", requestKey });
+          return;
+        }
         const json = await res.json() as { entries: JobTimeEntry[] };
         if (!cancelled) {
-          const map = new Map<string, JobTimeEntry>();
-          for (const e of json.entries) {
-            const normalized = normalizeWorkDate(e.work_date);
-            if (!normalized) continue;
-            map.set(normalized, { ...e, work_date: normalized });
-          }
-          setEntriesMap(map);
-          setFetchState({ status: "ready" });
+          const entries = Array.isArray(json.entries) ? json.entries : [];
+          console.log("[job-time:get-initial] result", {
+            eventId: eventId.trim(),
+            requestKey,
+            rowCount: entries.length,
+            rows: entries.map((candidate) => ({
+              id: candidate.id,
+              work_date: candidate.work_date,
+              clock_out_at: candidate.clock_out_at,
+            })),
+          });
+          setEntriesMap(buildEntriesMapFromResponse(entries));
+          setFetchState({ status: "ready", requestKey });
         }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
           console.error("[JobTimeSection] GET fetch error:", err);
-          setFetchState({ status: "error" });
+          setEntriesMap(new Map());
+          setFetchState({ status: "error", requestKey });
         }
       });
 
     return () => { cancelled = true; };
-  }, [eventId, editorToken, workDates]);
+  }, [eventId, editorToken, requestKey]);
 
-  if (fetchState.status === "loading") {
+  if (fetchState.requestKey !== requestKey || fetchState.status === "loading") {
     return (
       <div className="job-time-section">
         <p className="board-day-modal-event-label">Hours</p>
@@ -802,16 +842,24 @@ export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
 
   if (workDates.length === 0) return null;
 
+  const singleDayEntry = workDates[0] ? (entriesMap.get(workDates[0]) ?? null) : null;
+  const singleDayStatus = singleDayEntry?.clock_out_at
+    ? "completed"
+    : singleDayEntry?.clock_in_at
+      ? "running"
+      : "empty";
+  const singleDayKey = `${eventId}:${workDates[0] ?? "none"}:${singleDayEntry?.id ?? "none"}:${singleDayStatus}`;
+
   return (
     <div className="job-time-section">
       <p className="board-day-modal-event-label">Hours</p>
       {isSingleDay ? (
         <JobTimeDayRow
-          key={workDates[0]}
+          key={singleDayKey}
           eventId={eventId}
           workDate={workDates[0]!}
           editorToken={editorToken}
-          initialEntry={entriesMap.get(workDates[0]!) ?? null}
+          initialEntry={singleDayEntry}
           isToday={workDates[0] === today}
           compact={false}
           allowClockInWhenEmpty={true}
@@ -821,18 +869,27 @@ export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
           {!hasTodayInWorkDates ? (
             <p className="job-time-status job-time-status--muted">No live clock-in available today.</p>
           ) : null}
-          {orderedWorkDates.map((date) => (
-            <JobTimeDayRow
-              key={date}
-              eventId={eventId}
-              workDate={date}
-              editorToken={editorToken}
-              initialEntry={entriesMap.get(date) ?? null}
-              isToday={date === today}
-              compact={true}
-              allowClockInWhenEmpty={date === primaryLiveWorkDate}
-            />
-          ))}
+          {orderedWorkDates.map((date) => {
+            const rowEntry = entriesMap.get(date) ?? null;
+            const rowStatus = rowEntry?.clock_out_at
+              ? "completed"
+              : rowEntry?.clock_in_at
+                ? "running"
+                : "empty";
+            const rowKey = `${eventId}:${date}:${rowEntry?.id ?? "none"}:${rowStatus}`;
+            return (
+              <JobTimeDayRow
+                key={rowKey}
+                eventId={eventId}
+                workDate={date}
+                editorToken={editorToken}
+                initialEntry={rowEntry}
+                isToday={date === today}
+                compact={true}
+                allowClockInWhenEmpty={date === primaryLiveWorkDate}
+              />
+            );
+          })}
         </div>
       )}
     </div>
