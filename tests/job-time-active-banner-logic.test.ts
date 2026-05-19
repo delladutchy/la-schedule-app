@@ -42,15 +42,16 @@ describe("resolvePrimaryActiveEntry", () => {
 describe("shouldRenderActiveClockBanner", () => {
   it("shows for Jeff when an active entry exists", () => {
     const active = makeEntry();
-    expect(shouldRenderActiveClockBanner(true, false, active)).toBe(true);
+    expect(shouldRenderActiveClockBanner(true, true, false, active)).toBe(true);
   });
 
-  it("hides when there is no active entry or banner is suppressed", () => {
+  it("hides when there is no fresh server snapshot, no active entry, or banner is suppressed", () => {
     const active = makeEntry();
     const completed = makeEntry({ clock_out_at: "2026-05-20T16:00:00.000Z" });
-    expect(shouldRenderActiveClockBanner(true, false, null)).toBe(false);
-    expect(shouldRenderActiveClockBanner(true, false, completed)).toBe(false);
-    expect(shouldRenderActiveClockBanner(true, true, active)).toBe(false);
-    expect(shouldRenderActiveClockBanner(false, false, active)).toBe(false);
+    expect(shouldRenderActiveClockBanner(true, true, false, null)).toBe(false);
+    expect(shouldRenderActiveClockBanner(true, true, false, completed)).toBe(false);
+    expect(shouldRenderActiveClockBanner(true, true, true, active)).toBe(false);
+    expect(shouldRenderActiveClockBanner(true, false, false, active)).toBe(false);
+    expect(shouldRenderActiveClockBanner(false, true, false, active)).toBe(false);
   });
 });

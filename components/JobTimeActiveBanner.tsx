@@ -16,6 +16,11 @@ interface Props {
   suppressed?: boolean;
 }
 
+type ActiveBannerFetchState =
+  | { status: "loading"; requestKey: string }
+  | { status: "error"; requestKey: string }
+  | { status: "ready"; requestKey: string };
+
 function buildAuthHeaders(editorToken: string | null): Record<string, string> {
   if (editorToken) return { Authorization: `Bearer ${editorToken}` };
   return {};
@@ -34,10 +39,17 @@ export function resolvePrimaryActiveEntry(entries: JobTimeEntry[]): JobTimeEntry
 
 export function shouldRenderActiveClockBanner(
   isJeffEditor: boolean,
+  hasFreshServerSnapshot: boolean,
   suppressed: boolean,
   primaryEntry: JobTimeEntry | null,
 ): boolean {
-  return !!(isJeffEditor && !suppressed && primaryEntry?.clock_in_at && !primaryEntry.clock_out_at);
+  return !!(
+    isJeffEditor
+    && hasFreshServerSnapshot
+    && !suppressed
+    && primaryEntry?.clock_in_at
+    && !primaryEntry.clock_out_at
+  );
 }
 
 function formatBannerWorkDate(isoDate: string): string {
@@ -62,12 +74,18 @@ export function JobTimeActiveBanner({
   editorToken,
   suppressed = false,
 }: Props) {
+  const requestKey = `${isJeffEditor ? "jeff" : "other"}::${editorToken ?? "none"}`;
   const [entries, setEntries] = useState<JobTimeEntry[]>([]);
+  const [fetchState, setFetchState] = useState<ActiveBannerFetchState>({
+    status: "loading",
+    requestKey,
+  });
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   useEffect(() => {
     if (!isJeffEditor) {
       setEntries([]);
+      setFetchState({ status: "ready", requestKey });
       return undefined;
     }
 
@@ -85,21 +103,63 @@ export function JobTimeActiveBanner({
 
         if (res.status === 401 || res.status === 403) {
           setEntries([]);
+          setFetchState({ status: "error", requestKey });
+          console.warn("[job-time:active-banner:get]", {
+            source: "server",
+            requestKey,
+            entriesLength: 0,
+            status: res.status,
+            runningRendered: false,
+          });
           return;
         }
         if (!res.ok) {
           setEntries([]);
+          setFetchState({ status: "error", requestKey });
+          console.warn("[job-time:active-banner:get]", {
+            source: "server",
+            requestKey,
+            entriesLength: 0,
+            status: res.status,
+            runningRendered: false,
+          });
           return;
         }
 
         const json = await res.json() as ActiveEntriesResponse;
         const rows = Array.isArray(json.entries) ? json.entries : [];
-        setEntries(rows.filter(isRunningEntry));
+        const activeRows = rows.filter(isRunningEntry);
+        setEntries(activeRows);
+        setFetchState({ status: "ready", requestKey });
+        console.log("[job-time:active-banner:get]", {
+          source: "server",
+          requestKey,
+          entriesLength: activeRows.length,
+          status: res.status,
+          runningRendered: activeRows.length > 0,
+          rows: activeRows.map((entry) => ({
+            eventId: entry.google_event_id,
+            workDate: entry.work_date,
+            id: entry.id,
+          })),
+        });
       } catch {
-        if (!cancelled) setEntries([]);
+        if (!cancelled) {
+          setEntries([]);
+          setFetchState({ status: "error", requestKey });
+          console.warn("[job-time:active-banner:get]", {
+            source: "server",
+            requestKey,
+            entriesLength: 0,
+            status: "network_error",
+            runningRendered: false,
+          });
+        }
       }
     };
 
+    setEntries([]);
+    setFetchState({ status: "loading", requestKey });
     void fetchActiveEntries();
     const intervalId = window.setInterval(() => {
       void fetchActiveEntries();
@@ -120,9 +180,30 @@ export function JobTimeActiveBanner({
       window.removeEventListener("focus", handleVisibilityRefresh);
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
-  }, [editorToken, isJeffEditor]);
+  }, [editorToken, isJeffEditor, requestKey]);
 
   const primaryEntry = useMemo(() => resolvePrimaryActiveEntry(entries), [entries]);
+  const hasFreshServerSnapshot = fetchState.status === "ready" && fetchState.requestKey === requestKey;
+  const runningRendered = hasFreshServerSnapshot && !!primaryEntry?.clock_in_at && !primaryEntry?.clock_out_at;
+
+  useEffect(() => {
+    console.log("[job-time:active-banner:render]", {
+      source: "server",
+      requestKey,
+      entriesLength: entries.length,
+      fetchStatus: fetchState.status,
+      primaryEventId: primaryEntry?.google_event_id ?? null,
+      primaryWorkDate: primaryEntry?.work_date ?? null,
+      runningRendered,
+    });
+  }, [
+    requestKey,
+    entries.length,
+    fetchState.status,
+    primaryEntry?.google_event_id,
+    primaryEntry?.work_date,
+    runningRendered,
+  ]);
 
   useEffect(() => {
     if (!primaryEntry?.clock_in_at || primaryEntry.clock_out_at) return undefined;
@@ -131,7 +212,9 @@ export function JobTimeActiveBanner({
     return () => window.clearInterval(id);
   }, [primaryEntry?.id, primaryEntry?.clock_in_at, primaryEntry?.clock_out_at]);
 
-  if (!shouldRenderActiveClockBanner(isJeffEditor, suppressed, primaryEntry)) return null;
+  if (!shouldRenderActiveClockBanner(isJeffEditor, hasFreshServerSnapshot, suppressed, primaryEntry)) {
+    return null;
+  }
   const activeEntry = primaryEntry;
   if (!activeEntry?.clock_in_at) return null;
 

@@ -811,6 +811,27 @@ export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
     return () => { cancelled = true; };
   }, [eventId, editorToken, requestKey]);
 
+  const runningRendered = Array.from(entriesMap.values()).some(
+    (entry) => !!entry.clock_in_at && !entry.clock_out_at,
+  );
+
+  useEffect(() => {
+    console.log("[job-time:section-render]", {
+      source: "server",
+      eventId: eventId.trim(),
+      workDates,
+      entriesLength: entriesMap.size,
+      fetchStatus: fetchState.status,
+      runningRendered: fetchState.status === "ready" ? runningRendered : false,
+    });
+  }, [
+    eventId,
+    workDates,
+    entriesMap.size,
+    fetchState.status,
+    runningRendered,
+  ]);
+
   if (fetchState.requestKey !== requestKey || fetchState.status === "loading") {
     return (
       <div className="job-time-section">
