@@ -16,6 +16,50 @@ export interface JobTimeEntry {
   updated_at: string;
 }
 
+const WORK_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function normalizeJobTimeEntry(entry: JobTimeEntry): JobTimeEntry {
+  const workDate = normalizeWorkDate(entry.work_date);
+  if (!workDate) {
+    throw new Error(`[job-time] invalid work_date returned from storage: ${entry.work_date}`);
+  }
+  if (workDate === entry.work_date) return entry;
+  return { ...entry, work_date: workDate };
+}
+
+/**
+ * Normalize a work date to canonical YYYY-MM-DD.
+ * Accepts exact YYYY-MM-DD and ISO strings that start with YYYY-MM-DD.
+ */
+export function normalizeWorkDate(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const candidate = trimmed.length >= 10 ? trimmed.slice(0, 10) : trimmed;
+  const match = WORK_DATE_PATTERN.exec(candidate);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    parsed.getUTCFullYear() !== year
+    || parsed.getUTCMonth() + 1 !== month
+    || parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+export function normalizeWorkDateFromUnknown(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return normalizeWorkDate(value);
+}
+
 /** Normalize "legacy" token to canonical "jeff" profile in the DB. */
 export function normalizeEditorProfile(editorId: string): string {
   return editorId === "legacy" ? "jeff" : editorId;
@@ -52,7 +96,7 @@ export async function getJobTimeEntries(
     if (error.code === "PGRST116") return [];
     throw new Error(`[job-time] read failed: ${error.message}`);
   }
-  return (data as JobTimeEntry[]) ?? [];
+  return ((data as JobTimeEntry[]) ?? []).map(normalizeJobTimeEntry);
 }
 
 export async function upsertClockIn(
@@ -82,7 +126,7 @@ export async function upsertClockIn(
 
   if (error) throw new Error(`[job-time] clock-in failed: ${error.message}`);
   if (!data) throw new Error("[job-time] clock-in returned no row");
-  return data;
+  return normalizeJobTimeEntry(data);
 }
 
 export async function upsertClockOut(
@@ -104,7 +148,7 @@ export async function upsertClockOut(
     .maybeSingle<JobTimeEntry>();
 
   if (error) throw new Error(`[job-time] clock-out failed: ${error.message}`);
-  return data;
+  return data ? normalizeJobTimeEntry(data) : null;
 }
 
 export async function deleteJobTimeEntry(
@@ -150,5 +194,5 @@ export async function upsertEditTimes(
 
   if (error) throw new Error(`[job-time] edit-times failed: ${error.message}`);
   if (!data) throw new Error("[job-time] edit-times returned no row");
-  return data;
+  return normalizeJobTimeEntry(data);
 }

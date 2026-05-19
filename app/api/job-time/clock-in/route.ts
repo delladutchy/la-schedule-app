@@ -8,6 +8,7 @@ import {
   upsertClockIn,
   isJeffEditorId,
   normalizeEditorProfile,
+  normalizeWorkDateFromUnknown,
 } from "@/lib/job-time";
 import { SupabaseConfigError } from "@/lib/supabase";
 
@@ -40,13 +41,13 @@ export async function POST(req: Request) {
 
   const { eventId, workDate, laNumber } = body as Record<string, unknown>;
   const eventIdStr = typeof eventId === "string" ? eventId.trim() : "";
-  const workDateStr = typeof workDate === "string" ? workDate.trim() : "";
+  const workDateStr = normalizeWorkDateFromUnknown(workDate);
   const laNumberStr = typeof laNumber === "string" ? laNumber.trim() : undefined;
 
   if (!eventIdStr) {
     return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
   }
-  if (!workDateStr || !/^\d{4}-\d{2}-\d{2}$/.test(workDateStr)) {
+  if (!workDateStr) {
     return NextResponse.json({ error: "missing_work_date" }, { status: 400 });
   }
 

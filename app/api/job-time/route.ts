@@ -5,6 +5,7 @@ import {
   getJobTimeEntries,
   isJeffEditorId,
   normalizeEditorProfile,
+  normalizeWorkDate,
 } from "@/lib/job-time";
 import { SupabaseConfigError } from "@/lib/supabase";
 
@@ -26,7 +27,14 @@ export async function GET(req: Request) {
   if (!eventId) {
     return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
   }
-  const workDate = url.searchParams.get("workDate")?.trim() || undefined;
+  const rawWorkDate = url.searchParams.get("workDate");
+  const workDate = rawWorkDate ? normalizeWorkDate(rawWorkDate) : undefined;
+  if (rawWorkDate && !workDate) {
+    return NextResponse.json(
+      { error: "invalid_work_date", message: "workDate must be YYYY-MM-DD." },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
+  }
 
   console.log("[job-time:get] eventId:", eventId, "workDate:", workDate ?? "all", "editor:", auth.editorId);
 
@@ -34,7 +42,7 @@ export async function GET(req: Request) {
     const entries = await getJobTimeEntries(
       eventId,
       normalizeEditorProfile(auth.editorId),
-      workDate,
+      workDate ?? undefined,
     );
     console.log(
       "[job-time:get] result:", entries.length, "entries |",
