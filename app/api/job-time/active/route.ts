@@ -23,17 +23,16 @@ export async function GET(req: Request) {
 
   try {
     const entries = await getActiveJobTimeEntries(normalizeEditorProfile(auth.editorId));
-    console.log(
-      "[job-time:active] result:",
-      entries.length,
-      "entries |",
-      entries.map((entry) => ({
+    console.log("[job-time:active] rows", {
+      rowCount: entries.length,
+      rows: entries.map((entry) => ({
         id: entry.id,
         eventId: entry.google_event_id,
-        work_date: entry.work_date,
-        clock_in_at: entry.clock_in_at,
+        workDate: entry.work_date,
+        clockInAt: entry.clock_in_at,
+        clockOutAt: entry.clock_out_at,
       })),
-    );
+    });
     return NextResponse.json(
       { entries },
       { headers: { "Cache-Control": "no-store" } },

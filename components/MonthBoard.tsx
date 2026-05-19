@@ -171,6 +171,7 @@ interface MonthPopupDayDetailRow {
   date: string;
   startTime: string | null;
   dayNotes: string | null;
+  eventId: string | null;
 }
 
 function formatMonthPopupRange(startDate: string, endDate: string): string {
@@ -1028,8 +1029,12 @@ export function MonthBoard({
     for (const date of allDates) {
       let startTime: string | null = null;
       let dayNotes: string | null = null;
+      let eventId: string | null = null;
       for (const detail of activeDetailPanel.details) {
         if (!detailIncludesDate(detail, date)) continue;
+        if (!eventId && detail.eventId?.trim()) {
+          eventId = detail.eventId.trim();
+        }
         if (!canViewDetailNotes(detail, normalizedEditorId, editorCalendarId, overtureCalendarId)) {
           continue;
         }
@@ -1043,12 +1048,16 @@ export function MonthBoard({
         }
         if (startTime && dayNotes) break;
       }
-      rows.push({ date, startTime, dayNotes });
+      rows.push({ date, startTime, dayNotes, eventId });
     }
     return rows;
   })();
   const jobTimeScheduledStartByWorkDate = activeDetailDayRows.reduce<Record<string, string | null>>((acc, row) => {
     acc[row.date] = row.startTime ?? null;
+    return acc;
+  }, {});
+  const jobTimeEventIdByWorkDate = activeDetailDayRows.reduce<Record<string, string | null>>((acc, row) => {
+    acc[row.date] = row.eventId ?? null;
     return acc;
   }, {});
   const activeDetailOverallNotes = (() => {
@@ -1513,6 +1522,7 @@ export function MonthBoard({
                     workDates={jobTimeWorkDates}
                     editorToken={editorToken}
                     scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
+                    eventIdsByWorkDate={jobTimeEventIdByWorkDate}
                   />
                 ) : null}
               </div>

@@ -34,6 +34,7 @@ interface Props {
   workDates: string[]; // YYYY-MM-DD, at least 1
   editorToken: string | null;
   scheduledStartTimesByWorkDate?: Record<string, string | null | undefined>;
+  eventIdsByWorkDate?: Record<string, string | null | undefined>;
 }
 
 export function resolveJobTimeDisplayRows(workDates: string[], today: string): {
@@ -68,6 +69,34 @@ export function resolveScheduledStartTimeForWorkDate(
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+export function resolveEventIdForWorkDate(
+  workDate: string,
+  defaultEventId: string,
+  eventIdsByWorkDate?: Record<string, string | null | undefined>,
+): string {
+  const normalizedWorkDate = normalizeWorkDate(workDate);
+  if (!normalizedWorkDate || !eventIdsByWorkDate) return defaultEventId.trim();
+  const mapped = eventIdsByWorkDate[normalizedWorkDate];
+  if (typeof mapped !== "string") return defaultEventId.trim();
+  const trimmed = mapped.trim();
+  return trimmed.length > 0 ? trimmed : defaultEventId.trim();
+}
+
+function buildFetchEventIds(
+  defaultEventId: string,
+  workDates: string[],
+  eventIdsByWorkDate?: Record<string, string | null | undefined>,
+): string[] {
+  const ids = new Set<string>();
+  const fallback = defaultEventId.trim();
+  if (fallback) ids.add(fallback);
+  for (const workDate of workDates) {
+    const mapped = resolveEventIdForWorkDate(workDate, fallback, eventIdsByWorkDate).trim();
+    if (mapped) ids.add(mapped);
+  }
+  return [...ids];
 }
 
 export function parseScheduledStartTimeToHHMM(rawStartTime: string | null | undefined): string {
@@ -830,8 +859,11 @@ export function JobTimeSection({
   workDates,
   editorToken,
   scheduledStartTimesByWorkDate,
+  eventIdsByWorkDate,
 }: Props) {
   const requestKey = buildJobTimeRequestKey(eventId, workDates);
+  const fetchEventIdsKey = buildFetchEventIds(eventId, workDates, eventIdsByWorkDate).join("|");
+  const fetchEventIdsForLog = fetchEventIdsKey ? fetchEventIdsKey.split("|") : [];
   const [fetchState, setFetchState] = useState<SectionFetchState>({
     status: "loading",
     requestKey,
@@ -856,38 +888,61 @@ export function JobTimeSection({
     setFetchState({ status: "loading", requestKey });
     setEntriesMap(new Map());
     let cancelled = false;
-
-    fetch(`/api/job-time?eventId=${encodeURIComponent(eventId)}`, {
-      headers: buildAuthHeaders(editorToken),
-      credentials: "same-origin",
-      cache: "no-store",
-    })
-      .then(async (res) => {
+    const fetchEventIds = fetchEventIdsKey ? fetchEventIdsKey.split("|") : [];
+    Promise.all(
+      fetchEventIds.map(async (queryEventId) => {
+        const res = await fetch(`/api/job-time?eventId=${encodeURIComponent(queryEventId)}`, {
+          headers: buildAuthHeaders(editorToken),
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        return { queryEventId, res };
+      }),
+    )
+      .then(async (responses) => {
         if (cancelled) return;
-        if (res.status === 503) {
-          setFetchState({ status: "unavailable", requestKey });
-          return;
-        }
-        if (!res.ok) {
-          setFetchState({ status: "error", requestKey });
-          return;
-        }
-        const json = await res.json() as { entries: JobTimeEntry[] };
-        if (!cancelled) {
+        let unavailable = false;
+        let failed = false;
+        const allEntries: JobTimeEntry[] = [];
+
+        for (const { queryEventId, res } of responses) {
+          if (res.status === 503) {
+            unavailable = true;
+            break;
+          }
+          if (!res.ok) {
+            failed = true;
+            break;
+          }
+          const json = await res.json() as { entries: JobTimeEntry[] };
           const entries = Array.isArray(json.entries) ? json.entries : [];
+          allEntries.push(...entries);
           console.log("[job-time:get-initial] result", {
-            eventId: eventId.trim(),
+            eventId: queryEventId,
             requestKey,
             rowCount: entries.length,
             rows: entries.map((candidate) => ({
               id: candidate.id,
+              eventId: candidate.google_event_id,
               work_date: candidate.work_date,
+              clock_in_at: candidate.clock_in_at,
               clock_out_at: candidate.clock_out_at,
             })),
           });
-          setEntriesMap(buildEntriesMapFromResponse(entries));
-          setFetchState({ status: "ready", requestKey });
         }
+
+        if (cancelled) return;
+        if (unavailable) {
+          setFetchState({ status: "unavailable", requestKey });
+          return;
+        }
+        if (failed) {
+          setFetchState({ status: "error", requestKey });
+          return;
+        }
+
+        setEntriesMap(buildEntriesMapFromResponse(allEntries));
+        setFetchState({ status: "ready", requestKey });
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -898,7 +953,7 @@ export function JobTimeSection({
       });
 
     return () => { cancelled = true; };
-  }, [eventId, editorToken, requestKey]);
+  }, [editorToken, fetchEventIdsKey, requestKey]);
 
   const runningRendered = Array.from(entriesMap.values()).some(
     (entry) => !!entry.clock_in_at && !entry.clock_out_at,
@@ -909,6 +964,8 @@ export function JobTimeSection({
       source: "server",
       eventId: eventId.trim(),
       workDates,
+      fetchEventIds: fetchEventIdsForLog,
+      eventIdsByWorkDate,
       entriesLength: entriesMap.size,
       fetchStatus: fetchState.status,
       runningRendered: fetchState.status === "ready" ? runningRendered : false,
@@ -916,10 +973,31 @@ export function JobTimeSection({
   }, [
     eventId,
     workDates,
+    fetchEventIdsKey,
+    eventIdsByWorkDate,
     entriesMap.size,
     fetchState.status,
     runningRendered,
   ]);
+
+  useEffect(() => {
+    if (fetchState.requestKey !== requestKey || fetchState.status !== "ready") return;
+    const mapKeys = Array.from(entriesMap.keys());
+    console.log("[JobTimeSection reopen]", {
+      source: "server",
+      eventId: eventId.trim(),
+      workDates,
+      entriesLength: entriesMap.size,
+      mapKeys,
+      rows: Array.from(entriesMap.values()).map((entry) => ({
+        id: entry.id,
+        eventId: entry.google_event_id,
+        workDate: entry.work_date,
+        clockInAt: entry.clock_in_at,
+        clockOutAt: entry.clock_out_at,
+      })),
+    });
+  }, [entriesMap, eventId, fetchState.requestKey, fetchState.status, requestKey, workDates]);
 
   if (fetchState.requestKey !== requestKey || fetchState.status === "loading") {
     return (
@@ -953,12 +1031,16 @@ export function JobTimeSection({
   if (workDates.length === 0) return null;
 
   const singleDayEntry = workDates[0] ? (entriesMap.get(workDates[0]) ?? null) : null;
+  const singleDayEventId = workDates[0]
+    ? resolveEventIdForWorkDate(workDates[0], eventId, eventIdsByWorkDate)
+    : eventId.trim();
   const singleDayStatus = singleDayEntry?.clock_out_at
     ? "completed"
     : singleDayEntry?.clock_in_at
       ? "running"
       : "empty";
-  const singleDayKey = `${eventId}:${workDates[0] ?? "none"}:${singleDayEntry?.id ?? "none"}:${singleDayStatus}`;
+  const singleDayResolvedEventId = singleDayEntry?.google_event_id ?? singleDayEventId;
+  const singleDayKey = `${singleDayResolvedEventId}:${workDates[0] ?? "none"}:${singleDayEntry?.id ?? "none"}:${singleDayStatus}`;
   const singleDayScheduledStart = workDates[0]
     ? resolveScheduledStartTimeForWorkDate(workDates[0], scheduledStartTimesByWorkDate)
     : null;
@@ -969,7 +1051,7 @@ export function JobTimeSection({
       {isSingleDay ? (
         <JobTimeDayRow
           key={singleDayKey}
-          eventId={eventId}
+          eventId={singleDayResolvedEventId}
           workDate={workDates[0]!}
           editorToken={editorToken}
           initialEntry={singleDayEntry}
@@ -985,16 +1067,18 @@ export function JobTimeSection({
           ) : null}
           {orderedWorkDates.map((date) => {
             const rowEntry = entriesMap.get(date) ?? null;
+            const rowEventId = resolveEventIdForWorkDate(date, eventId, eventIdsByWorkDate);
+            const rowResolvedEventId = rowEntry?.google_event_id ?? rowEventId;
             const rowStatus = rowEntry?.clock_out_at
               ? "completed"
               : rowEntry?.clock_in_at
                 ? "running"
                 : "empty";
-            const rowKey = `${eventId}:${date}:${rowEntry?.id ?? "none"}:${rowStatus}`;
+            const rowKey = `${rowResolvedEventId}:${date}:${rowEntry?.id ?? "none"}:${rowStatus}`;
             return (
               <JobTimeDayRow
                 key={rowKey}
-                eventId={eventId}
+                eventId={rowResolvedEventId}
                 workDate={date}
                 editorToken={editorToken}
                 initialEntry={rowEntry}

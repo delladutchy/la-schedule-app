@@ -129,12 +129,15 @@ export function JobTimeActiveBanner({
         const json = await res.json() as ActiveEntriesResponse;
         const rows = Array.isArray(json.entries) ? json.entries : [];
         const activeRows = rows.filter(isRunningEntry);
+        const firstActive = activeRows[0] ?? null;
         setEntries(activeRows);
         setFetchState({ status: "ready", requestKey });
         console.log("[job-time:active-banner:get]", {
           source: "server",
           requestKey,
           entriesLength: activeRows.length,
+          firstActiveEventId: firstActive?.google_event_id ?? null,
+          firstActiveWorkDate: firstActive?.work_date ?? null,
           status: res.status,
           runningRendered: activeRows.length > 0,
           rows: activeRows.map((entry) => ({

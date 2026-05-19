@@ -1113,26 +1113,32 @@ export function DayBoard({
     ? formatPopupDateRange(activeDetailRangeBounds.startDate, activeDetailRangeBounds.endDateInclusive)
     : activePrimaryDetail?.dateRangeLabel ?? null;
   const activeDetailDayRows = (() => {
-    if (!activeDetailPanel || !activeDetailRangeBounds) return [] as Array<{ date: string; startTime: string | null; dayNotes: string | null }>;
+    if (!activeDetailPanel || !activeDetailRangeBounds) return [] as Array<{ date: string; startTime: string | null; dayNotes: string | null; eventId: string | null }>;
     return enumerateIsoDatesInRange(
       activeDetailRangeBounds.startDate,
       activeDetailRangeBounds.endDateInclusive,
     ).map((date) => {
       let startTime: string | null = null;
       let dayNotes: string | null = null;
+      let eventId: string | null = null;
       for (const detail of activeDetailPanel.details) {
         if (!detailIncludesDate(detail, date)) continue;
+        if (!eventId && detail.eventId?.trim()) eventId = detail.eventId.trim();
         if (!canViewDetailNotes(detail, normalizedEditorId, editorCalendarId, overtureCalendarId)) continue;
         const parsed = parseGigDescription(detail.description);
         const resolved = resolveParsedGigDetailForDate(parsed, date);
         if (!startTime && resolved.startTime?.trim()) startTime = resolved.startTime.trim();
         if (!dayNotes && parsed.dayDetails?.[date]?.notes?.trim()) dayNotes = parsed.dayDetails[date]?.notes?.trim() ?? null;
       }
-      return { date, startTime, dayNotes };
+      return { date, startTime, dayNotes, eventId };
     });
   })();
   const jobTimeScheduledStartByWorkDate = activeDetailDayRows.reduce<Record<string, string | null>>((acc, row) => {
     acc[row.date] = row.startTime ?? null;
+    return acc;
+  }, {});
+  const jobTimeEventIdByWorkDate = activeDetailDayRows.reduce<Record<string, string | null>>((acc, row) => {
+    acc[row.date] = row.eventId ?? null;
     return acc;
   }, {});
   const activeDetailOverallNotes = (() => {
@@ -1576,6 +1582,7 @@ export function DayBoard({
                     workDates={jobTimeWorkDates}
                     editorToken={editorToken}
                     scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
+                    eventIdsByWorkDate={jobTimeEventIdByWorkDate}
                   />
                 ) : null}
                 {activeDetailPanel.details.length > 1 ? (

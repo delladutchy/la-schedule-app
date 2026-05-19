@@ -3,6 +3,7 @@ import {
   buildEntriesMapFromResponse,
   parseScheduledStartTimeToHHMM,
   resolveEditFormDefaults,
+  resolveEventIdForWorkDate,
   resolveJobTimeDisplayRows,
   resolveRowControlState,
   resolveScheduledStartTimeForWorkDate,
@@ -127,6 +128,25 @@ describe("resolveScheduledStartTimeForWorkDate", () => {
     };
     expect(resolveScheduledStartTimeForWorkDate("2026-05-20", map)).toBe("8:00 AM");
     expect(resolveScheduledStartTimeForWorkDate("2026-05-21", map)).toBe("9:30 AM");
+  });
+});
+
+describe("resolveEventIdForWorkDate", () => {
+  it("uses the per-day eventId mapping when available", () => {
+    const eventIdsByDate = {
+      "2026-05-20": "evt-alpha",
+      "2026-05-21": "evt-beta",
+    };
+    expect(resolveEventIdForWorkDate("2026-05-20", "evt-fallback", eventIdsByDate)).toBe("evt-alpha");
+    expect(resolveEventIdForWorkDate("2026-05-21", "evt-fallback", eventIdsByDate)).toBe("evt-beta");
+  });
+
+  it("falls back to default eventId when mapped value is missing", () => {
+    const eventIdsByDate = {
+      "2026-05-20": "",
+    };
+    expect(resolveEventIdForWorkDate("2026-05-20", "evt-fallback", eventIdsByDate)).toBe("evt-fallback");
+    expect(resolveEventIdForWorkDate("2026-05-22", "evt-fallback", eventIdsByDate)).toBe("evt-fallback");
   });
 });
 
