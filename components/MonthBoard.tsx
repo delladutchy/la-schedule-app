@@ -24,6 +24,7 @@ import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import { JobTimeSection } from "@/components/JobTimeSection";
+import { JobTimeActiveBanner } from "@/components/JobTimeActiveBanner";
 
 interface Props {
   month: MonthBoardData;
@@ -1184,6 +1185,11 @@ export function MonthBoard({
       <div className="month-label-row">
         <h2 className="month-label period-label-animate">{month.label}</h2>
       </div>
+      <JobTimeActiveBanner
+        isJeffEditor={isJeffEditor}
+        editorToken={editorToken}
+        suppressed={!!activeDetailPanel || !!activeBookingPanel}
+      />
 
       <div className="month-weekdays" aria-hidden="true">
         {weekdayLabels.map((label) => (
