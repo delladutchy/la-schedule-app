@@ -35,6 +35,23 @@ interface Props {
   editorToken: string | null;
 }
 
+export function resolveJobTimeDisplayRows(workDates: string[], today: string): {
+  isSingleDay: boolean;
+  hasTodayInWorkDates: boolean;
+  orderedWorkDates: string[];
+  primaryLiveWorkDate: string | null;
+} {
+  const isSingleDay = workDates.length <= 1;
+  const hasTodayInWorkDates = workDates.includes(today);
+  const orderedWorkDates = !isSingleDay && hasTodayInWorkDates
+    ? [today, ...workDates.filter((date) => date !== today)]
+    : workDates;
+  const primaryLiveWorkDate = isSingleDay
+    ? (workDates[0] ?? null)
+    : (hasTodayInWorkDates ? today : null);
+  return { isSingleDay, hasTodayInWorkDates, orderedWorkDates, primaryLiveWorkDate };
+}
+
 function buildAuthHeaders(editorToken: string | null): Record<string, string> {
   if (editorToken) return { Authorization: `Bearer ${editorToken}` };
   return {};
@@ -154,6 +171,14 @@ function JobTimeDayRow({
   const normalizedWorkDate = normalizeWorkDate(workDate);
   const hasValidContext = normalizedEventId.length > 0 && !!normalizedWorkDate;
   const invalidContextError = "Hours error: invalid job context for this date.";
+  const rowStateDiagnostic = entry
+    ? {
+        id: entry.id,
+        work_date: entry.work_date,
+        clock_in_at: entry.clock_in_at,
+        clock_out_at: entry.clock_out_at,
+      }
+    : null;
 
   // Sync when parent's fetch completes and provides an initial entry.
   useEffect(() => {
@@ -169,6 +194,22 @@ function JobTimeDayRow({
     setActionError(null);
     setShowEditForm(false);
   }, [initialEntry, normalizedEventId, normalizedWorkDate]);
+
+  useEffect(() => {
+    console.log("[job-time:row] render", {
+      eventId: normalizedEventId,
+      workDate: normalizedWorkDate ?? workDate,
+      entry: rowStateDiagnostic,
+    });
+  }, [
+    normalizedEventId,
+    normalizedWorkDate,
+    workDate,
+    rowStateDiagnostic?.id,
+    rowStateDiagnostic?.work_date,
+    rowStateDiagnostic?.clock_in_at,
+    rowStateDiagnostic?.clock_out_at,
+  ]);
 
   // Running clock — ticks every second while clocked in but not out.
   useEffect(() => {
@@ -195,6 +236,16 @@ function JobTimeDayRow({
     }
     const getJson = await getRes.json() as { entries?: JobTimeEntry[] };
     const entries = Array.isArray(getJson.entries) ? getJson.entries : [];
+    console.log("[job-time:get-refetch] result", {
+      eventId: normalizedEventId,
+      workDate: normalizedWorkDate,
+      rowCount: entries.length,
+      rows: entries.map((candidate) => ({
+        id: candidate.id,
+        work_date: candidate.work_date,
+        clock_out_at: candidate.clock_out_at,
+      })),
+    });
     return entries.find((candidate) => isEntryForWorkDate(candidate, normalizedEventId, normalizedWorkDate)) ?? null;
   };
 
@@ -292,17 +343,29 @@ function JobTimeDayRow({
       }
       const json = await res.json() as { entry?: JobTimeEntry };
       const returnedEntry = json.entry;
-      if (
-        returnedEntry
-        && isEntryForWorkDate(returnedEntry, normalizedEventId, normalizedWorkDate)
-        && !!returnedEntry.clock_out_at
-      ) {
-        setEntry(returnedEntry);
-        return;
-      }
+      console.log("[job-time:clock-out] response", {
+        eventId: normalizedEventId,
+        workDate: normalizedWorkDate,
+        entryId: returnedEntry?.id ?? null,
+        clock_out_at: returnedEntry?.clock_out_at ?? null,
+      });
       const confirmed = await fetchExactWorkDateEntry();
       if (confirmed?.clock_out_at) {
         setEntry(confirmed);
+        return;
+      }
+      if (confirmed?.clock_in_at && !confirmed.clock_out_at) {
+        console.warn("[job-time:clock-out] diagnostic active row still running after clock-out", {
+          eventId: normalizedEventId,
+          workDate: normalizedWorkDate,
+          entryId: confirmed.id,
+        });
+        setEntry(confirmed);
+        setActionError("Diagnostic: server still shows an active entry for this date.");
+        return;
+      }
+      if (returnedEntry && isEntryForWorkDate(returnedEntry, normalizedEventId, normalizedWorkDate)) {
+        setEntry(returnedEntry);
         return;
       }
       setActionError("Could not confirm clock-out. Try again.");
@@ -341,16 +404,32 @@ function JobTimeDayRow({
         return;
       }
       const json = await res.json().catch(() => null) as { success?: boolean; workDate?: string } | null;
+      console.log("[job-time:clear] response", {
+        eventId: normalizedEventId,
+        workDate: normalizedWorkDate,
+        success: !!json?.success,
+        returnedWorkDate: json?.workDate ?? null,
+      });
       const clearedDate = typeof json?.workDate === "string" ? normalizeWorkDate(json.workDate) : null;
       if (json?.success && (!clearedDate || clearedDate === normalizedWorkDate)) {
-        setEntry(null);
-        setShowEditForm(false);
-        return;
-      }
-      const confirmed = await fetchExactWorkDateEntry();
-      if (!confirmed) {
-        setEntry(null);
-        setShowEditForm(false);
+        const confirmed = await fetchExactWorkDateEntry();
+        if (!confirmed) {
+          setEntry(null);
+          setShowEditForm(false);
+          return;
+        }
+        if (confirmed.clock_in_at && !confirmed.clock_out_at) {
+          console.warn("[job-time:clear] diagnostic active row still running after clear", {
+            eventId: normalizedEventId,
+            workDate: normalizedWorkDate,
+            entryId: confirmed.id,
+          });
+          setEntry(confirmed);
+          setActionError("Diagnostic: server still shows an active entry for this date.");
+          return;
+        }
+        setEntry(confirmed);
+        setActionError("Could not confirm clear. Try again.");
         return;
       }
       setActionError("Could not confirm clear. Try again.");
@@ -647,14 +726,12 @@ export function JobTimeSection({ eventId, workDates, editorToken }: Props) {
   const [entriesMap, setEntriesMap] = useState<Map<string, JobTimeEntry>>(() => new Map());
 
   const today = getTodayDateInTimeZone(LIVE_CLOCK_TIMEZONE);
-  const isSingleDay = workDates.length <= 1;
-  const hasTodayInWorkDates = workDates.includes(today);
-  const orderedWorkDates = !isSingleDay && hasTodayInWorkDates
-    ? [today, ...workDates.filter((date) => date !== today)]
-    : workDates;
-  const primaryLiveWorkDate = isSingleDay
-    ? (workDates[0] ?? null)
-    : (hasTodayInWorkDates ? today : null);
+  const {
+    isSingleDay,
+    hasTodayInWorkDates,
+    orderedWorkDates,
+    primaryLiveWorkDate,
+  } = resolveJobTimeDisplayRows(workDates, today);
 
   useEffect(() => {
     if (workDates.length === 0) { setFetchState({ status: "ready" }); return undefined; }

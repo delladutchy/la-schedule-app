@@ -1003,8 +1003,13 @@ export function MonthBoard({
   const activeDetailRangeLabel = activeDetailRangeBounds
     ? formatMonthPopupRange(activeDetailRangeBounds.startDate, activeDetailRangeBounds.endDateInclusive)
     : activeDetailPanel?.details[0]?.dateRangeLabel ?? null;
+  const activeJobTimeDetail = (() => {
+    if (activeEditableDetail) return activeEditableDetail;
+    if (!activeDetailPanel) return null;
+    return activeDetailPanel.details[0] ?? null;
+  })();
   const jobTimeWorkDates = (() => {
-    const d = activeDetailPanel?.details[0];
+    const d = activeJobTimeDetail;
     if (!d?.startDate) return [];
     return enumerateIsoDatesInRange(d.startDate, d.endDateInclusive ?? d.startDate);
   })();
@@ -1492,9 +1497,9 @@ export function MonthBoard({
                     </a>
                   </>
                 ) : null}
-                {(isJeffEditor || !!editorToken) && activeDetailPanel.details[0]?.eventId && jobTimeWorkDates.length > 0 ? (
+                {(isJeffEditor || !!editorToken) && activeJobTimeDetail?.eventId && jobTimeWorkDates.length > 0 ? (
                   <JobTimeSection
-                    eventId={activeDetailPanel.details[0].eventId}
+                    eventId={activeJobTimeDetail.eventId}
                     workDates={jobTimeWorkDates}
                     editorToken={editorToken}
                   />

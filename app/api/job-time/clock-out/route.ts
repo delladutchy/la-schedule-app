@@ -65,7 +65,10 @@ export async function POST(req: Request) {
         { status: 404 },
       );
     }
-    console.log("[job-time:clock-out] clocked out row id:", entry.id);
+    console.log(
+      "[job-time:clock-out] clocked out row",
+      { id: entry.id, work_date: entry.work_date, clock_out_at: entry.clock_out_at },
+    );
     return NextResponse.json({ entry });
   } catch (error) {
     if (error instanceof SupabaseConfigError) {

@@ -54,6 +54,7 @@ export async function POST(req: Request) {
 
   try {
     await deleteJobTimeEntry(eventIdStr, normalizeEditorProfile(auth.editorId), workDateStr);
+    console.log("[job-time:clear] cleared", { eventId: eventIdStr, workDate: workDateStr });
     return NextResponse.json({ success: true, workDate: workDateStr });
   } catch (error) {
     if (error instanceof SupabaseConfigError) {

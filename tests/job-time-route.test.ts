@@ -394,6 +394,19 @@ describe("POST /api/job-time/clock-out — authorization", () => {
     expect(json.entry.clock_out_at).toBeTruthy();
   });
 
+  it("targets exact eventId + workDate for clock-out", async () => {
+    const { upsertClockOut } = await import("@/lib/job-time");
+    const POST = await loadClockOutRoute();
+    await POST(
+      new Request("http://localhost/api/job-time/clock-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt-two", workDate: WORK_DATE_2 }),
+      }),
+    );
+    expect(upsertClockOut).toHaveBeenCalledWith("evt-two", "jeff", WORK_DATE_2);
+  });
+
   it("returns 400 when workDate is missing", async () => {
     const POST = await loadClockOutRoute();
     const res = await POST(
@@ -505,6 +518,19 @@ describe("POST /api/job-time/clear — authorization and validation", () => {
       }),
     );
     expect(deleteJobTimeEntry).toHaveBeenCalledWith("evt1", "jeff", WORK_DATE_2);
+  });
+
+  it("targets exact eventId + workDate for clear", async () => {
+    const { deleteJobTimeEntry } = await import("@/lib/job-time");
+    const POST = await loadClearRoute();
+    await POST(
+      new Request("http://localhost/api/job-time/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt-two", workDate: WORK_DATE }),
+      }),
+    );
+    expect(deleteJobTimeEntry).toHaveBeenCalledWith("evt-two", "jeff", WORK_DATE);
   });
 });
 
@@ -662,5 +688,65 @@ describe("POST /api/job-time/clock-out — 404 when no active clock-in", () => {
     );
     expect(res.status).toBe(404);
     await expect(res.json()).resolves.toMatchObject({ error: "not_clocked_in" });
+  });
+});
+
+describe("GET /api/job-time exact-date fetch outcomes", () => {
+  it("returns completed row for exact eventId + workDate after clock-out", async () => {
+    const { getJobTimeEntries } = await import("@/lib/job-time");
+    vi.mocked(getJobTimeEntries).mockResolvedValueOnce([makeClockOutEntry(WORK_DATE)]);
+
+    const GET = await loadGetRoute();
+    const res = await GET(
+      new Request(`http://localhost/api/job-time?eventId=evt1&workDate=${WORK_DATE}`, {
+        headers: jeffBearer(),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entries: Array<{ work_date: string; clock_out_at: string | null }> };
+    expect(json.entries).toHaveLength(1);
+    expect(json.entries[0]?.work_date).toBe(WORK_DATE);
+    expect(json.entries[0]?.clock_out_at).toBeTruthy();
+  });
+
+  it("returns no rows for exact eventId + workDate after clear", async () => {
+    const { getJobTimeEntries } = await import("@/lib/job-time");
+    vi.mocked(getJobTimeEntries).mockResolvedValueOnce([]);
+
+    const GET = await loadGetRoute();
+    const res = await GET(
+      new Request(`http://localhost/api/job-time?eventId=evt1&workDate=${WORK_DATE}`, {
+        headers: jeffBearer(),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entries: unknown[] };
+    expect(json.entries).toEqual([]);
+  });
+});
+
+describe("job-time row targeting independence", () => {
+  it("keeps two google_event_id values independent for clock-out and clear", async () => {
+    const { upsertClockOut, deleteJobTimeEntry } = await import("@/lib/job-time");
+    const clockOut = await loadClockOutRoute();
+    const clear = await loadClearRoute();
+
+    await clockOut(
+      new Request("http://localhost/api/job-time/clock-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt-alpha", workDate: WORK_DATE }),
+      }),
+    );
+    await clear(
+      new Request("http://localhost/api/job-time/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt-beta", workDate: WORK_DATE_2 }),
+      }),
+    );
+
+    expect(upsertClockOut).toHaveBeenCalledWith("evt-alpha", "jeff", WORK_DATE);
+    expect(deleteJobTimeEntry).toHaveBeenCalledWith("evt-beta", "jeff", WORK_DATE_2);
   });
 });
