@@ -99,6 +99,8 @@ export function JobTimeActiveBanner({
   // without adding it as a dependency (avoids restarting the interval).
   const latestFetchRef = useRef<(() => Promise<void>) | null>(null);
   const prevSuppressedRef = useRef(suppressed);
+  // Set to true by the clock-out event so the next fetch logs the post-clock-out state.
+  const clockOutTriggerRef = useRef(false);
 
   useEffect(() => {
     if (!isJeffEditor) {
@@ -150,6 +152,15 @@ export function JobTimeActiveBanner({
         const firstActive = activeRows[0] ?? null;
         setEntries(activeRows);
         setFetchState({ status: "ready", requestKey });
+        if (clockOutTriggerRef.current) {
+          clockOutTriggerRef.current = false;
+          console.log("[job-time:active-banner-after-clock-out]", {
+            source: "server",
+            requestKey,
+            activeCount: activeRows.length,
+            runningRendered: activeRows.length > 0,
+          });
+        }
         console.log("[job-time:active-banner:get]", {
           source: "server",
           requestKey,
@@ -193,14 +204,21 @@ export function JobTimeActiveBanner({
       }
     };
 
+    const handleClockOutCompleted = () => {
+      clockOutTriggerRef.current = true;
+      void latestFetchRef.current?.();
+    };
+
     window.addEventListener("focus", handleVisibilityRefresh);
     document.addEventListener("visibilitychange", handleVisibilityRefresh);
+    window.addEventListener("job-time:clock-out-completed", handleClockOutCompleted);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
       window.removeEventListener("focus", handleVisibilityRefresh);
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+      window.removeEventListener("job-time:clock-out-completed", handleClockOutCompleted);
     };
   }, [editorToken, isJeffEditor, requestKey]);
 
@@ -258,14 +276,14 @@ export function JobTimeActiveBanner({
   const headline = resolveBannerLabel(activeEntry);
 
   return (
-    <section className="job-time-active-banner" aria-live="polite" aria-label="Active clock status">
-      <div className="job-time-active-banner__badge" aria-hidden="true" />
-      <p className="job-time-active-banner__label">
-        {headline}
-        {extraCount > 0 ? ` (+${extraCount} more)` : ""}
-      </p>
-      <p className="job-time-active-banner__elapsed">{elapsed}</p>
-      <p className="job-time-active-banner__meta">{workDateLabel}</p>
-    </section>
+    <div className="active-clock-row" aria-live="polite" aria-label="Active clock status">
+      <div className="active-clock-pill">
+        <div className="active-clock-pill__dot" aria-hidden="true" />
+        <span className="active-clock-pill__primary">
+          {headline}{extraCount > 0 ? ` (+${extraCount})` : ""} · {elapsed}
+        </span>
+        <span className="active-clock-pill__date">{workDateLabel}</span>
+      </div>
+    </div>
   );
 }

@@ -301,7 +301,7 @@ function canManageDetailForEditor(
   if (!detail.eventId) return false;
 
   const editorId = normalizeEditorId(resolvedEditorId);
-  if (!editorId) return true;
+  if (!editorId) return false;
 
   const calendarId = detail.calendarId;
   const ownerEditor = normalizeEditorId(detail.ownerEditor ?? null);
@@ -1173,23 +1173,24 @@ export function MonthBoard({
   };
 
   return (
-    <section
-      className="month-board"
-      aria-label={month.label}
-      style={{ ["--month-visible-days" as string]: String(visibleDayCount) }}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchCancel}
-    >
-      <div className="month-label-row">
-        <h2 className="month-label period-label-animate">{month.label}</h2>
-      </div>
+    <>
       <JobTimeActiveBanner
         isJeffEditor={isJeffEditor}
         editorToken={editorToken}
         suppressed={!!activeDetailPanel || !!activeBookingPanel}
       />
+      <section
+        className="month-board"
+        aria-label={month.label}
+        style={{ ["--month-visible-days" as string]: String(visibleDayCount) }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchCancel}
+      >
+      <div className="month-label-row">
+        <h2 className="month-label period-label-animate">{month.label}</h2>
+      </div>
 
       <div className="month-weekdays" aria-hidden="true">
         {weekdayLabels.map((label) => (
@@ -2224,5 +2225,6 @@ export function MonthBoard({
         document.body,
       ) : null}
     </section>
+    </>
   );
 }

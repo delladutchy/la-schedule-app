@@ -176,7 +176,7 @@ function canManageDetailForEditor(
   if (!detail.eventId) return false;
 
   const editorId = normalizeEditorId(resolvedEditorId);
-  if (!editorId) return true;
+  if (!editorId) return false;
 
   const calendarId = detail.calendarId;
   const ownerEditor = normalizeEditorId(detail.ownerEditor ?? null);
@@ -1251,6 +1251,35 @@ export function DayBoard({
 
   if (!hasRows) {
     return (
+      <>
+        <JobTimeActiveBanner
+          isJeffEditor={isJeffEditor}
+          editorToken={editorToken}
+          suppressed={!!activeDetailPanel || !!activeBookingPanel}
+        />
+        <div
+          className="board"
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          onTouchCancel={onTouchCancel}
+        >
+          {weekendMarker}
+          <div className="board-empty" role="status">
+            No availability rows for this range.
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <JobTimeActiveBanner
+        isJeffEditor={isJeffEditor}
+        editorToken={editorToken}
+        suppressed={!!activeDetailPanel || !!activeBookingPanel}
+      />
       <div
         className="board"
         onTouchStart={onTouchStart}
@@ -1259,32 +1288,6 @@ export function DayBoard({
         onTouchCancel={onTouchCancel}
       >
         {weekendMarker}
-        <JobTimeActiveBanner
-          isJeffEditor={isJeffEditor}
-          editorToken={editorToken}
-          suppressed={!!activeDetailPanel || !!activeBookingPanel}
-        />
-        <div className="board-empty" role="status">
-          No availability rows for this range.
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="board"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchCancel}
-    >
-      {weekendMarker}
-      <JobTimeActiveBanner
-        isJeffEditor={isJeffEditor}
-        editorToken={editorToken}
-        suppressed={!!activeDetailPanel || !!activeBookingPanel}
-      />
       {weekRows.map((week) => (
         <section
           key={week.wk.weekOf}
@@ -2291,5 +2294,6 @@ export function DayBoard({
         document.body,
       ) : null}
     </div>
+  </>
   );
 }

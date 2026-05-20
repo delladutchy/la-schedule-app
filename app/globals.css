@@ -4415,65 +4415,47 @@ html.modal-open body {
 
 /* ---------- Job Time Section (Jeff-only clock in/out) ---------- */
 
-.job-time-active-banner {
-  position: fixed;
-  right: 14px;
-  bottom: 14px;
-  z-index: 34;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas:
-    "dot label elapsed"
-    "dot meta elapsed";
-  align-items: center;
-  column-gap: 9px;
-  row-gap: 1px;
-  width: min(330px, calc(100vw - 24px));
-  padding: 9px 11px;
-  border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--today-accent) 26%, var(--border));
-  background: color-mix(in srgb, var(--surface) 93%, var(--today-accent) 7%);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(6px);
+.active-clock-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
 }
 
-.job-time-active-banner__badge {
-  grid-area: dot;
-  width: 8px;
-  height: 8px;
+.active-clock-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--today-accent) 28%, var(--border));
+  background: color-mix(in srgb, var(--surface) 92%, var(--today-accent) 8%);
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.active-clock-pill__dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   background: var(--today-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--today-accent) 26%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--today-accent) 24%, transparent);
 }
 
-.job-time-active-banner__label {
-  grid-area: label;
-  margin: 0;
-  min-width: 0;
+.active-clock-pill__primary {
   font-size: 0.76rem;
-  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.job-time-active-banner__elapsed {
-  grid-area: elapsed;
-  margin: 0;
-  font-size: 1.03rem;
-  line-height: 1;
-  letter-spacing: 0.01em;
-  font-variant-numeric: tabular-nums;
-  font-weight: 620;
-  color: var(--today-accent);
-}
-
-.job-time-active-banner__meta {
-  grid-area: meta;
-  margin: 0;
+.active-clock-pill__date {
+  flex-shrink: 0;
   font-size: 0.69rem;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .job-time-section {
@@ -4726,16 +4708,7 @@ html.modal-open body {
 }
 
 @media (max-width: 760px) {
-  .job-time-active-banner {
-    left: 10px;
-    right: 10px;
-    bottom: calc(8px + env(safe-area-inset-bottom));
-    width: auto;
-    max-width: none;
-    padding: 10px 11px;
-  }
-
-  .job-time-active-banner__elapsed {
-    font-size: 1rem;
+  .active-clock-row {
+    justify-content: flex-start;
   }
 }
