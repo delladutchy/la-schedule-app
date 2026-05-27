@@ -3,6 +3,7 @@ import {
   buildClockMutationPayload,
   buildEntriesMapFromResponse,
   parseScheduledStartTimeToHHMM,
+  reconcileActiveEntryIntoMap,
   resolveEditFormDefaults,
   resolveEventIdForWorkDate,
   resolveJobTimeDisplayRows,
@@ -197,5 +198,91 @@ describe("parseScheduledStartTimeToHHMM", () => {
     expect(parseScheduledStartTimeToHHMM("5:00 AM")).toBe("05:00");
     expect(parseScheduledStartTimeToHHMM("12:30 PM")).toBe("12:30");
     expect(parseScheduledStartTimeToHHMM("17:45")).toBe("17:45");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reconcileActiveEntryIntoMap
+// Root cause guard: if clock-in returns a pre-existing active row whose
+// google_event_id differs from the modal's current eventId, the main GET
+// fetch finds nothing on reopen. The reconciliation adds the active entry
+// so close/reopen shows the running entry instead of empty.
+// ---------------------------------------------------------------------------
+
+describe("reconcileActiveEntryIntoMap", () => {
+  it("returns map unchanged when activeEntry is null", () => {
+    const map = buildEntriesMapFromResponse([makeEntry()]);
+    const result = reconcileActiveEntryIntoMap(map, null, ["2026-05-20"]);
+    expect(result.size).toBe(1);
+    expect(result.get("2026-05-20")?.id).toBe("row-1");
+  });
+
+  it("returns map unchanged when activeEntry has clock_out_at set (not running)", () => {
+    const map = new Map<string, JobTimeEntry>();
+    const completed = makeEntry({ clock_out_at: "2026-05-20T17:00:00.000Z" });
+    const result = reconcileActiveEntryIntoMap(map, completed, ["2026-05-20"]);
+    expect(result.size).toBe(0);
+  });
+
+  it("returns map unchanged when activeEntry has no clock_in_at", () => {
+    const map = new Map<string, JobTimeEntry>();
+    const empty = makeEntry({ clock_in_at: null });
+    const result = reconcileActiveEntryIntoMap(map, empty, ["2026-05-20"]);
+    expect(result.size).toBe(0);
+  });
+
+  it("returns map unchanged when activeEntry.work_date is not in workDates", () => {
+    const map = new Map<string, JobTimeEntry>();
+    const active = makeEntry({ work_date: "2026-05-19" });
+    const result = reconcileActiveEntryIntoMap(map, active, ["2026-05-20"]);
+    expect(result.size).toBe(0);
+  });
+
+  it("does not override an existing entry already found by the main GET", () => {
+    const existing = makeEntry({
+      id: "existing-row",
+      work_date: "2026-05-20",
+      clock_out_at: "2026-05-20T17:00:00.000Z",
+    });
+    const map = buildEntriesMapFromResponse([existing]);
+    const active = makeEntry({ id: "active-row", work_date: "2026-05-20" });
+    const result = reconcileActiveEntryIntoMap(map, active, ["2026-05-20"]);
+    expect(result.get("2026-05-20")?.id).toBe("existing-row");
+  });
+
+  // Core readback fix: active entry has a different google_event_id but the
+  // same work_date — the main GET (which queries by current eventId) returns
+  // nothing, so the reconciliation adds the active entry so reopen shows it.
+  it("adds active entry when work_date matches and main GET found nothing for that date", () => {
+    const map = new Map<string, JobTimeEntry>();
+    const active = makeEntry({ google_event_id: "evt-different", work_date: "2026-05-20" });
+    const result = reconcileActiveEntryIntoMap(map, active, ["2026-05-20"]);
+    expect(result.size).toBe(1);
+    expect(result.get("2026-05-20")?.id).toBe("row-1");
+    expect(result.get("2026-05-20")?.google_event_id).toBe("evt-different");
+  });
+
+  it("adds active entry and normalizes ISO work_date to YYYY-MM-DD", () => {
+    const map = new Map<string, JobTimeEntry>();
+    const active = makeEntry({ work_date: "2026-05-20T00:00:00.000Z" });
+    const result = reconcileActiveEntryIntoMap(map, active, ["2026-05-20"]);
+    expect(result.get("2026-05-20")?.work_date).toBe("2026-05-20");
+  });
+
+  it("does not mutate the original map", () => {
+    const map = new Map<string, JobTimeEntry>();
+    const active = makeEntry({ work_date: "2026-05-20" });
+    const result = reconcileActiveEntryIntoMap(map, active, ["2026-05-20"]);
+    expect(map.size).toBe(0);
+    expect(result.size).toBe(1);
+  });
+
+  it("only adds the active entry for matching workDates; leaves other dates untouched", () => {
+    const existing = makeEntry({ id: "row-may19", work_date: "2026-05-19" });
+    const map = buildEntriesMapFromResponse([existing]);
+    const active = makeEntry({ id: "row-may20", work_date: "2026-05-20" });
+    const result = reconcileActiveEntryIntoMap(map, active, ["2026-05-19", "2026-05-20"]);
+    expect(result.get("2026-05-19")?.id).toBe("row-may19");
+    expect(result.get("2026-05-20")?.id).toBe("row-may20");
   });
 });

@@ -198,6 +198,33 @@ export function buildEntriesMapFromResponse(entries: JobTimeEntry[]): Map<string
   return map;
 }
 
+/**
+ * Merge an active entry into the entries map when the main GET fetch found
+ * nothing for its work_date. Handles the case where the clock-in route
+ * returned a pre-existing active row whose google_event_id differs from the
+ * modal's current eventId — so the GET-by-eventId found nothing on reopen,
+ * but the active row is genuinely for this job's date range.
+ *
+ * Only reconciles when:
+ *  1. activeEntry is running (clock_in_at set, clock_out_at null)
+ *  2. activeEntry.work_date is in the modal's workDates list
+ *  3. No entry was already found for that date in the main GET
+ */
+export function reconcileActiveEntryIntoMap(
+  map: Map<string, JobTimeEntry>,
+  activeEntry: JobTimeEntry | null,
+  workDates: string[],
+): Map<string, JobTimeEntry> {
+  if (!activeEntry || !activeEntry.clock_in_at || activeEntry.clock_out_at) return map;
+  const activeWorkDate = normalizeWorkDate(activeEntry.work_date);
+  if (!activeWorkDate) return map;
+  if (!workDates.includes(activeWorkDate)) return map;
+  if (map.has(activeWorkDate)) return map;
+  const result = new Map(map);
+  result.set(activeWorkDate, { ...activeEntry, work_date: activeWorkDate });
+  return result;
+}
+
 function buildAuthHeaders(editorToken: string | null): Record<string, string> {
   if (editorToken) return { Authorization: `Bearer ${editorToken}` };
   return {};
@@ -1051,10 +1078,20 @@ export function JobTimeSection({
     setEntriesMap(new Map());
     let cancelled = false;
     const fetchEventIds = fetchEventIdsKey ? fetchEventIdsKey.split("|") : [];
+    const authHeaders = buildAuthHeaders(editorToken);
+
+    // Start active-route fetch concurrently so it's in-flight while the
+    // eventId fetches run. We never let its failure block the main path.
+    const activeFetchPromise = fetch("/api/job-time/active", {
+      headers: authHeaders,
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+
     Promise.all(
       fetchEventIds.map(async (queryEventId) => {
         const res = await fetch(`/api/job-time?eventId=${encodeURIComponent(queryEventId)}`, {
-          headers: buildAuthHeaders(editorToken),
+          headers: authHeaders,
           credentials: "same-origin",
           cache: "no-store",
         });
@@ -1103,7 +1140,37 @@ export function JobTimeSection({
           return;
         }
 
-        setEntriesMap(buildEntriesMapFromResponse(allEntries));
+        let map = buildEntriesMapFromResponse(allEntries);
+
+        // Reconcile: if the active entry's work_date is in our workDates but
+        // the main GET found nothing for that date, include it. This handles
+        // the case where clock-in returned a pre-existing active row whose
+        // google_event_id differs from the modal's current eventId — so the
+        // GET-by-eventId found nothing on reopen even though a row exists.
+        try {
+          const activeRes = await activeFetchPromise;
+          if (activeRes.ok) {
+            const activeJson = await activeRes.json() as { entries?: JobTimeEntry[] };
+            const activeEntries = Array.isArray(activeJson.entries) ? activeJson.entries : [];
+            const activeEntry = activeEntries[0] ?? null;
+            console.log("[job-time:section-active-fetch]", {
+              eventId: eventId.trim(),
+              requestKey,
+              activeId: activeEntry?.id ?? null,
+              activeWorkDate: activeEntry?.work_date ?? null,
+              activeEventId: activeEntry?.google_event_id ?? null,
+            });
+            map = reconcileActiveEntryIntoMap(map, activeEntry, workDates);
+          }
+        } catch (err) {
+          console.warn(
+            "[job-time:section-active-fetch] skipped",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+
+        if (cancelled) return;
+        setEntriesMap(map);
         setFetchState({ status: "ready", requestKey });
       })
       .catch((err: unknown) => {
