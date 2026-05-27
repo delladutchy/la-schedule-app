@@ -13,6 +13,7 @@ const appendAuditEvent = vi.fn();
 const authorizeEditorRequest = vi.fn();
 const refreshSnapshotAfterMutation = vi.fn();
 const scheduleDeferredReconciliationSync = vi.fn();
+const closeJobTimeEntriesForDeletedEvent = vi.fn();
 
 const snapshot = {
   version: 1 as const,
@@ -100,6 +101,10 @@ vi.mock("@/lib/mutation-postsync", () => ({
   scheduleDeferredReconciliationSync: (...args: unknown[]) => scheduleDeferredReconciliationSync(...args),
 }));
 
+vi.mock("@/lib/job-time", () => ({
+  closeJobTimeEntriesForDeletedEvent: (...args: unknown[]) => closeJobTimeEntriesForDeletedEvent(...args),
+}));
+
 async function loadRoutes() {
   const mod = await import("@/app/api/gigs/[eventId]/route");
   return { PATCH: mod.PATCH, DELETE: mod.DELETE };
@@ -115,9 +120,11 @@ describe("/api/gigs/[eventId] audit logging", () => {
     authorizeEditorRequest.mockReset();
     refreshSnapshotAfterMutation.mockReset();
     scheduleDeferredReconciliationSync.mockReset();
+    closeJobTimeEntriesForDeletedEvent.mockReset();
     mockEnv.OVERTURE_CALENDAR_ID = "overture@group.calendar.google.com";
     refreshSnapshotAfterMutation.mockResolvedValue({ status: "ok", snapshot });
     scheduleDeferredReconciliationSync.mockResolvedValue({ queued: true, statusCode: 202 });
+    closeJobTimeEntriesForDeletedEvent.mockResolvedValue(0);
   });
 
   it("appends audit event after successful edit", async () => {
@@ -952,5 +959,110 @@ describe("/api/gigs/[eventId] audit logging", () => {
     expect(refreshSnapshotAfterMutation).toHaveBeenCalledTimes(1);
     expect(scheduleDeferredReconciliationSync).toHaveBeenCalledTimes(1);
     expect(buildAndPersistSnapshot).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /api/gigs/[eventId] — job_time_entries cleanup on gig delete
+// ---------------------------------------------------------------------------
+
+describe("/api/gigs/[eventId] DELETE — job-time cleanup", () => {
+  beforeEach(() => {
+    updateAllDayEvent.mockReset();
+    deleteCalendarEvent.mockReset();
+    buildAndPersistSnapshot.mockReset();
+    readCurrentSnapshot.mockReset();
+    appendAuditEvent.mockReset();
+    authorizeEditorRequest.mockReset();
+    refreshSnapshotAfterMutation.mockReset();
+    scheduleDeferredReconciliationSync.mockReset();
+    closeJobTimeEntriesForDeletedEvent.mockReset();
+    mockEnv.OVERTURE_CALENDAR_ID = "overture@group.calendar.google.com";
+    refreshSnapshotAfterMutation.mockResolvedValue({ status: "ok", snapshot });
+    scheduleDeferredReconciliationSync.mockResolvedValue({ queued: true, statusCode: 202 });
+    closeJobTimeEntriesForDeletedEvent.mockResolvedValue(0);
+  });
+
+  async function deleteJeffGig(eventId: string) {
+    const { DELETE } = await loadRoutes();
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId,
+        ownerEditor: "jeff",
+        calendarId: "la-jobs@group.calendar.google.com",
+      }],
+    });
+    deleteCalendarEvent.mockResolvedValue({ id: eventId });
+    return DELETE(
+      new Request(`http://localhost/api/gigs/${eventId}`, { method: "DELETE" }),
+      { params: { eventId } },
+    );
+  }
+
+  it("closes active job_time_entries for the deleted event on successful delete", async () => {
+    closeJobTimeEntriesForDeletedEvent.mockResolvedValue(1);
+    const res = await deleteJeffGig("evt-clocked-in");
+    expect(res.status).toBe(200);
+    expect(closeJobTimeEntriesForDeletedEvent).toHaveBeenCalledWith("evt-clocked-in", "jeff");
+  });
+
+  it("passes delete even when there is no active job_time_entry (returns 0 rows closed)", async () => {
+    closeJobTimeEntriesForDeletedEvent.mockResolvedValue(0);
+    const res = await deleteJeffGig("evt-no-clock");
+    expect(res.status).toBe(200);
+    expect(closeJobTimeEntriesForDeletedEvent).toHaveBeenCalledWith("evt-no-clock", "jeff");
+  });
+
+  it("does not call job-time cleanup when Google delete fails", async () => {
+    const { DELETE } = await loadRoutes();
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "jeff" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-google-fail",
+        ownerEditor: "jeff",
+        calendarId: "la-jobs@group.calendar.google.com",
+      }],
+    });
+    deleteCalendarEvent.mockRejectedValue(Object.assign(new Error("Google error"), { status: 500 }));
+
+    const res = await DELETE(
+      new Request("http://localhost/api/gigs/evt-google-fail", { method: "DELETE" }),
+      { params: { eventId: "evt-google-fail" } },
+    );
+    expect(res.status).toBe(502);
+    expect(closeJobTimeEntriesForDeletedEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not touch job_time_entries for a different event when deleting one gig", async () => {
+    closeJobTimeEntriesForDeletedEvent.mockResolvedValue(1);
+    const res = await deleteJeffGig("evt-alpha");
+    expect(res.status).toBe(200);
+    expect(closeJobTimeEntriesForDeletedEvent).toHaveBeenCalledWith("evt-alpha", "jeff");
+    expect(closeJobTimeEntriesForDeletedEvent).not.toHaveBeenCalledWith("evt-beta", expect.anything());
+  });
+
+  it("still returns 200 and does not surface error when job-time cleanup throws", async () => {
+    closeJobTimeEntriesForDeletedEvent.mockRejectedValue(new Error("supabase down"));
+    const res = await deleteJeffGig("evt-supabase-fail");
+    expect(res.status).toBe(200);
+    const json = await res.json() as { status: string };
+    expect(json.status).toBe("ok");
+  });
+
+  it("does not call job-time cleanup when DELETE is unauthorized", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: false });
+    const { DELETE } = await loadRoutes();
+    const res = await DELETE(
+      new Request("http://localhost/api/gigs/evt-unauth", { method: "DELETE" }),
+      { params: { eventId: "evt-unauth" } },
+    );
+    expect(res.status).toBe(401);
+    expect(closeJobTimeEntriesForDeletedEvent).not.toHaveBeenCalled();
+    expect(deleteCalendarEvent).not.toHaveBeenCalled();
   });
 });

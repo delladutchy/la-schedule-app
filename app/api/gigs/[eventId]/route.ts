@@ -29,6 +29,7 @@ import {
   refreshSnapshotAfterMutation,
   scheduleDeferredReconciliationSync,
 } from "@/lib/mutation-postsync";
+import { closeJobTimeEntriesForDeletedEvent } from "@/lib/job-time";
 
 export const dynamic = "force-dynamic";
 
@@ -491,6 +492,20 @@ export async function DELETE(
       eventId,
     });
     timings.googleWriteMs = Date.now() - googleWriteStartedAt;
+
+    // Close any active job_time_entries for Jeff (only Jeff has time tracking).
+    // Best-effort: a cleanup failure is logged but does not block the success response.
+    try {
+      const closedCount = await closeJobTimeEntriesForDeletedEvent(eventId, "jeff");
+      if (closedCount > 0) {
+        console.log("[gigs:delete] closed active job-time rows", { eventId, closedCount });
+      }
+    } catch (cleanupError) {
+      console.warn(
+        "[gigs:delete] job-time cleanup failed (non-blocking)",
+        cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      );
+    }
 
     const postSyncStartedAt = Date.now();
     const postSync = await refreshSnapshotAfterMutation({

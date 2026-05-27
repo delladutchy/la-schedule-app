@@ -286,6 +286,33 @@ export async function deleteJobTimeEntryById(
   return data ? normalizeJobTimeEntry(data) : null;
 }
 
+/**
+ * Close all active job_time_entries for a deleted Google Calendar event.
+ * Sets clock_out_at = now for any rows where clock_in_at IS NOT NULL and
+ * clock_out_at IS NULL. Called server-side after a gig delete succeeds so
+ * the active clock pill clears and /api/job-time/active returns empty.
+ * Returns the count of rows closed (0 if none were active).
+ * Completed rows (clock_out_at already set) are left untouched.
+ */
+export async function closeJobTimeEntriesForDeletedEvent(
+  googleEventId: string,
+  editorProfile: string,
+): Promise<number> {
+  const client = getSupabaseServerClient();
+  const now = new Date().toISOString();
+  const { data, error } = await client
+    .from("job_time_entries")
+    .update({ clock_out_at: now, updated_at: now })
+    .eq("google_event_id", googleEventId)
+    .eq("editor_profile", editorProfile)
+    .not("clock_in_at", "is", null)
+    .is("clock_out_at", null)
+    .select("id");
+
+  if (error) throw new Error(`[job-time] close-for-delete failed: ${error.message}`);
+  return (data as Array<{ id: string }> | null)?.length ?? 0;
+}
+
 export async function upsertEditTimes(
   googleEventId: string,
   editorProfile: string,
