@@ -69,6 +69,16 @@ describe("editor profiles", () => {
       ownerEditor: "dave",
     }, env)).toBe(false);
 
+    expect(canProfileManageEvent(resolveEditorProfile("milos"), {
+      calendarId: env.GOOGLE_CALENDAR_ID,
+      ownerEditor: undefined,
+    }, env)).toBe(false);
+
+    expect(canProfileManageEvent(resolveEditorProfile("milos"), {
+      calendarId: env.OVERTURE_CALENDAR_ID,
+      ownerEditor: "milos",
+    }, env)).toBe(false);
+
     expect(canProfileManageEvent(resolveEditorProfile("mike"), {
       calendarId: env.OVERTURE_CALENDAR_ID,
       ownerEditor: "mike",

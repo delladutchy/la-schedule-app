@@ -538,7 +538,11 @@ function JobTimeDayRow({
     setActionError(null);
     try {
       const payload = buildClockMutationPayload(normalizedEventId, normalizedWorkDate, entry);
-      console.log("[job-time:clock-out] request", payload);
+      console.log("[job-time:clock-out-client]", {
+        entryId: payload.entryId ?? null,
+        eventId: normalizedEventId,
+        workDate: normalizedWorkDate,
+      });
       const res = await fetch("/api/job-time/clock-out", {
         method: "POST",
         headers: jsonHeaders,
@@ -576,17 +580,47 @@ function JobTimeDayRow({
         }
         return;
       }
-      const json = await res.json() as { entry?: JobTimeEntry };
+      const json = await res.json() as { entry?: JobTimeEntry; activeCount?: number; activeIds?: string[] };
       const returnedEntry = json.entry;
+      const serverActiveCount = typeof json.activeCount === "number" ? json.activeCount : null;
       console.log("[job-time:clock-out] response", {
         eventId: normalizedEventId,
         workDate: normalizedWorkDate,
         entryId: returnedEntry?.id ?? null,
         clock_out_at: returnedEntry?.clock_out_at ?? null,
+        serverActiveCount,
       });
       const confirmed = await fetchExactWorkDateEntry();
       if (confirmed?.clock_out_at) {
         setEntry(confirmed);
+        try {
+          const activeRes = await fetch("/api/job-time/active", {
+            headers: authHeaders,
+            credentials: "same-origin",
+            cache: "no-store",
+          });
+          let activeRows: JobTimeEntry[] = [];
+          if (activeRes.ok) {
+            const activeJson = await activeRes.json() as { entries?: JobTimeEntry[] };
+            if (Array.isArray(activeJson.entries)) {
+              activeRows = activeJson.entries;
+            }
+          }
+          const activeCount = activeRows.filter((e) => !!e.clock_in_at && !e.clock_out_at).length;
+          console.log("[job-time:active-after-clock-out]", {
+            eventId: normalizedEventId,
+            workDate: normalizedWorkDate,
+            activeCount,
+            activeIds: activeRows.map((e) => e.id),
+            serverActiveCount,
+          });
+          window.dispatchEvent(new CustomEvent("job-time:clock-out-completed"));
+          if (activeCount > 0) {
+            setActionError(`Diagnostic: ${activeCount} active entr${activeCount === 1 ? "y" : "ies"} still running after clock-out.`);
+          }
+        } catch {
+          window.dispatchEvent(new CustomEvent("job-time:clock-out-completed"));
+        }
         return;
       }
       if (confirmed?.clock_in_at && !confirmed.clock_out_at) {

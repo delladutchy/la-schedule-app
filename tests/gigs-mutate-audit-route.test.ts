@@ -453,6 +453,79 @@ describe("/api/gigs/[eventId] audit logging", () => {
     expect(appendAuditEvent).not.toHaveBeenCalled();
   });
 
+  it("blocks Milos from deleting Dave-owned LA event", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-dave-delete",
+        ownerEditor: "dave",
+        calendarId: "la-jobs@group.calendar.google.com",
+      }],
+    });
+    const { DELETE } = await loadRoutes();
+    const req = new Request("http://localhost/api/gigs/evt-dave-delete", { method: "DELETE" });
+    const res = await DELETE(req, { params: { eventId: "evt-dave-delete" } });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({ error: "forbidden" });
+    expect(deleteCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it("blocks Milos from editing event with no owner", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-no-owner-edit",
+        ownerEditor: undefined,
+        calendarId: "la-jobs@group.calendar.google.com",
+      }],
+    });
+    const { PATCH } = await loadRoutes();
+    const req = new Request("http://localhost/api/gigs/evt-no-owner-edit", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "LA#99999 — Test",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-no-owner-edit" } });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({ error: "forbidden" });
+    expect(updateAllDayEvent).not.toHaveBeenCalled();
+  });
+
+  it("blocks Milos from editing Overture booking", async () => {
+    authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "milos" });
+    readCurrentSnapshot.mockResolvedValue({
+      ...snapshot,
+      namedEvents: [{
+        ...snapshot.namedEvents[0],
+        eventId: "evt-overture-milos-edit",
+        ownerEditor: "milos",
+        calendarId: "overture@group.calendar.google.com",
+      }],
+    });
+    const { PATCH } = await loadRoutes();
+    const req = new Request("http://localhost/api/gigs/evt-overture-milos-edit", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "Overture Job",
+        startDate: "2026-05-08",
+        endDate: "2026-05-08",
+      }),
+    });
+    const res = await PATCH(req, { params: { eventId: "evt-overture-milos-edit" } });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({ error: "forbidden" });
+    expect(updateAllDayEvent).not.toHaveBeenCalled();
+  });
+
   it("blocks Dave from editing Overture booking", async () => {
     authorizeEditorRequest.mockReturnValue({ ok: true, editorId: "dave" });
     readCurrentSnapshot.mockResolvedValue({

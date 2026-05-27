@@ -825,6 +825,49 @@ describe("POST /api/job-time/clock-out — authorization", () => {
     const json = await res.json() as { entry: { id: string } };
     expect(json.entry.id).toBe("row-ok");
   });
+
+  it("re-queries active rows after sweep and returns activeCount: 0 when all cleared", async () => {
+    const { upsertClockOut, getActiveJobTimeEntries } = await import("@/lib/job-time");
+    const primary = { ...makeClockOutEntry(WORK_DATE), id: "row-primary", clock_out_at: "2026-05-18T18:00:00.000Z" };
+    vi.mocked(upsertClockOut).mockResolvedValueOnce(primary);
+    vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([]);
+
+    const POST = await loadClockOutRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entry: { id: string }; activeCount: number; activeIds: string[] };
+    expect(json.entry.id).toBe("row-primary");
+    expect(json.activeCount).toBe(0);
+    expect(json.activeIds).toEqual([]);
+    expect(getActiveJobTimeEntries).toHaveBeenCalledWith("jeff");
+  });
+
+  it("returns activeCount > 0 in response when orphaned rows remain after sweep", async () => {
+    const { upsertClockOut, getActiveJobTimeEntries } = await import("@/lib/job-time");
+    const primary = { ...makeClockOutEntry(WORK_DATE), id: "row-primary" };
+    const orphan = { ...makeClockInEntry(WORK_DATE_2), id: "row-orphan" };
+    vi.mocked(upsertClockOut).mockResolvedValueOnce(primary);
+    vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([orphan]);
+
+    const POST = await loadClockOutRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt1", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entry: { id: string }; activeCount: number; activeIds: string[] };
+    expect(json.activeCount).toBe(1);
+    expect(json.activeIds).toContain("row-orphan");
+  });
 });
 
 // ---------------------------------------------------------------------------
