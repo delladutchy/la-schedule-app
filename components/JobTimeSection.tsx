@@ -224,6 +224,19 @@ export function reconcileActiveEntryIntoMap(
   return result;
 }
 
+/**
+ * Validate a clock-in POST response entry. Returns the entry if it is a
+ * running row (clock_in_at set, clock_out_at null), otherwise null.
+ * Lets handleClockIn trust the POST response immediately without a secondary
+ * /active confirmation round-trip.
+ */
+export function resolveClockInEntry(
+  entry: JobTimeEntry | null | undefined,
+): JobTimeEntry | null {
+  if (!entry?.clock_in_at || entry.clock_out_at) return null;
+  return entry;
+}
+
 function buildAuthHeaders(editorToken: string | null): Record<string, string> {
   if (editorToken) return { Authorization: `Bearer ${editorToken}` };
   return {};
@@ -358,39 +371,12 @@ function JobTimeDayRow({
     && activeWorkDate && activeWorkDate === normalizedWorkDate
   );
 
-  const rowStateDiagnostic = entry
-    ? {
-        id: entry.id,
-        work_date: entry.work_date,
-        clock_in_at: entry.clock_in_at,
-        clock_out_at: entry.clock_out_at,
-      }
-    : null;
-
   // Sync when parent's fetch completes and provides an initial entry.
   useEffect(() => {
     setEntry(resolveRowInitialEntry(initialEntry, normalizedEventId, workDate));
     setActionError(null);
     setShowEditForm(false);
   }, [initialEntry, normalizedEventId, normalizedWorkDate, workDate]);
-
-  useEffect(() => {
-    console.log("[job-time:row] render", {
-      eventId: normalizedEventId,
-      workDate: normalizedWorkDate ?? workDate,
-      entry: rowStateDiagnostic,
-      isThisRowActive,
-    });
-  }, [
-    normalizedEventId,
-    normalizedWorkDate,
-    workDate,
-    rowStateDiagnostic?.id,
-    rowStateDiagnostic?.work_date,
-    rowStateDiagnostic?.clock_in_at,
-    rowStateDiagnostic?.clock_out_at,
-    isThisRowActive,
-  ]);
 
   const authHeaders = buildAuthHeaders(editorToken);
   const jsonHeaders = { "Content-Type": "application/json", ...authHeaders };
@@ -418,10 +404,6 @@ function JobTimeDayRow({
       setActionError(invalidContextError);
       return;
     }
-    console.log("[job-time:clock-in-click]", {
-      eventId: normalizedEventId,
-      workDate: normalizedWorkDate,
-    });
     setIsActionPending(true);
     setActionError(null);
     try {
@@ -434,12 +416,6 @@ function JobTimeDayRow({
       if (res.status === 503) { setActionError("Hours tracking unavailable."); return; }
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
-        console.log("[job-time:clock-in-response]", {
-          status: res.status,
-          error: errBody?.error ?? "unknown",
-          eventId: normalizedEventId,
-          workDate: normalizedWorkDate,
-        });
         if (res.status === 400 && errBody.error === "missing_work_date") {
           setActionError(invalidContextError);
         } else {
@@ -447,7 +423,17 @@ function JobTimeDayRow({
         }
         return;
       }
-      // Confirm via active route — this is the source of truth for running state.
+      const json = await res.json() as { entry?: JobTimeEntry };
+      // Trust the POST response first — no second round-trip needed.
+      // The clock-in route returns the active entry directly (new row or reused).
+      const fromPost = resolveClockInEntry(json.entry);
+      if (fromPost) {
+        onActiveEntryChange(fromPost);
+        window.dispatchEvent(new CustomEvent("job-time:clock-in-completed"));
+        return;
+      }
+      // Fallback: POST returned no running entry (unexpected edge case).
+      // Try /active once rather than showing an error immediately.
       try {
         const activeRes = await fetch("/api/job-time/active", {
           headers: authHeaders,
@@ -457,24 +443,14 @@ function JobTimeDayRow({
         if (activeRes.ok) {
           const activeJson = await activeRes.json() as { entries?: JobTimeEntry[] };
           const activeEntries = Array.isArray(activeJson.entries) ? activeJson.entries : [];
-          const confirmed = activeEntries[0] ?? null;
-          console.log("[job-time:clock-in:active-confirm]", {
-            eventId: normalizedEventId,
-            workDate: normalizedWorkDate,
-            activeId: confirmed?.id ?? null,
-            activeWorkDate: confirmed?.work_date ?? null,
-          });
-          if (confirmed?.clock_in_at && !confirmed.clock_out_at) {
-            onActiveEntryChange(confirmed);
+          const fromActive = resolveClockInEntry(activeEntries[0] ?? null);
+          if (fromActive) {
+            onActiveEntryChange(fromActive);
             window.dispatchEvent(new CustomEvent("job-time:clock-in-completed"));
             return;
           }
         }
-      } catch (confirmErr) {
-        console.warn("[job-time:clock-in] active confirm threw", {
-          error: confirmErr instanceof Error ? confirmErr.message : String(confirmErr),
-        });
-      }
+      } catch { /* fall through to error */ }
       setActionError("Could not confirm clock-in. Try again.");
     } catch {
       setActionError("Network error. Try again.");

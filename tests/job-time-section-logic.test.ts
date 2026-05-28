@@ -4,6 +4,7 @@ import {
   buildEntriesMapFromResponse,
   parseScheduledStartTimeToHHMM,
   reconcileActiveEntryIntoMap,
+  resolveClockInEntry,
   resolveEditFormDefaults,
   resolveEventIdForWorkDate,
   resolveJobTimeDisplayRows,
@@ -284,5 +285,45 @@ describe("reconcileActiveEntryIntoMap", () => {
     const result = reconcileActiveEntryIntoMap(map, active, ["2026-05-19", "2026-05-20"]);
     expect(result.get("2026-05-19")?.id).toBe("row-may19");
     expect(result.get("2026-05-20")?.id).toBe("row-may20");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveClockInEntry
+// Guards the clock-in confirmation fix: the POST response entry must be
+// trusted immediately without a secondary /active round-trip.
+// ---------------------------------------------------------------------------
+
+describe("resolveClockInEntry", () => {
+  it("returns the entry when POST response is a valid running row", () => {
+    const entry = makeEntry({ clock_in_at: "2026-05-27T14:00:00.000Z", clock_out_at: null });
+    expect(resolveClockInEntry(entry)).toBe(entry);
+  });
+
+  it("returns null when entry is null", () => {
+    expect(resolveClockInEntry(null)).toBeNull();
+  });
+
+  it("returns null when entry is undefined", () => {
+    expect(resolveClockInEntry(undefined)).toBeNull();
+  });
+
+  it("returns null when clock_in_at is null (not yet clocked in)", () => {
+    expect(resolveClockInEntry(makeEntry({ clock_in_at: null }))).toBeNull();
+  });
+
+  it("returns null when clock_out_at is set (completed entry, not running)", () => {
+    const completed = makeEntry({
+      clock_in_at: "2026-05-27T14:00:00.000Z",
+      clock_out_at: "2026-05-27T18:00:00.000Z",
+    });
+    expect(resolveClockInEntry(completed)).toBeNull();
+  });
+
+  it("accepts a reused active entry whose google_event_id differs from the current modal", () => {
+    // The clock-in route may return an existing active row from a different event.
+    // The client must accept it immediately regardless of google_event_id.
+    const reused = makeEntry({ google_event_id: "evt-other", clock_out_at: null });
+    expect(resolveClockInEntry(reused)).toBe(reused);
   });
 });
