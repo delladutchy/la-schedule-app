@@ -209,9 +209,14 @@ export function JobTimeActiveBanner({
       void latestFetchRef.current?.();
     };
 
+    const handleClockInCompleted = () => {
+      void latestFetchRef.current?.();
+    };
+
     window.addEventListener("focus", handleVisibilityRefresh);
     document.addEventListener("visibilitychange", handleVisibilityRefresh);
     window.addEventListener("job-time:clock-out-completed", handleClockOutCompleted);
+    window.addEventListener("job-time:clock-in-completed", handleClockInCompleted);
 
     return () => {
       cancelled = true;
@@ -219,6 +224,7 @@ export function JobTimeActiveBanner({
       window.removeEventListener("focus", handleVisibilityRefresh);
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
       window.removeEventListener("job-time:clock-out-completed", handleClockOutCompleted);
+      window.removeEventListener("job-time:clock-in-completed", handleClockInCompleted);
     };
   }, [editorToken, isJeffEditor, requestKey]);
 
