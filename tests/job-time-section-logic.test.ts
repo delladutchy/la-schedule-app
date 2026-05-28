@@ -7,6 +7,7 @@ import {
   resolveClockInEntry,
   resolveEditFormDefaults,
   resolveEventIdForWorkDate,
+  resolveIsThisRowActive,
   resolveJobTimeDisplayRows,
   resolveRowControlState,
   resolveScheduledStartTimeForWorkDate,
@@ -325,5 +326,80 @@ describe("resolveClockInEntry", () => {
     // The client must accept it immediately regardless of google_event_id.
     const reused = makeEntry({ google_event_id: "evt-other", clock_out_at: null });
     expect(resolveClockInEntry(reused)).toBe(reused);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveIsThisRowActive
+// Root cause guard: a stale active row from a different job (same work_date,
+// different google_event_id) must NOT make this modal show Clock Out.
+// Both work_date AND google_event_id must match the current modal's eventId.
+// ---------------------------------------------------------------------------
+
+describe("resolveIsThisRowActive", () => {
+  it("returns true when activeEntry matches both eventId and workDate", () => {
+    const active = makeEntry({
+      google_event_id: "evt-current",
+      work_date: "2026-05-27",
+      clock_in_at: "2026-05-27T23:07:00.000Z",
+      clock_out_at: null,
+    });
+    expect(resolveIsThisRowActive(active, "evt-current", "2026-05-27")).toBe(true);
+  });
+
+  it("returns false for stale active row from different event with same workDate — core Clock Out bug fix", () => {
+    // This is the root cause: old buggy clock-in created active rows for wrong events.
+    // Same work_date but different google_event_id must NOT trigger Clock Out for this modal.
+    const stale = makeEntry({
+      google_event_id: "evt-stale-from-old-bug",
+      work_date: "2026-05-27",
+      clock_in_at: "2026-05-27T20:00:00.000Z",
+      clock_out_at: null,
+    });
+    expect(resolveIsThisRowActive(stale, "evt-current", "2026-05-27")).toBe(false);
+  });
+
+  it("returns false when workDate does not match even if eventId matches", () => {
+    const active = makeEntry({
+      google_event_id: "evt-1",
+      work_date: "2026-05-26",
+      clock_in_at: "2026-05-26T09:00:00.000Z",
+      clock_out_at: null,
+    });
+    expect(resolveIsThisRowActive(active, "evt-1", "2026-05-27")).toBe(false);
+  });
+
+  it("returns false for completed entry (clock_out_at set) even when eventId and workDate match", () => {
+    const completed = makeEntry({
+      google_event_id: "evt-1",
+      work_date: "2026-05-27",
+      clock_in_at: "2026-05-27T09:00:00.000Z",
+      clock_out_at: "2026-05-27T18:00:00.000Z",
+    });
+    expect(resolveIsThisRowActive(completed, "evt-1", "2026-05-27")).toBe(false);
+  });
+
+  it("returns false when activeEntry is null", () => {
+    expect(resolveIsThisRowActive(null, "evt-1", "2026-05-27")).toBe(false);
+  });
+
+  it("returns false when activeEntry has no clock_in_at", () => {
+    const noClockIn = makeEntry({
+      google_event_id: "evt-1",
+      work_date: "2026-05-27",
+      clock_in_at: null,
+      clock_out_at: null,
+    });
+    expect(resolveIsThisRowActive(noClockIn, "evt-1", "2026-05-27")).toBe(false);
+  });
+
+  it("normalizes ISO work_date format on activeEntry when matching", () => {
+    const active = makeEntry({
+      google_event_id: "evt-1",
+      work_date: "2026-05-27T00:00:00.000Z",
+      clock_in_at: "2026-05-27T09:00:00.000Z",
+      clock_out_at: null,
+    });
+    expect(resolveIsThisRowActive(active, "evt-1", "2026-05-27")).toBe(true);
   });
 });

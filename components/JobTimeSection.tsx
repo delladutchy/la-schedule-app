@@ -225,6 +225,27 @@ export function reconcileActiveEntryIntoMap(
 }
 
 /**
+ * Determine whether the given activeEntry is the confirmed running entry for
+ * this specific row (eventId + workDate). Requires both work_date AND
+ * google_event_id to match so stale active rows from different jobs (which
+ * share the same work_date) cannot make this row show Clock Out.
+ */
+export function resolveIsThisRowActive(
+  activeEntry: JobTimeEntry | null,
+  eventId: string,
+  workDate: string,
+): boolean {
+  if (!activeEntry?.clock_in_at || activeEntry.clock_out_at) return false;
+  const activeWorkDate = normalizeWorkDate(activeEntry.work_date);
+  const normalizedWorkDate = normalizeWorkDate(workDate);
+  if (!activeWorkDate || !normalizedWorkDate) return false;
+  return (
+    activeWorkDate === normalizedWorkDate
+    && activeEntry.google_event_id === eventId.trim()
+  );
+}
+
+/**
  * Validate a clock-in POST response entry. Returns the entry if it is a
  * running row (clock_in_at set, clock_out_at null), otherwise null.
  * Lets handleClockIn trust the POST response immediately without a secondary
@@ -365,11 +386,9 @@ function JobTimeDayRow({
   const invalidContextError = "Hours error: invalid job context for this date.";
 
   // Running state is driven by the active route, not the local entry.
-  const activeWorkDate = activeEntry ? normalizeWorkDate(activeEntry.work_date) : null;
-  const isThisRowActive = !!(
-    activeEntry?.clock_in_at && !activeEntry.clock_out_at
-    && activeWorkDate && activeWorkDate === normalizedWorkDate
-  );
+  // Both work_date AND google_event_id must match so stale rows from other
+  // jobs (same date, different event) cannot make this row show Clock Out.
+  const isThisRowActive = resolveIsThisRowActive(activeEntry, normalizedEventId, workDate);
 
   // Sync when parent's fetch completes and provides an initial entry.
   useEffect(() => {
@@ -515,6 +534,15 @@ function JobTimeDayRow({
       }
       onActiveEntryChange(null);
       window.dispatchEvent(new CustomEvent("job-time:clock-out-completed"));
+      // If the server sweep left orphaned active rows, fire-and-forget a clear-active
+      // to prevent them from showing Clock Out on next modal reopen.
+      if ((json.activeCount ?? 0) > 0) {
+        void fetch("/api/job-time/clear-active", {
+          method: "POST",
+          headers: authHeaders,
+          credentials: "same-origin",
+        }).catch(() => { /* non-fatal */ });
+      }
     } catch {
       setActionError("Network error. Try again.");
     } finally {
