@@ -6,7 +6,7 @@ import {
 } from "@/lib/editor-auth";
 import {
   getActiveJobTimeEntries,
-  resolveDeterministicActiveEntry,
+  closeAllRemainingActiveEntries,
   upsertClockIn,
   isJeffEditorId,
   normalizeEditorProfile,
@@ -56,31 +56,42 @@ export async function POST(req: Request) {
   // TODO: Final production rule: validate workDate === today before allowing clock-in.
   // Deferred until Edit Times/Clear Entry are verified in production.
 
-  console.log("[job-time:clock-in] eventId:", eventIdStr, "workDate:", workDateStr, "editor:", auth.editorId);
+  console.log("[job-time:clock-in] received", { eventId: eventIdStr, workDate: workDateStr, editor: auth.editorId });
 
   try {
     const editorProfile = normalizeEditorProfile(auth.editorId);
-    const activeEntries = await getActiveJobTimeEntries(editorProfile);
-    const activeEntry = resolveDeterministicActiveEntry(activeEntries);
 
-    if (activeEntry) {
-      console.log("[job-time:clock-in] existing active row reused", {
-        id: activeEntry.id,
-        eventId: activeEntry.google_event_id,
-        workDate: activeEntry.work_date,
-        clock_in_at: activeEntry.clock_in_at,
-        clock_out_at: activeEntry.clock_out_at,
+    // All currently active rows for this editor (across all events).
+    const activeEntries = await getActiveJobTimeEntries(editorProfile);
+
+    // Idempotent: already clocked in for this exact event + workDate — return it.
+    const exactMatch = activeEntries.find(
+      (e) => e.google_event_id === eventIdStr && e.work_date === workDateStr,
+    );
+    if (exactMatch) {
+      console.log("[job-time:clock-in] idempotent — existing row returned", {
+        id: exactMatch.id,
+        eventId: exactMatch.google_event_id,
+        workDate: exactMatch.work_date,
       });
-      return NextResponse.json({ entry: activeEntry });
+      return NextResponse.json({ entry: exactMatch });
     }
 
-    const entry = await upsertClockIn(
-      eventIdStr,
-      editorProfile,
-      workDateStr,
-      laNumberStr,
-    );
-    console.log("[job-time:clock-in] created new row", {
+    // Sweep any unrelated active rows before creating the new one so only one
+    // row is active at a time. Sweep failure is non-fatal — the new row can
+    // still be created; orphaned rows are cleaned up on the next clock-out.
+    if (activeEntries.length > 0) {
+      const sweepAt = new Date().toISOString();
+      try {
+        const swept = await closeAllRemainingActiveEntries(editorProfile, sweepAt, null);
+        console.log("[job-time:clock-in] swept unrelated active rows", { count: swept });
+      } catch (sweepErr) {
+        console.warn("[job-time:clock-in] sweep failed (non-fatal)", sweepErr instanceof Error ? sweepErr.message : sweepErr);
+      }
+    }
+
+    const entry = await upsertClockIn(eventIdStr, editorProfile, workDateStr, laNumberStr);
+    console.log("[job-time:clock-in] created row", {
       id: entry.id,
       eventId: entry.google_event_id,
       workDate: entry.work_date,

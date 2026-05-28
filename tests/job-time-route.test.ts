@@ -464,16 +464,15 @@ describe("POST /api/job-time/clock-in — authorization", () => {
     expect(upsertClockIn).toHaveBeenCalledWith("evt-create", "jeff", WORK_DATE, undefined);
   });
 
-  it("reuses the existing active row instead of creating a duplicate", async () => {
-    const { getActiveJobTimeEntries, upsertClockIn } = await import("@/lib/job-time");
+  it("returns existing active row idempotently when same eventId+workDate is already active", async () => {
+    const { getActiveJobTimeEntries, upsertClockIn, closeAllRemainingActiveEntries } = await import("@/lib/job-time");
     const existing = {
-      ...makeClockInEntry("2026-05-17"),
-      id: "row-existing-active",
-      google_event_id: "evt-existing-active",
-      work_date: "2026-05-17",
-      clock_in_at: "2026-05-17T12:00:00.000Z",
+      ...makeClockInEntry(WORK_DATE),
+      id: "row-same-event",
+      google_event_id: "evt-target",
+      work_date: WORK_DATE,
+      clock_in_at: "2026-05-18T09:00:00.000Z",
       clock_out_at: null,
-      updated_at: "2026-05-17T12:00:00.000Z",
     };
     vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([existing]);
 
@@ -482,20 +481,22 @@ describe("POST /api/job-time/clock-in — authorization", () => {
       new Request("http://localhost/api/job-time/clock-in", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...jeffBearer() },
-        body: JSON.stringify({ eventId: "evt-new-target", workDate: WORK_DATE }),
+        body: JSON.stringify({ eventId: "evt-target", workDate: WORK_DATE }),
       }),
     );
 
     expect(res.status).toBe(200);
+    // No new row created and no sweep — pure idempotent return
     expect(upsertClockIn).not.toHaveBeenCalled();
+    expect(closeAllRemainingActiveEntries).not.toHaveBeenCalled();
     const json = await res.json() as { entry: { id: string; google_event_id: string; work_date: string } };
-    expect(json.entry.id).toBe("row-existing-active");
-    expect(json.entry.google_event_id).toBe("evt-existing-active");
-    expect(json.entry.work_date).toBe("2026-05-17");
+    expect(json.entry.id).toBe("row-same-event");
+    expect(json.entry.google_event_id).toBe("evt-target");
+    expect(json.entry.work_date).toBe(WORK_DATE);
   });
 
-  it("prevents duplicate active rows even when request eventId/workDate differ", async () => {
-    const { getActiveJobTimeEntries, upsertClockIn } = await import("@/lib/job-time");
+  it("sweeps unrelated active row and creates new row for the requested eventId+workDate", async () => {
+    const { getActiveJobTimeEntries, upsertClockIn, closeAllRemainingActiveEntries } = await import("@/lib/job-time");
     const activeFromOtherEvent = {
       ...makeClockInEntry("2026-05-20"),
       id: "row-other-event",
@@ -503,7 +504,6 @@ describe("POST /api/job-time/clock-in — authorization", () => {
       work_date: "2026-05-20",
       clock_in_at: "2026-05-20T08:00:00.000Z",
       clock_out_at: null,
-      updated_at: "2026-05-20T08:30:00.000Z",
     };
     vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([activeFromOtherEvent]);
 
@@ -517,9 +517,15 @@ describe("POST /api/job-time/clock-in — authorization", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(upsertClockIn).not.toHaveBeenCalled();
-    const json = await res.json() as { entry: { id: string } };
-    expect(json.entry.id).toBe("row-other-event");
+    // Unrelated row must be swept before the new row is created
+    expect(closeAllRemainingActiveEntries).toHaveBeenCalledWith("jeff", expect.any(String), null);
+    // New row created for the REQUESTED event, not the stale one
+    expect(upsertClockIn).toHaveBeenCalledWith("evt-requested", "jeff", "2026-05-18", undefined);
+    const json = await res.json() as { entry: { id: string; google_event_id: string; work_date: string } };
+    expect(json.entry.google_event_id).toBe("evt-requested");
+    expect(json.entry.work_date).toBe("2026-05-18");
+    // Must NOT return the stale other-event row
+    expect(json.entry.id).not.toBe("row-other-event");
   });
 
   it("normalizes ISO workDate input to YYYY-MM-DD", async () => {
@@ -651,6 +657,51 @@ describe("POST /api/job-time/clock-in — authorization", () => {
     const json = await res.json() as { error: string; entry?: unknown };
     expect(json.error).toBe("internal_error");
     expect("entry" in json).toBe(false);
+  });
+
+  it("returned entry always has google_event_id and work_date matching the request", async () => {
+    // Regression guard: the returned entry must belong to the requested event+date,
+    // not to a stale/unrelated active row, so modal reopen can find it via GET.
+    const POST = await loadClockInRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt-specific", workDate: WORK_DATE }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entry: { google_event_id: string; work_date: string; clock_out_at: unknown } };
+    expect(json.entry.google_event_id).toBe("evt-specific");
+    expect(json.entry.work_date).toBe(WORK_DATE);
+    expect(json.entry.clock_out_at).toBeNull();
+  });
+
+  it("still creates current event row even when sweep of unrelated row fails", async () => {
+    const { getActiveJobTimeEntries, upsertClockIn, closeAllRemainingActiveEntries } = await import("@/lib/job-time");
+    const staleRow = {
+      ...makeClockInEntry("2026-05-17"),
+      id: "row-stale",
+      google_event_id: "evt-stale",
+      work_date: "2026-05-17",
+    };
+    vi.mocked(getActiveJobTimeEntries).mockResolvedValueOnce([staleRow]);
+    vi.mocked(closeAllRemainingActiveEntries).mockRejectedValueOnce(new Error("sweep db error"));
+
+    const POST = await loadClockInRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clock-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...jeffBearer() },
+        body: JSON.stringify({ eventId: "evt-current", workDate: WORK_DATE }),
+      }),
+    );
+
+    // Sweep failure must not block clock-in
+    expect(res.status).toBe(200);
+    expect(upsertClockIn).toHaveBeenCalledWith("evt-current", "jeff", WORK_DATE, undefined);
+    const json = await res.json() as { entry: { google_event_id: string } };
+    expect(json.entry.google_event_id).toBe("evt-current");
   });
 });
 
@@ -1229,5 +1280,173 @@ describe("job-time row targeting independence", () => {
 
     expect(upsertClockOut).toHaveBeenCalledWith("evt-alpha", "jeff", WORK_DATE);
     expect(deleteJobTimeEntry).toHaveBeenCalledWith("evt-beta", "jeff", WORK_DATE_2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Modal reopen readback — clock-in persists to correct eventId+workDate
+// ---------------------------------------------------------------------------
+
+describe("clock-in persistence: modal reopen shows correct state", () => {
+  it("GET by exact eventId+workDate returns active row after clock-in", async () => {
+    // Simulates modal reopen after Clock In: GET must find the row by the current eventId+workDate.
+    const { getJobTimeEntries } = await import("@/lib/job-time");
+    const activeRow = { ...makeClockInEntry(WORK_DATE), google_event_id: "evt-current" };
+    vi.mocked(getJobTimeEntries).mockResolvedValueOnce([activeRow]);
+
+    const GET = await loadGetRoute();
+    const res = await GET(
+      new Request(`http://localhost/api/job-time?eventId=evt-current&workDate=${WORK_DATE}`, {
+        headers: jeffBearer(),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entries: Array<{ google_event_id: string; clock_out_at: string | null }> };
+    expect(json.entries).toHaveLength(1);
+    expect(json.entries[0]?.google_event_id).toBe("evt-current");
+    expect(json.entries[0]?.clock_out_at).toBeNull();
+  });
+
+  it("GET by exact eventId+workDate returns no row when clock-in used a different eventId", async () => {
+    // This was the bug: clock-in returned evt-other's row, but GET queries by evt-current.
+    // After the fix, clock-in always creates a row for evt-current, so this case should not occur.
+    // The test confirms the GET route correctly returns empty when no row exists for the event.
+    const { getJobTimeEntries } = await import("@/lib/job-time");
+    vi.mocked(getJobTimeEntries).mockResolvedValueOnce([]);
+
+    const GET = await loadGetRoute();
+    const res = await GET(
+      new Request(`http://localhost/api/job-time?eventId=evt-current&workDate=${WORK_DATE}`, {
+        headers: jeffBearer(),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entries: unknown[] };
+    expect(json.entries).toEqual([]);
+  });
+
+  it("GET returns completed row for eventId+workDate after clock-out → modal shows Clock In", async () => {
+    const { getJobTimeEntries } = await import("@/lib/job-time");
+    vi.mocked(getJobTimeEntries).mockResolvedValueOnce([makeClockOutEntry(WORK_DATE)]);
+
+    const GET = await loadGetRoute();
+    const res = await GET(
+      new Request(`http://localhost/api/job-time?eventId=evt1&workDate=${WORK_DATE}`, {
+        headers: jeffBearer(),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entries: Array<{ clock_in_at: string | null; clock_out_at: string | null }> };
+    expect(json.entries[0]?.clock_in_at).toBeTruthy();
+    expect(json.entries[0]?.clock_out_at).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/job-time/clear-active
+// ---------------------------------------------------------------------------
+
+async function loadClearActiveRoute() {
+  const mod = await import("@/app/api/job-time/clear-active/route");
+  return mod.POST;
+}
+
+describe("POST /api/job-time/clear-active — authorization", () => {
+  it("rejects unauthenticated requests with 401", async () => {
+    const POST = await loadClearActiveRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clear-active", { method: "POST" }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects Dave with 403", async () => {
+    const POST = await loadClearActiveRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clear-active", {
+        method: "POST",
+        headers: { Authorization: "Bearer dave-editor-token-0123456789" },
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects Milos with 403", async () => {
+    const POST = await loadClearActiveRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clear-active", {
+        method: "POST",
+        headers: { Authorization: "Bearer milos-editor-token-0123456789" },
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /api/job-time/clear-active — behavior", () => {
+  it("closes all active Jeff rows and returns the count", async () => {
+    const { closeAllRemainingActiveEntries } = await import("@/lib/job-time");
+    vi.mocked(closeAllRemainingActiveEntries).mockResolvedValueOnce(2);
+
+    const POST = await loadClearActiveRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clear-active", {
+        method: "POST",
+        headers: { ...jeffBearer() },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { closed: number };
+    expect(json.closed).toBe(2);
+    expect(closeAllRemainingActiveEntries).toHaveBeenCalledWith("jeff", expect.any(String), null);
+  });
+
+  it("returns closed: 0 when there are no active rows to close", async () => {
+    const { closeAllRemainingActiveEntries } = await import("@/lib/job-time");
+    vi.mocked(closeAllRemainingActiveEntries).mockResolvedValueOnce(0);
+
+    const POST = await loadClearActiveRoute();
+    const res = await POST(
+      new Request("http://localhost/api/job-time/clear-active", {
+        method: "POST",
+        headers: { ...jeffBearer() },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json() as { closed: number };
+    expect(json.closed).toBe(0);
+  });
+
+  it("only targets Jeff editor profile — never other profiles", async () => {
+    const { closeAllRemainingActiveEntries } = await import("@/lib/job-time");
+
+    const POST = await loadClearActiveRoute();
+    await POST(
+      new Request("http://localhost/api/job-time/clear-active", {
+        method: "POST",
+        headers: { ...jeffBearer() },
+      }),
+    );
+    // Must be called with "jeff" profile — never any other profile string
+    expect(closeAllRemainingActiveEntries).toHaveBeenCalledWith("jeff", expect.any(String), null);
+    const calls = vi.mocked(closeAllRemainingActiveEntries).mock.calls;
+    expect(calls.every((call) => call[0] === "jeff")).toBe(true);
+  });
+
+  it("only updates active rows — never deletes", async () => {
+    // closeAllRemainingActiveEntries uses UPDATE (sets clock_out_at), not DELETE.
+    // This test documents that the route calls close (not delete) so rows are preserved.
+    const { closeAllRemainingActiveEntries, deleteJobTimeEntry, deleteJobTimeEntryById } = await import("@/lib/job-time");
+
+    const POST = await loadClearActiveRoute();
+    await POST(
+      new Request("http://localhost/api/job-time/clear-active", {
+        method: "POST",
+        headers: { ...jeffBearer() },
+      }),
+    );
+    expect(closeAllRemainingActiveEntries).toHaveBeenCalled();
+    expect(deleteJobTimeEntry).not.toHaveBeenCalled();
+    expect(deleteJobTimeEntryById).not.toHaveBeenCalled();
   });
 });
