@@ -24,7 +24,6 @@ import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import { JobTimeSection } from "@/components/JobTimeSection";
-import { JobTimeActiveBanner } from "@/components/JobTimeActiveBanner";
 
 interface Props {
   month: MonthBoardData;
@@ -1174,11 +1173,6 @@ export function MonthBoard({
 
   return (
     <>
-      <JobTimeActiveBanner
-        isJeffEditor={isJeffEditor}
-        editorToken={editorToken}
-        suppressed={!!activeDetailPanel || !!activeBookingPanel}
-      />
       <section
         className="month-board"
         aria-label={month.label}

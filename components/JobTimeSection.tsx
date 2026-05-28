@@ -486,8 +486,9 @@ function JobTimeDayRow({
       if (res.status === 503) { setActionError("Hours tracking unavailable."); return; }
       if (!res.ok) {
         if (res.status === 404) {
-          // Nothing running — clear active state and move on.
+          // Nothing running — clear both active and local entry state.
           onActiveEntryChange(null);
+          setEntry(null);
           setActionError("No active clock-in found.");
           return;
         }
@@ -783,7 +784,7 @@ function JobTimeDayRow({
         {dateHeader}
         {showEditForm ? editForm : (
           <>
-            <p className="job-time-status">Clocked in — active timer shown above</p>
+            <p className="job-time-status">Clocked in at {formatClockTime(activeEntry?.clock_in_at ?? "")}</p>
             {actionError ? <p className="job-time-error" role="alert">{actionError}</p> : null}
             <button
               type="button"
@@ -831,8 +832,8 @@ function JobTimeDayRow({
     );
   }
 
-  // ── State: clocked in, running (local entry, not confirmed by active route) ─
-  // Fallback recovery state — shows Clock Out without an elapsed timer.
+  // ── State: clocked in locally but not confirmed by active route ─────────────
+  // activeEntry is null here — never show Clock Out in this state.
   if (isRunning) {
     return (
       <div className={wrapClass}>
@@ -843,16 +844,6 @@ function JobTimeDayRow({
               Clocked in at {formatClockTime(entry.clock_in_at)}
             </p>
             {actionError ? <p className="job-time-error" role="alert">{actionError}</p> : null}
-            {rowControls.showClockOut ? (
-              <button
-                type="button"
-                className={`${btnClass} job-time-button--clock-out`}
-                onClick={() => { void handleClockOut(); }}
-                disabled={isActionPending}
-              >
-                {isActionPending ? "Clocking out…" : "Clock Out"}
-              </button>
-            ) : null}
             {correctionButtons}
           </>
         )}

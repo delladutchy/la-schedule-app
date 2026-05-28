@@ -13,7 +13,6 @@ import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-sess
 import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { JobTimeSection } from "@/components/JobTimeSection";
-import { JobTimeActiveBanner } from "@/components/JobTimeActiveBanner";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import {
   buildGigDayDetailsForRange,
@@ -1252,11 +1251,6 @@ export function DayBoard({
   if (!hasRows) {
     return (
       <>
-        <JobTimeActiveBanner
-          isJeffEditor={isJeffEditor}
-          editorToken={editorToken}
-          suppressed={!!activeDetailPanel || !!activeBookingPanel}
-        />
         <div
           className="board"
           onTouchStart={onTouchStart}
@@ -1275,11 +1269,6 @@ export function DayBoard({
 
   return (
     <>
-      <JobTimeActiveBanner
-        isJeffEditor={isJeffEditor}
-        editorToken={editorToken}
-        suppressed={!!activeDetailPanel || !!activeBookingPanel}
-      />
       <div
         className="board"
         onTouchStart={onTouchStart}
