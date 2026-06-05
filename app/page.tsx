@@ -35,7 +35,6 @@ const headerFont = Inter({
 // Reading cookies()/searchParams forces dynamic rendering; force-dynamic is
 // kept for clarity. The SSR cost is now O(date math), not O(snapshot+build).
 export const dynamic = "force-dynamic";
-const TODAY_TIMEZONE = "America/New_York";
 
 // Sentinel `generatedAtUtc` for the synthetic SSR payload. Any real cached
 // payload's timestamp is strictly newer, so `pickFreshestForView` always
@@ -169,9 +168,9 @@ export default async function AvailabilityPage({
   const viewMode = resolveViewMode(firstParam(searchParams.view));
   const initialEditorToken = firstParam(searchParams.editor);
   const now = Date.now();
-  const todayKey = todayInZone(TODAY_TIMEZONE, now);
-  const todayMonthKey = todayKey.slice(0, 7);
   const tz = file.timezone;
+  const todayKey = todayInZone(tz, now);
+  const todayMonthKey = todayKey.slice(0, 7);
 
   // Anchor the requested week/month from searchParams (or default to today)
   // without touching the snapshot. Window-clamping happens client-side once

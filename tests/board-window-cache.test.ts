@@ -479,3 +479,50 @@ describe("storage unavailable", () => {
     expect(calls.some((c) => c.startsWith(`set:${BOARD_WINDOW_CACHE_KEY_PREFIX}:`))).toBe(true);
   });
 });
+
+// Regression: Jun 5 highlighted as Jun 4 (stale localStorage todayKey)
+//
+// The synthetic SSR shell uses generatedAtUtc = "1970-01-01T00:00:00.000Z" so
+// that any real cached payload is treated as strictly newer and shown
+// immediately for instant repeat-visit paint. The downside is that a payload
+// from yesterday is also "newer", and its stale todayKey drives the initial
+// today-highlighting and Today button href until the background fetch returns.
+//
+// The fix (clientTodayKey in ScheduleView) reads the browser clock instead of
+// trusting the cached payload's todayKey, so highlighting is always correct
+// regardless of localStorage state.
+describe("pickFreshestForView — synthetic sentinel allows stale todayKey (regression doc)", () => {
+  const SYNTHETIC_SENTINEL = "1970-01-01T00:00:00.000Z";
+
+  it("returns a payload from yesterday because its timestamp is newer than the 1970 sentinel", () => {
+    // The synthetic SSR payload has generatedAtUtc = sentinel so that cached
+    // payloads from real prior visits always win the freshness check.
+    const syntheticSsr = makePayload({
+      editorId: "jeff",
+      generatedAtUtc: SYNTHETIC_SENTINEL,
+      weekStart: "2026-06-01",
+      monthKey: "2026-06",
+    });
+    // Yesterday's cached payload — todayKey is "2026-06-04" but today is Jun 5.
+    const staleYesterday = {
+      ...makePayload({
+        editorId: "jeff",
+        generatedAtUtc: "2026-06-04T20:00:00.000Z",
+        weekStart: "2026-06-01",
+        monthKey: "2026-06",
+      }),
+      todayKey: "2026-06-04",
+      todayMonthKey: "2026-06",
+    };
+    writeCache("jeff", staleYesterday, storage);
+    const entry = readCache("jeff", storage);
+    // pickFreshestForView accepts it because "2026-06-04T..." > "1970-01-01T..."
+    const restored = pickFreshestForView(entry, "jeff", buildViewKey(syntheticSsr), syntheticSsr);
+    expect(restored).not.toBeNull();
+    // The restored payload carries yesterday's todayKey — this is the stale
+    // value that caused Jun 5 to be highlighted as Jun 4 before the fix.
+    expect(restored?.todayKey).toBe("2026-06-04");
+    // clientTodayKey in ScheduleView overrides this with DateTime.now() so the
+    // stale value never reaches the today-highlighting or Today button href.
+  });
+});

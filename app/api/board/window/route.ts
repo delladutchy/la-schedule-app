@@ -23,7 +23,6 @@ import { todayInZone } from "@/lib/time";
 import type { Snapshot } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-const TODAY_TIMEZONE = "America/New_York";
 
 export async function GET(req: Request) {
   const { file, env } = getConfig();
@@ -156,7 +155,7 @@ function resolveSelectedCacheCoordinates(opts: {
   timezone: string;
   nowMs: number;
 }): { weekStart: string; monthKey: string } {
-  const todayKey = todayInZone(TODAY_TIMEZONE, opts.nowMs);
+  const todayKey = todayInZone(opts.timezone, opts.nowMs);
   const todayMonthKey = todayKey.slice(0, 7);
 
   const requestedWeek = opts.query.requestedWeek ?? todayKey;

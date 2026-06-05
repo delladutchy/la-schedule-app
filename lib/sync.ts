@@ -32,6 +32,8 @@ export interface BuildResult {
   error?: string;
   /** True when the FreeBusy call was rejected due to Google API quota/rate limits. */
   isRateLimit?: boolean;
+  /** True when the FreeBusy call failed due to an OAuth auth error (invalid_grant etc). */
+  isAuthFailure?: boolean;
   /** True when the sync was skipped because a fresh snapshot already existed. */
   skipped?: boolean;
   erroredCalendarIds?: string[];
@@ -110,10 +112,10 @@ export async function buildAndPersistSnapshot(
   if (freeBusyResult.status === "rejected") {
     const reason = freeBusyResult.reason;
     const msg = reason instanceof Error ? reason.message : String(reason);
-    const { isRateLimit } = classifyGoogleError(reason);
-    console.error(`[sync] freebusy transport error${isRateLimit ? " (rate-limited)" : ""}:`, msg);
+    const { isRateLimit, isAuthFailure } = classifyGoogleError(reason);
+    console.error(`[sync] freebusy transport error${isRateLimit ? " (rate-limited)" : ""}${isAuthFailure ? " (auth-failure)" : ""}:`, msg);
     console.info(`[sync] timings ms freebusy=${freeBusyDurationMs} namedEvents=${namedEventsDurationMs} total=${Date.now() - syncStartedAt}`);
-    return { status: "failed", error: `FreeBusy transport error: ${msg}`, isRateLimit };
+    return { status: "failed", error: `FreeBusy transport error: ${msg}`, isRateLimit, isAuthFailure };
   }
   const fb = freeBusyResult.value;
 

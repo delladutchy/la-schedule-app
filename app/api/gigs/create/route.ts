@@ -159,6 +159,13 @@ export async function POST(req: Request) {
     const preflight = await buildAndPersistSnapshot();
     timings.preflightSyncMs = Date.now() - preflightStartedAt;
     if (preflight.status !== "ok" || !preflight.snapshot) {
+      if (preflight.isAuthFailure) {
+        logCreateRouteTiming("calendar_auth_failed_preflight", editorId, routeStartedAt, timings);
+        return NextResponse.json(
+          { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
+          { status: 503 },
+        );
+      }
       logCreateRouteTiming("snapshot_unavailable_prewrite", editorId, routeStartedAt, timings);
       return NextResponse.json(
         {

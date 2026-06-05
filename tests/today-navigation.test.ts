@@ -237,3 +237,82 @@ describe("focused date navigation helpers", () => {
     }
   });
 });
+
+// Regression: Jun 5 highlighted as Jun 4, Today required two presses
+//
+// Root cause: the localStorage hydration effect restores yesterday's
+// BoardWindowPayload (which has todayKey="2026-06-04") because any real
+// generatedAtUtc is newer than the synthetic SSR sentinel "1970-01-01".
+// That stale todayKey drove effectiveTodayKey (wrong highlight), the Today
+// button href (/?start=2026-06-04), and setFocusedDate inside
+// handleBoardNavigate. A second press was required after the background
+// fetch returned a fresh payload.
+//
+// Fix: ScheduleView derives clientTodayKey from DateTime.now() in the
+// display timezone and uses it exclusively for today-highlighting and the
+// Today navigation path, never trusting the cached payload's todayKey.
+describe("Today navigation stale-cache regression (Jun 5 highlighted as Jun 4)", () => {
+  const timezone = "America/New_York";
+  // Actual current date (what the browser clock says)
+  const ACTUAL_TODAY = "2026-06-05"; // Friday
+  // Yesterday's value still sitting in a cached payload from the prior session
+  const STALE_TODAY = "2026-06-04"; // Thursday
+
+  it("isTodayClickTarget identifies Today correctly when called with clientTodayKey", () => {
+    // After the fix: effectiveTodayKey = clientTodayKey = "2026-06-05"
+    // The Today button href becomes /?view=list&start=2026-06-05
+    const target = {
+      viewMode: "list" as const,
+      weekStart: ACTUAL_TODAY,
+      monthKey: "2026-06",
+    };
+    expect(isTodayClickTarget(target, ACTUAL_TODAY, "2026-06")).toBe(true);
+  });
+
+  it("isTodayClickTarget misidentifies Today when given a stale todayKey — documents old bug", () => {
+    // Before the fix: effectiveTodayKey came from the stale cached payload =
+    // "2026-06-04", so the Today href was /?view=list&start=2026-06-04 and
+    // isTodayNavigation = true even though the user was NOT navigating to
+    // the actual today. This caused setFocusedDate("2026-06-04") (wrong).
+    const staleTarget = {
+      viewMode: "list" as const,
+      weekStart: STALE_TODAY,
+      monthKey: "2026-06",
+    };
+    // With stale todayKey: appeared to be today navigation (both values stale)
+    expect(isTodayClickTarget(staleTarget, STALE_TODAY, "2026-06")).toBe(true);
+    // With correct clientTodayKey: stale target is NOT today navigation
+    expect(isTodayClickTarget(staleTarget, ACTUAL_TODAY, "2026-06")).toBe(false);
+  });
+
+  it("both Jun 4 and Jun 5 normalize to the same Monday (Jun 1) — explains why first press appeared to work", () => {
+    // Both dates are in ISO week starting June 1. After press 1 (stale href),
+    // the user still landed on the correct week. But focusedDate was set to
+    // Jun 4 and highlighting used the stale todayKey. Press 2 was needed
+    // because only then did the fresh payload's clientTodayKey take effect.
+    expect(normalizeWeekStartForCacheLookup({ weekStart: ACTUAL_TODAY, timezone })).toBe("2026-06-01");
+    expect(normalizeWeekStartForCacheLookup({ weekStart: STALE_TODAY, timezone })).toBe("2026-06-01");
+  });
+
+  it("after navigating away, one Today press (with clientTodayKey) correctly reaches today", () => {
+    // Simulate user navigating to next week then pressing Today.
+    // With clientTodayKey, the Today target is "2026-06-05" and the
+    // isTodayNavigation check uses the same value — single press suffices.
+    const nextWeekTarget = {
+      viewMode: "list" as const,
+      weekStart: "2026-06-08",
+      monthKey: "2026-06",
+    };
+    // Not today
+    expect(isTodayClickTarget(nextWeekTarget, ACTUAL_TODAY, "2026-06")).toBe(false);
+
+    // After navigating back with href /?start=2026-06-05 (clientTodayKey)
+    const todayTarget = {
+      viewMode: "list" as const,
+      weekStart: ACTUAL_TODAY,
+      monthKey: "2026-06",
+    };
+    // One press correctly identifies today navigation
+    expect(isTodayClickTarget(todayTarget, ACTUAL_TODAY, "2026-06")).toBe(true);
+  });
+});

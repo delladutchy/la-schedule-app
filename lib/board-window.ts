@@ -14,7 +14,6 @@ import { authorizeEditorRequest } from "./editor-auth";
 import { sanitizeEditorToken } from "./editor-session";
 import { canProfileManageEvent, resolveEditorProfile, type EditorProfile } from "./editor-profiles";
 
-const TODAY_TIMEZONE = "America/New_York";
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH_KEY_PATTERN = /^\d{4}-\d{2}$/;
 
@@ -355,7 +354,7 @@ export function buildSanitizedBoardWindowPayload(opts: {
     },
   };
 
-  const todayKey = todayInZone(TODAY_TIMEZONE, nowMs);
+  const todayKey = todayInZone(tz, nowMs);
   const todayMonthKey = todayKey.slice(0, 7);
 
   const requestedWeek = opts.query.requestedWeek ?? todayKey;

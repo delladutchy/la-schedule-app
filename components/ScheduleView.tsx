@@ -463,6 +463,17 @@ export function ScheduleView({
   // month slot and vice versa.
   const [listPayload, setListPayload] = useState<BoardWindowPayload | null>(null);
   const [monthPayload, setMonthPayload] = useState<BoardWindowPayload | null>(null);
+  // Source of truth for "today". Derived from the browser clock so it is
+  // never stale from a cached payload (which can carry yesterday's todayKey
+  // after an overnight session). The useState initializer runs immediately
+  // on the client; the typeof-window guard covers the server-side render of
+  // this client component so hydration produces the same markup.
+  const [clientTodayKey] = useState<string>(() => {
+    if (typeof window === "undefined") return initialBoardWindowPayload.todayKey;
+    return DateTime.now()
+      .setZone(initialBoardWindowPayload.timezone)
+      .toFormat("yyyy-LL-dd");
+  });
   const [focusedDate, setFocusedDate] = useState<string>(() =>
     deriveInitialFocusedDate(initialBoardWindowPayload, viewMode));
   const [hasExplicitFocusedDate, setHasExplicitFocusedDate] = useState(false);
@@ -828,8 +839,8 @@ export function ScheduleView({
   const effectiveMonthNextHref = renderableMonthPayload
     ? `/?view=month&month=${renderableMonthPayload.selected.monthNav.nextMonth}`
     : monthNextHref;
-  const effectiveTodayKey = activePayload?.todayKey ?? todayKey;
-  const effectiveTodayMonthKey = activePayload?.todayMonthKey ?? todayMonthKey;
+  const effectiveTodayKey = clientTodayKey;
+  const effectiveTodayMonthKey = clientTodayKey.slice(0, 7);
   const listToggleHref = withEditorToken(`/?view=list&start=${effectiveListToggleStart}`, navigationEditorToken);
   const monthToggleHref = withEditorToken(`/?view=month&month=${effectiveMonthToggleKey}`, navigationEditorToken);
   const weekPrevNavHref = withEditorToken(effectiveWeekPrevHref, navigationEditorToken);
@@ -885,8 +896,8 @@ export function ScheduleView({
     // coordinate flow as prev/next.
     const isTodayNavigation = isTodayClickTarget(
       target,
-      sourcePayload.todayKey,
-      sourcePayload.todayMonthKey,
+      clientTodayKey,
+      clientTodayKey.slice(0, 7),
     );
     if (isTodayNavigation) {
       setTodayPulseToken((t) => t + 1);
@@ -907,7 +918,7 @@ export function ScheduleView({
 
     if (isTodayNavigation) {
       setHasExplicitFocusedDate(false);
-      setFocusedDate(sourcePayload.todayKey);
+      setFocusedDate(clientTodayKey);
     } else if (target.viewMode === "list") {
       setHasExplicitFocusedDate(false);
       if (activeView !== "list") {
@@ -925,7 +936,7 @@ export function ScheduleView({
       setFocusedDate(deriveFocusedDateForMonthKey({
         monthKey: target.monthKey,
         timezone: sourcePayload.timezone,
-        fallbackDate: sourcePayload.todayKey,
+        fallbackDate: clientTodayKey,
         dayOfMonth: currentFocusDayOfMonth ?? 1,
       }));
     }

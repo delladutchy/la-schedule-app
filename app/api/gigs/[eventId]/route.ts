@@ -233,6 +233,13 @@ export async function PATCH(
     const preflight = await buildAndPersistSnapshot();
     timings.preflightSyncMs = Date.now() - preflightStartedAt;
     if (preflight.status !== "ok" || !preflight.snapshot) {
+      if (preflight.isAuthFailure) {
+        logGigRouteTiming("patch", "calendar_auth_failed_preflight", editorId, routeStartedAt, timings);
+        return NextResponse.json(
+          { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
+          { status: 503 },
+        );
+      }
       logGigRouteTiming("patch", "snapshot_unavailable_prewrite", editorId, routeStartedAt, timings);
       return NextResponse.json(
         {
@@ -454,6 +461,13 @@ export async function DELETE(
     const preflight = await buildAndPersistSnapshot();
     timings.preflightSyncMs = Date.now() - preflightStartedAt;
     if (preflight.status !== "ok" || !preflight.snapshot) {
+      if (preflight.isAuthFailure) {
+        logGigRouteTiming("delete", "calendar_auth_failed_preflight", editorId, routeStartedAt, timings);
+        return NextResponse.json(
+          { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
+          { status: 503 },
+        );
+      }
       logGigRouteTiming("delete", "snapshot_unavailable_prewrite", editorId, routeStartedAt, timings);
       return NextResponse.json(
         {

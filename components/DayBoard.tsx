@@ -26,7 +26,10 @@ import {
 } from "@/lib/gigs";
 import {
   CALL_TIME_OPTIONS,
+  DAY_NOTE_CHIPS,
+  applyDayNoteChip,
   isCallTimeOption,
+  isDayNoteChipActive,
 } from "@/lib/call-time-options";
 
 interface Props {
@@ -421,6 +424,8 @@ export function DayBoard({
   const [bookingExistingDescriptionRaw, setBookingExistingDescriptionRaw] = useState("");
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isBookingSavePending, setIsBookingSavePending] = useState(false);
+  const [singleDayNotesPresetsActive, setSingleDayNotesPresetsActive] = useState(false);
+  const [activeDayNotesPresetDate, setActiveDayNotesPresetDate] = useState<string | null>(null);
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeletePending, setIsDeletePending] = useState(false);
@@ -569,6 +574,8 @@ export function DayBoard({
     setBookingExistingDescriptionRaw("");
     setBookingError(null);
     setIsBookingSavePending(false);
+    setSingleDayNotesPresetsActive(false);
+    setActiveDayNotesPresetDate(null);
     setConfirmDeleteEventId(null);
     setDeleteError(null);
     setIsDeletePending(false);
@@ -593,6 +600,8 @@ export function DayBoard({
     setBookingDayOverrides({});
     setBookingExistingDescriptionRaw("");
     setBookingError(null);
+    setSingleDayNotesPresetsActive(false);
+    setActiveDayNotesPresetDate(null);
     setConfirmDeleteEventId(null);
     setDeleteError(null);
   };
@@ -676,6 +685,8 @@ export function DayBoard({
     setBookingDayOverrides(rehydratedDayOverrides);
     setBookingExistingDescriptionRaw(detail.description ?? "");
     setBookingError(null);
+    setSingleDayNotesPresetsActive(false);
+    setActiveDayNotesPresetDate(null);
     setConfirmDeleteEventId(null);
     setDeleteError(null);
     setIsDeletePending(false);
@@ -2068,7 +2079,20 @@ export function DayBoard({
                               disabled={bookingModalIsLocked}
                             />
                           ) : null}
-                          <div className="month-booking-day-notes-group">
+                          <div
+                            className="month-booking-day-notes-group"
+                            onFocusCapture={() => {
+                              if (!isOvertureBookingMode) {
+                                setActiveDayNotesPresetDate(date);
+                              }
+                            }}
+                            onBlurCapture={(event) => {
+                              const next = event.relatedTarget as Node | null;
+                              if (!event.currentTarget.contains(next)) {
+                                setActiveDayNotesPresetDate((current) => (current === date ? null : current));
+                              }
+                            }}
+                          >
                             <div className="month-booking-clearable-field">
                               <input
                                 ref={(el) => { dayNoteInputRefs.current[date] = el; }}
@@ -2101,6 +2125,29 @@ export function DayBoard({
                                 </button>
                               ) : null}
                             </div>
+                            {!isOvertureBookingMode && activeDayNotesPresetDate === date ? (
+                              <div className="month-booking-day-presets-context">
+                                {DAY_NOTE_CHIPS.map((chip) => {
+                                  const isActive = isDayNoteChipActive(dayNotes, chip);
+                                  return (
+                                    <button
+                                      key={chip}
+                                      type="button"
+                                      className={`month-booking-day-chip${isActive ? " month-booking-day-chip--active" : ""}`}
+                                      onMouseDown={(event) => {
+                                        event.preventDefault();
+                                      }}
+                                      onClick={() => {
+                                        updateBookingDayOverride(date, { notes: applyDayNoteChip(dayNotes, chip) });
+                                      }}
+                                      disabled={bookingModalIsLocked}
+                                    >
+                                      {chip}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       );
@@ -2113,38 +2160,77 @@ export function DayBoard({
                 {overallJobNotesLabel}
               </label>
               <div className="month-booking-notes-group">
-                <div className="month-booking-clearable-field month-booking-clearable-field--textarea">
-                  <textarea
-                    ref={bookingNotesInputRef}
-                    id="week-booking-notes"
-                    name="job-notes"
-                    className={`month-booking-textarea${bookingNotes.trim() ? " month-booking-textarea--with-clear" : ""}`}
-                    autoComplete="new-password"
-                    autoCapitalize="sentences"
-                    value={bookingNotes}
-                    onChange={(event) => {
-                      setBookingNotes(event.target.value);
-                      if (bookingError) setBookingError(null);
-                    }}
-                    placeholder="Venue notes, contact, etc."
-                    maxLength={4000}
-                    rows={4}
-                    disabled={bookingModalIsLocked}
-                  />
-                  {bookingNotes.trim() ? (
-                    <button
-                      type="button"
-                      className="month-booking-location-clear month-booking-location-clear--textarea"
-                      aria-label="Clear notes"
-                      title="Clear notes"
-                      onMouseDown={(event) => {
-                        event.preventDefault();
+                <div
+                  className="month-booking-notes-presets-context-group"
+                  onFocusCapture={() => {
+                    if (!bookingHasMultiDayRange && !isOvertureBookingMode) {
+                      setSingleDayNotesPresetsActive(true);
+                    }
+                  }}
+                  onBlurCapture={(event) => {
+                    const next = event.relatedTarget as Node | null;
+                    if (!event.currentTarget.contains(next)) {
+                      setSingleDayNotesPresetsActive(false);
+                    }
+                  }}
+                >
+                  <div className="month-booking-clearable-field month-booking-clearable-field--textarea">
+                    <textarea
+                      ref={bookingNotesInputRef}
+                      id="week-booking-notes"
+                      name="job-notes"
+                      className={`month-booking-textarea${bookingNotes.trim() ? " month-booking-textarea--with-clear" : ""}`}
+                      autoComplete="new-password"
+                      autoCapitalize="sentences"
+                      value={bookingNotes}
+                      onChange={(event) => {
+                        setBookingNotes(event.target.value);
+                        if (bookingError) setBookingError(null);
                       }}
-                      onClick={clearBookingNotes}
+                      placeholder="Venue notes, contact, etc."
+                      maxLength={4000}
+                      rows={4}
                       disabled={bookingModalIsLocked}
-                    >
-                      ×
-                    </button>
+                    />
+                    {bookingNotes.trim() ? (
+                      <button
+                        type="button"
+                        className="month-booking-location-clear month-booking-location-clear--textarea"
+                        aria-label="Clear notes"
+                        title="Clear notes"
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                        }}
+                        onClick={clearBookingNotes}
+                        disabled={bookingModalIsLocked}
+                      >
+                        ×
+                      </button>
+                    ) : null}
+                  </div>
+                  {!bookingHasMultiDayRange && !isOvertureBookingMode && singleDayNotesPresetsActive ? (
+                    <div className="month-booking-day-presets-context">
+                      {DAY_NOTE_CHIPS.map((chip) => {
+                        const isActive = isDayNoteChipActive(bookingNotes, chip);
+                        return (
+                          <button
+                            key={chip}
+                            type="button"
+                            className={`month-booking-day-chip${isActive ? " month-booking-day-chip--active" : ""}`}
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                            }}
+                            onClick={() => {
+                              setBookingNotes((current) => applyDayNoteChip(current, chip));
+                              if (bookingError) setBookingError(null);
+                            }}
+                            disabled={bookingModalIsLocked}
+                          >
+                            {chip}
+                          </button>
+                        );
+                      })}
+                    </div>
                   ) : null}
                 </div>
                 <label className="month-booking-label" htmlFor="week-booking-location">
