@@ -17,7 +17,7 @@
  */
 
 import { applyBuffers } from "./intervals";
-import { fetchFreeBusy, fetchCalendarEvents } from "./google";
+import { fetchFreeBusy, fetchCalendarEvents, buildCalendarAuth } from "./google";
 import { getConfig } from "./config";
 import { readCurrentSnapshot, writeCurrentSnapshot } from "./store";
 import { isBoardCacheEnabled } from "./board-payload-cache";
@@ -82,20 +82,42 @@ export async function buildAndPersistSnapshot(
   const windowStartMs = startOfToday.toUTC().toMillis();
   const windowEndMs = startOfToday.plus({ days: file.horizonDays }).toUTC().toMillis();
 
-  const freeBusyStartedAt = Date.now();
-  const freeBusyPromise = fetchFreeBusy({
+  // Build ONE shared OAuth2 client and pre-warm the access token before
+  // launching concurrent API calls.  Without this, fetchFreeBusy and
+  // fetchCalendarEvents each create their own OAuth2 instance and race to
+  // refresh the same refresh_token simultaneously — Google can return
+  // invalid_grant to the losing request, causing an intermittent auth error.
+  const authOpts = {
     clientId: env.GOOGLE_CLIENT_ID,
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     refreshToken: env.GOOGLE_REFRESH_TOKEN,
+  };
+  const sharedAuth = buildCalendarAuth(authOpts);
+  try {
+    await sharedAuth.getAccessToken();
+  } catch (warmUpErr) {
+    const msg = warmUpErr instanceof Error ? warmUpErr.message : String(warmUpErr);
+    const { isRateLimit, isAuthFailure } = classifyGoogleError(warmUpErr);
+    console.error(
+      `[sync] auth warm-up failed${isAuthFailure ? " (auth-failure)" : isRateLimit ? " (rate-limited)" : ""}:`,
+      msg,
+    );
+    console.info(`[sync] timings ms total=${Date.now() - syncStartedAt}`);
+    return { status: "failed", error: `Auth warm-up failed: ${msg}`, isRateLimit, isAuthFailure };
+  }
+
+  const freeBusyStartedAt = Date.now();
+  const freeBusyPromise = fetchFreeBusy({
+    ...authOpts,
+    sharedAuth,
     calendarIds: env.BLOCKER_CALENDAR_IDS,
     timeMinMs: windowStartMs,
     timeMaxMs: windowEndMs,
   });
   const namedEventsStartedAt = Date.now();
   const namedEventsPromise = fetchCalendarEvents({
-    clientId: env.GOOGLE_CLIENT_ID,
-    clientSecret: env.GOOGLE_CLIENT_SECRET,
-    refreshToken: env.GOOGLE_REFRESH_TOKEN,
+    ...authOpts,
+    sharedAuth,
     calendarIds: env.BLOCKER_CALENDAR_IDS,
     timeMinMs: windowStartMs,
     timeMaxMs: windowEndMs,

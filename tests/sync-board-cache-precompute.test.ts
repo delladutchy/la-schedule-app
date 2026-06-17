@@ -34,6 +34,9 @@ const env = {
 vi.mock("@/lib/google", () => ({
   fetchFreeBusy: (...args: unknown[]) => fetchFreeBusy(...args),
   fetchCalendarEvents: (...args: unknown[]) => fetchCalendarEvents(...args),
+  buildCalendarAuth: () => ({
+    getAccessToken: () => Promise.resolve({ token: "mock-access-token" }),
+  }),
 }));
 
 vi.mock("@/lib/config", () => ({

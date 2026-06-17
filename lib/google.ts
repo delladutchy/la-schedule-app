@@ -14,6 +14,7 @@
 import { google } from "googleapis";
 import { DateTime } from "luxon";
 import type { Interval } from "./intervals";
+import { classifyGoogleError } from "./google-error";
 
 interface CalendarAuthOptions {
   clientId: string;
@@ -29,7 +30,10 @@ interface CalendarQueryOptions extends CalendarAuthOptions {
   timeMaxMs: number;
 }
 
-export interface FreeBusyOptions extends CalendarQueryOptions {}
+export interface FreeBusyOptions extends CalendarQueryOptions {
+  /** Pre-warmed shared auth client; avoids a second concurrent token refresh. */
+  sharedAuth?: CalendarAuth;
+}
 
 export interface FreeBusyResult {
   intervals: Interval[];
@@ -40,6 +44,8 @@ export interface FreeBusyResult {
 export interface CalendarEventsOptions extends CalendarQueryOptions {
   /** Display timezone used to interpret all-day date-only events. */
   displayTimezone: string;
+  /** Pre-warmed shared auth client; avoids a second concurrent token refresh. */
+  sharedAuth?: CalendarAuth;
 }
 
 export interface NamedCalendarEvent {
@@ -118,10 +124,41 @@ export class CalendarEventAlreadyExistsError extends Error {
   }
 }
 
-function buildCalendarClient(opts: CalendarAuthOptions) {
+/**
+ * Creates an OAuth2 client pre-seeded with the refresh token.
+ *
+ * The caller must eventually trigger a token fetch (either by calling
+ * `auth.getAccessToken()` directly or by making an API call).  Exporting
+ * this lets callers share one auth instance across concurrent requests so
+ * they don't race each other to refresh the same token.
+ */
+export function buildCalendarAuth(opts: CalendarAuthOptions) {
   const auth = new google.auth.OAuth2(opts.clientId, opts.clientSecret);
   auth.setCredentials({ refresh_token: opts.refreshToken });
+  return auth;
+}
+
+export type CalendarAuth = ReturnType<typeof buildCalendarAuth>;
+
+function buildCalendarClient(opts: CalendarAuthOptions, sharedAuth?: CalendarAuth) {
+  const auth = sharedAuth ?? buildCalendarAuth(opts);
   return google.calendar({ version: "v3", auth });
+}
+
+/**
+ * Retry a Google API call once on transient (non-auth, non-rate-limit) errors.
+ * Auth failures and rate limits are not retried — they require human action.
+ */
+async function retryOnTransient<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (firstErr) {
+    const { isTransient } = classifyGoogleError(firstErr);
+    if (!isTransient) throw firstErr;
+    // One retry after a short back-off for transient issues (network blip, Google 5xx).
+    await new Promise<void>((resolve) => setTimeout(resolve, 600));
+    return fn();
+  }
 }
 
 /**
@@ -132,7 +169,7 @@ function buildCalendarClient(opts: CalendarAuthOptions) {
  *   - FreeBusy can reject very large windows, so we chunk into 60-day slices.
  */
 export async function fetchFreeBusy(opts: FreeBusyOptions): Promise<FreeBusyResult> {
-  const calendar = buildCalendarClient(opts);
+  const calendar = buildCalendarClient(opts, opts.sharedAuth);
 
   const CALENDAR_CHUNK = 5;
   const TIME_CHUNK_DAYS = 60;
@@ -148,13 +185,15 @@ export async function fetchFreeBusy(opts: FreeBusyOptions): Promise<FreeBusyResu
 
     for (let i = 0; i < opts.calendarIds.length; i += CALENDAR_CHUNK) {
       const calendarsChunk = opts.calendarIds.slice(i, i + CALENDAR_CHUNK);
-      const resp = await calendar.freebusy.query({
-        requestBody: {
-          timeMin,
-          timeMax,
-          items: calendarsChunk.map((id) => ({ id })),
-        },
-      });
+      const resp = await retryOnTransient(() =>
+        calendar.freebusy.query({
+          requestBody: {
+            timeMin,
+            timeMax,
+            items: calendarsChunk.map((id) => ({ id })),
+          },
+        }),
+      );
 
       const calendars = resp.data.calendars ?? {};
       for (const id of calendarsChunk) {
@@ -226,7 +265,7 @@ function trimLocation(value: unknown): string | undefined {
 export async function fetchCalendarEvents(
   opts: CalendarEventsOptions,
 ): Promise<CalendarEventsResult> {
-  const calendar = buildCalendarClient(opts);
+  const calendar = buildCalendarClient(opts, opts.sharedAuth);
 
   const TIME_CHUNK_DAYS = 60;
   const TIME_CHUNK_MS = TIME_CHUNK_DAYS * 24 * 60 * 60 * 1000;
@@ -246,17 +285,19 @@ export async function fetchCalendarEvents(
       do {
         let resp;
         try {
-          resp = await calendar.events.list({
-            calendarId,
-            timeMin,
-            timeMax,
-            singleEvents: true,
-            orderBy: "startTime",
-            maxResults: 2500,
-            pageToken,
-            timeZone: opts.displayTimezone,
-            fields: "items(id,status,transparency,summary,description,location,extendedProperties(private(ownerEditor)),start(date,dateTime),end(date,dateTime)),nextPageToken",
-          });
+          resp = await retryOnTransient(() =>
+            calendar.events.list({
+              calendarId,
+              timeMin,
+              timeMax,
+              singleEvents: true,
+              orderBy: "startTime",
+              maxResults: 2500,
+              pageToken,
+              timeZone: opts.displayTimezone,
+              fields: "items(id,status,transparency,summary,description,location,extendedProperties(private(ownerEditor)),start(date,dateTime),end(date,dateTime)),nextPageToken",
+            }),
+          );
         } catch {
           errored.add(calendarId);
           pageToken = undefined;
@@ -357,32 +398,34 @@ export async function createAllDayEvent(
   const calendar = buildCalendarClient(opts);
   let response;
   try {
-    response = await calendar.events.insert({
-      calendarId: opts.calendarId,
-      requestBody: {
-        ...(opts.eventId ? { id: opts.eventId } : {}),
-        summary: opts.summary.trim(),
-        ...(opts.description?.trim()
-          ? { description: opts.description.trim() }
-          : {}),
-        ...(opts.location?.trim()
-          ? { location: opts.location.trim() }
-          : {}),
-        ...(opts.ownerEditor
-          ? {
-              extendedProperties: {
-                private: {
-                  ownerEditor: opts.ownerEditor,
+    response = await retryOnTransient(() =>
+      calendar.events.insert({
+        calendarId: opts.calendarId,
+        requestBody: {
+          ...(opts.eventId ? { id: opts.eventId } : {}),
+          summary: opts.summary.trim(),
+          ...(opts.description?.trim()
+            ? { description: opts.description.trim() }
+            : {}),
+          ...(opts.location?.trim()
+            ? { location: opts.location.trim() }
+            : {}),
+          ...(opts.ownerEditor
+            ? {
+                extendedProperties: {
+                  private: {
+                    ownerEditor: opts.ownerEditor,
+                  },
                 },
-              },
-            }
-          : {}),
-        start: { date: opts.startDate },
-        end: { date: opts.endDateExclusive },
-        transparency: "opaque",
-      },
-      fields: "id,status,htmlLink",
-    });
+              }
+            : {}),
+          start: { date: opts.startDate },
+          end: { date: opts.endDateExclusive },
+          transparency: "opaque",
+        },
+        fields: "id,status,htmlLink",
+      }),
+    );
   } catch (error: unknown) {
     const status = typeof error === "object" && error !== null && "status" in error
       ? (error as { status?: number }).status
@@ -410,32 +453,34 @@ export async function updateAllDayEvent(
   opts: UpdateAllDayEventOptions,
 ): Promise<CreatedCalendarEvent> {
   const calendar = buildCalendarClient(opts);
-  const response = await calendar.events.patch({
-    calendarId: opts.calendarId,
-    eventId: opts.eventId,
-    requestBody: {
-      summary: opts.summary.trim(),
-      ...(opts.description?.trim()
-        ? { description: opts.description.trim() }
-        : { description: "" }),
-      ...(opts.location?.trim()
-        ? { location: opts.location.trim() }
-        : { location: "" }),
-      ...(opts.ownerEditor
-        ? {
-            extendedProperties: {
-              private: {
-                ownerEditor: opts.ownerEditor,
+  const response = await retryOnTransient(() =>
+    calendar.events.patch({
+      calendarId: opts.calendarId,
+      eventId: opts.eventId,
+      requestBody: {
+        summary: opts.summary.trim(),
+        ...(opts.description?.trim()
+          ? { description: opts.description.trim() }
+          : { description: "" }),
+        ...(opts.location?.trim()
+          ? { location: opts.location.trim() }
+          : { location: "" }),
+        ...(opts.ownerEditor
+          ? {
+              extendedProperties: {
+                private: {
+                  ownerEditor: opts.ownerEditor,
+                },
               },
-            },
-          }
-        : {}),
-      start: { date: opts.startDate },
-      end: { date: opts.endDateExclusive },
-      transparency: "opaque",
-    },
-    fields: "id,status,htmlLink",
-  });
+            }
+          : {}),
+        start: { date: opts.startDate },
+        end: { date: opts.endDateExclusive },
+        transparency: "opaque",
+      },
+      fields: "id,status,htmlLink",
+    }),
+  );
 
   const id = response.data.id?.trim();
   const status = response.data.status?.trim();
@@ -454,9 +499,11 @@ export async function deleteCalendarEvent(
   opts: CalendarAuthOptions & { calendarId: string; eventId: string },
 ): Promise<DeletedCalendarEvent> {
   const calendar = buildCalendarClient(opts);
-  await calendar.events.delete({
-    calendarId: opts.calendarId,
-    eventId: opts.eventId,
-  });
+  await retryOnTransient(() =>
+    calendar.events.delete({
+      calendarId: opts.calendarId,
+      eventId: opts.eventId,
+    }),
+  );
   return { id: opts.eventId };
 }

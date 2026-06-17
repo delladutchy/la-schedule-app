@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { readCurrentSnapshot } from "@/lib/store";
+import { buildAndPersistSnapshot } from "@/lib/sync";
 import {
   classifySnapshot,
   resolveMonthNavigation,
@@ -51,16 +52,33 @@ export async function GET(req: Request) {
   }
 
   if (!state.snapshot || state.status === "unavailable") {
-    console.warn(
-      `[board-window] unavailable hadParseableSnapshot=${snapshot != null} reason=${state.reason ?? "snapshot_unavailable"}`,
-    );
-    return NextResponse.json(
-      {
-        status: "unavailable",
-        reason: state.reason ?? "snapshot_unavailable",
-      },
-      { status: 503 },
-    );
+    // Local-dev only: auto-sync so the first `netlify dev` or `next dev`
+    // request always works without a manual `npm run sync:local` first.
+    // This branch is never reached in production (NODE_ENV === "production").
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[board-window] dev: no snapshot available — triggering on-demand sync");
+      const syncResult = await buildAndPersistSnapshot(nowMs);
+      if (syncResult.status === "ok" && syncResult.snapshot) {
+        state = { status: "ok", snapshot: syncResult.snapshot, ageMinutes: 0 };
+      } else {
+        console.warn(
+          `[board-window] dev: on-demand sync failed — ${syncResult.error ?? "unknown error"}`,
+        );
+      }
+    }
+
+    if (!state.snapshot || state.status === "unavailable") {
+      console.warn(
+        `[board-window] unavailable hadParseableSnapshot=${snapshot != null} reason=${state.reason ?? "snapshot_unavailable"}`,
+      );
+      return NextResponse.json(
+        {
+          status: "unavailable",
+          reason: state.reason ?? "snapshot_unavailable",
+        },
+        { status: 503 },
+      );
+    }
   }
 
   const query = parseBoardWindowQuery(new URL(req.url));
