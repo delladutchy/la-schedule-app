@@ -3,6 +3,7 @@ import { getConfig } from "@/lib/config";
 import { createAllDayEvent, CalendarEventAlreadyExistsError, buildWarmedCalendarAuth, type CalendarAuth } from "@/lib/google";
 import {
   classifyGoogleError,
+  extractOAuthDetail,
   CALENDAR_AUTH_FAILED_MESSAGE,
   CALENDAR_RATE_LIMIT_MESSAGE,
 } from "@/lib/google-error";
@@ -157,6 +158,11 @@ export async function POST(req: Request) {
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     refreshToken: env.GOOGLE_REFRESH_TOKEN,
   };
+  // Log env var presence (never the values) so Netlify logs can confirm
+  // the token is actually loaded into the function's environment.
+  console.info(
+    `[gigs:create] auth_env client_id=${env.GOOGLE_CLIENT_ID ? "set" : "MISSING"} client_secret=${env.GOOGLE_CLIENT_SECRET ? "set" : "MISSING"} refresh_token_len=${env.GOOGLE_REFRESH_TOKEN?.length ?? 0}`,
+  );
   const authWarmUpStartedAt = Date.now();
   let sharedAuth: CalendarAuth;
   try {
@@ -165,7 +171,19 @@ export async function POST(req: Request) {
   } catch (authErr) {
     timings.authWarmUpMs = Date.now() - authWarmUpStartedAt;
     const cls = classifyGoogleError(authErr);
-    console.error(`[gigs:create] auth_warm_up_failed editor=${editorId} raw=${cls.raw}`);
+    const oauthDetail = extractOAuthDetail(authErr);
+    // Log the raw message AND the OAuth response body so the exact failure
+    // reason is visible in Netlify logs without downloading the full error object.
+    console.error(
+      `[gigs:create] auth_warm_up_failed editor=${editorId} isAuthFailure=${cls.isAuthFailure} raw="${cls.raw}"${oauthDetail.code ? ` oauth_error="${oauthDetail.code}"` : ""}${oauthDetail.description ? ` oauth_desc="${oauthDetail.description}"` : ""}`,
+    );
+    if (cls.isAuthFailure) {
+      // "invalid_grant" means the refresh token has been revoked or expired.
+      // The only fix is to re-run the OAuth consent flow and replace the token.
+      console.error(
+        `[gigs:create] GOOGLE_REFRESH_TOKEN is invalid or revoked — replace env var GOOGLE_REFRESH_TOKEN in the Netlify dashboard (client_id and client_secret do not need to change)`,
+      );
+    }
     logCreateRouteTiming("calendar_auth_failed_warmup", editorId, routeStartedAt, timings);
     return NextResponse.json(
       { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
@@ -510,10 +528,14 @@ export async function POST(req: Request) {
           );
         }
         const retryCls = classifyGoogleError(retryError);
+        const retryOAuth = extractOAuthDetail(retryError);
         console.error(
-          `[gigs:create] google_error editor=${editorId} stage=retry raw=${retryCls.raw}`,
+          `[gigs:create] google_error editor=${editorId} stage=retry isAuthFailure=${retryCls.isAuthFailure} raw="${retryCls.raw}"${retryOAuth.code ? ` oauth_error="${retryOAuth.code}"` : ""}${retryOAuth.description ? ` oauth_desc="${retryOAuth.description}"` : ""}`,
         );
         if (retryCls.isAuthFailure) {
+          console.error(
+            `[gigs:create] GOOGLE_REFRESH_TOKEN is invalid or revoked (stage=retry) — replace env var GOOGLE_REFRESH_TOKEN in the Netlify dashboard`,
+          );
           logCreateRouteTiming("calendar_auth_failed_retry", editorId, routeStartedAt, timings);
           return NextResponse.json(
             { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
@@ -532,8 +554,14 @@ export async function POST(req: Request) {
     }
 
     const cls = classifyGoogleError(error);
-    console.error(`[gigs:create] google_error editor=${editorId} raw=${cls.raw}`);
+    const oauthDetail = extractOAuthDetail(error);
+    console.error(
+      `[gigs:create] google_error editor=${editorId} isAuthFailure=${cls.isAuthFailure} raw="${cls.raw}"${oauthDetail.code ? ` oauth_error="${oauthDetail.code}"` : ""}${oauthDetail.description ? ` oauth_desc="${oauthDetail.description}"` : ""}`,
+    );
     if (cls.isAuthFailure) {
+      console.error(
+        `[gigs:create] GOOGLE_REFRESH_TOKEN is invalid or revoked — replace env var GOOGLE_REFRESH_TOKEN in the Netlify dashboard`,
+      );
       logCreateRouteTiming("calendar_auth_failed", editorId, routeStartedAt, timings);
       return NextResponse.json(
         { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },

@@ -49,6 +49,28 @@ export function classifyGoogleError(error: unknown): GoogleErrorClassification {
   return { isAuthFailure, isRateLimit, isTransient, raw };
 }
 
+/**
+ * Pulls the OAuth2 error code and description out of a GaxiosError response
+ * body.  When Google rejects a token exchange the HTTP response body is:
+ *   { error: "invalid_grant", error_description: "Token has been expired or revoked." }
+ * GaxiosError exposes this as `.response.data`.  The top-level `.message` may
+ * only repeat the error code (or be a generic fetch error), so callers should
+ * log BOTH raw and this for a complete picture.
+ */
+export function extractOAuthDetail(error: unknown): { code: string | undefined; description: string | undefined } {
+  try {
+    const e = error as Record<string, unknown>;
+    const data = ((e.response as Record<string, unknown> | undefined)?.data) as Record<string, unknown> | undefined;
+    const code = typeof data?.error === "string" ? data.error : undefined;
+    const description = typeof data?.error_description === "string"
+      ? data.error_description.slice(0, 200)
+      : undefined;
+    return { code, description };
+  } catch {
+    return { code: undefined, description: undefined };
+  }
+}
+
 export const CALENDAR_AUTH_FAILED_MESSAGE =
   "Calendar connection needs attention. Please contact Jeff.";
 

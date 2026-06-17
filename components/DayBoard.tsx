@@ -13,6 +13,7 @@ import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-sess
 import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { JobTimeSection } from "@/components/JobTimeSection";
+import { InvoiceSection } from "@/components/InvoiceSection";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import {
   buildGigDayDetailsForRange,
@@ -1586,6 +1587,14 @@ export function DayBoard({
                     editorToken={editorToken}
                     scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
                     eventIdsByWorkDate={jobTimeEventIdByWorkDate}
+                  />
+                ) : null}
+                {isJeffEditor && activePrimaryDetail?.eventId && jobTimeWorkDates.length > 0 ? (
+                  <InvoiceSection
+                    eventId={activePrimaryDetail.eventId}
+                    workDates={jobTimeWorkDates}
+                    gigSummary={activePrimaryDetail.summary}
+                    editorToken={editorToken}
                   />
                 ) : null}
                 {activeDetailPanel.details.length > 1 ? (

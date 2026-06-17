@@ -4780,3 +4780,298 @@ html.modal-open body {
     justify-content: flex-start;
   }
 }
+
+/* ── Invoice / Tracking Section ─────────────────────────────────────────── */
+
+.invoice-section {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.invoice-status-muted {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+}
+
+.invoice-error {
+  font-size: 0.82rem;
+  color: var(--danger, #c0392b);
+  margin: 4px 0;
+}
+
+.invoice-block {
+  margin-bottom: 18px;
+}
+
+.invoice-block-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+}
+
+/* Work date rows */
+.invoice-workday-row {
+  margin-bottom: 12px;
+}
+
+.invoice-workday-date {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 6px;
+}
+
+.invoice-workday-times {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.invoice-workday-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.invoice-workday-field--calc {
+  min-width: 50px;
+}
+
+.invoice-label-sm {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.invoice-select {
+  font-size: 0.82rem;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  min-width: 90px;
+}
+
+.invoice-calc-val {
+  font-size: 0.82rem;
+  color: var(--text);
+  padding: 6px 2px;
+}
+
+.invoice-calc-val--ot {
+  color: var(--accent, #e67e22);
+  font-weight: 600;
+}
+
+/* Expenses */
+.invoice-expense-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+}
+
+.invoice-expense-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.invoice-currency-field {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.invoice-currency-prefix {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  padding: 5px 4px 5px 7px;
+  background: var(--surface-dim, var(--bg));
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+
+.invoice-input-sm {
+  font-size: 0.82rem;
+  font-family: inherit;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 5px 7px;
+  width: 80px;
+  -moz-appearance: textfield;
+}
+
+.invoice-input-sm::-webkit-inner-spin-button,
+.invoice-input-sm::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+}
+
+.invoice-input-miles {
+  width: 90px;
+}
+
+.invoice-notes-row {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.invoice-textarea {
+  font-size: 0.82rem;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Mileage */
+.invoice-mileage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.invoice-mileage-row .invoice-input-sm {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.invoice-mileage-calc {
+  background: var(--surface-dim, rgba(0,0,0,0.04));
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.8rem;
+}
+
+.invoice-calc-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--text-muted);
+}
+
+.invoice-calc-row--note {
+  font-style: italic;
+  font-size: 0.75rem;
+}
+
+/* Invoice preview */
+.invoice-block--preview {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.invoice-preview {
+  font-size: 0.82rem;
+}
+
+.invoice-preview-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  align-items: baseline;
+  padding: 3px 0;
+  color: var(--text);
+}
+
+.invoice-preview-row--adj {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
+.invoice-preview-row--total {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 6px;
+  font-weight: 700;
+}
+
+.invoice-preview-qty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.invoice-preview-amount {
+  text-align: right;
+  min-width: 72px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sync row */
+.invoice-sync-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.invoice-sync-button {
+  font-size: 0.82rem;
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--accent, #2563eb);
+  background: transparent;
+  border: 1px solid var(--accent, #2563eb);
+  border-radius: var(--radius-sm);
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.invoice-sync-button:hover:not(:disabled) {
+  background: var(--accent, #2563eb);
+  color: #fff;
+}
+
+.invoice-sync-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.invoice-sync-success {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.invoice-saving-indicator {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+@media (max-width: 560px) {
+  .invoice-expense-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .invoice-workday-times {
+    gap: 8px;
+  }
+}

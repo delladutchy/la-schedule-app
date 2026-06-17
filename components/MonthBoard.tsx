@@ -27,6 +27,7 @@ import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import { JobTimeSection } from "@/components/JobTimeSection";
+import { InvoiceSection } from "@/components/InvoiceSection";
 
 interface Props {
   month: MonthBoardData;
@@ -1529,6 +1530,14 @@ export function MonthBoard({
                     editorToken={editorToken}
                     scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
                     eventIdsByWorkDate={jobTimeEventIdByWorkDate}
+                  />
+                ) : null}
+                {isJeffEditor && activeJobTimeDetail?.eventId && jobTimeWorkDates.length > 0 ? (
+                  <InvoiceSection
+                    eventId={activeJobTimeDetail.eventId}
+                    workDates={jobTimeWorkDates}
+                    gigSummary={activeJobTimeDetail.summary}
+                    editorToken={editorToken}
                   />
                 ) : null}
               </div>
