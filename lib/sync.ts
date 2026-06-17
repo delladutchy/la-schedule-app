@@ -17,7 +17,7 @@
  */
 
 import { applyBuffers } from "./intervals";
-import { fetchFreeBusy, fetchCalendarEvents, buildCalendarAuth } from "./google";
+import { fetchFreeBusy, fetchCalendarEvents, buildCalendarAuth, type CalendarAuth } from "./google";
 import { getConfig } from "./config";
 import { readCurrentSnapshot, writeCurrentSnapshot } from "./store";
 import { isBoardCacheEnabled } from "./board-payload-cache";
@@ -48,6 +48,12 @@ export interface BuildAndPersistOptions {
    * when no snapshot exists.
    */
   skipIfFresherThanMs?: number;
+  /**
+   * Pre-warmed OAuth2 client from the calling route.  When provided the internal
+   * auth-warm-up step is skipped and this instance is used for all Google API
+   * calls, eliminating a redundant token refresh on the booking save path.
+   */
+  sharedAuth?: CalendarAuth;
 }
 
 export async function buildAndPersistSnapshot(
@@ -87,23 +93,31 @@ export async function buildAndPersistSnapshot(
   // fetchCalendarEvents each create their own OAuth2 instance and race to
   // refresh the same refresh_token simultaneously — Google can return
   // invalid_grant to the losing request, causing an intermittent auth error.
+  //
+  // When the caller (e.g. a mutation route) already warmed up an auth client,
+  // we reuse it directly so this sync doesn't trigger a second token refresh.
   const authOpts = {
     clientId: env.GOOGLE_CLIENT_ID,
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     refreshToken: env.GOOGLE_REFRESH_TOKEN,
   };
-  const sharedAuth = buildCalendarAuth(authOpts);
-  try {
-    await sharedAuth.getAccessToken();
-  } catch (warmUpErr) {
-    const msg = warmUpErr instanceof Error ? warmUpErr.message : String(warmUpErr);
-    const { isRateLimit, isAuthFailure } = classifyGoogleError(warmUpErr);
-    console.error(
-      `[sync] auth warm-up failed${isAuthFailure ? " (auth-failure)" : isRateLimit ? " (rate-limited)" : ""}:`,
-      msg,
-    );
-    console.info(`[sync] timings ms total=${Date.now() - syncStartedAt}`);
-    return { status: "failed", error: `Auth warm-up failed: ${msg}`, isRateLimit, isAuthFailure };
+  let sharedAuth: CalendarAuth;
+  if (opts.sharedAuth) {
+    sharedAuth = opts.sharedAuth;
+  } else {
+    sharedAuth = buildCalendarAuth(authOpts);
+    try {
+      await sharedAuth.getAccessToken();
+    } catch (warmUpErr) {
+      const msg = warmUpErr instanceof Error ? warmUpErr.message : String(warmUpErr);
+      const { isRateLimit, isAuthFailure } = classifyGoogleError(warmUpErr);
+      console.error(
+        `[sync] auth warm-up failed${isAuthFailure ? " (auth-failure)" : isRateLimit ? " (rate-limited)" : ""}:`,
+        msg,
+      );
+      console.info(`[sync] timings ms total=${Date.now() - syncStartedAt}`);
+      return { status: "failed", error: `Auth warm-up failed: ${msg}`, isRateLimit, isAuthFailure };
+    }
   }
 
   const freeBusyStartedAt = Date.now();

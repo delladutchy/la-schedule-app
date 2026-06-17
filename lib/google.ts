@@ -76,6 +76,8 @@ export interface CreateAllDayEventOptions extends CalendarAuthOptions {
   startDate: string;
   /** Exclusive local day in YYYY-MM-DD format. */
   endDateExclusive: string;
+  /** Pre-warmed shared auth — skips an extra token refresh inside this call. */
+  sharedAuth?: CalendarAuth;
 }
 
 export interface CreatedCalendarEvent {
@@ -95,6 +97,8 @@ export interface UpdateAllDayEventOptions extends CalendarAuthOptions {
   startDate: string;
   /** Exclusive local day in YYYY-MM-DD format. */
   endDateExclusive: string;
+  /** Pre-warmed shared auth — skips an extra token refresh inside this call. */
+  sharedAuth?: CalendarAuth;
 }
 
 export interface DeletedCalendarEvent {
@@ -139,6 +143,33 @@ export function buildCalendarAuth(opts: CalendarAuthOptions) {
 }
 
 export type CalendarAuth = ReturnType<typeof buildCalendarAuth>;
+
+/**
+ * Builds a CalendarAuth and calls getAccessToken() to obtain a live access
+ * token before returning.  If the first attempt fails for any reason, a
+ * brand-new client is created and tried once more after a short delay — a
+ * fresh instance is required because a failed refresh leaves internal
+ * credential state that prevents the same instance from retrying successfully.
+ *
+ * Throws the last error if both attempts fail.  Callers should classify
+ * the thrown error with classifyGoogleError() to decide whether to surface
+ * a permanent auth-failure message or to retry later.
+ */
+export async function buildWarmedCalendarAuth(opts: CalendarAuthOptions): Promise<CalendarAuth> {
+  const ATTEMPTS = [0, 900] as const; // ms delay before each attempt
+  let lastErr: unknown;
+  for (const delay of ATTEMPTS) {
+    if (delay > 0) await new Promise<void>((r) => setTimeout(r, delay));
+    const auth = buildCalendarAuth(opts); // fresh instance every attempt
+    try {
+      await auth.getAccessToken();
+      return auth;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
 
 function buildCalendarClient(opts: CalendarAuthOptions, sharedAuth?: CalendarAuth) {
   const auth = sharedAuth ?? buildCalendarAuth(opts);
@@ -395,7 +426,7 @@ export async function registerCalendarWatch(
 export async function createAllDayEvent(
   opts: CreateAllDayEventOptions,
 ): Promise<CreatedCalendarEvent> {
-  const calendar = buildCalendarClient(opts);
+  const calendar = buildCalendarClient(opts, opts.sharedAuth);
   let response;
   try {
     response = await retryOnTransient(() =>
@@ -452,7 +483,7 @@ export async function createAllDayEvent(
 export async function updateAllDayEvent(
   opts: UpdateAllDayEventOptions,
 ): Promise<CreatedCalendarEvent> {
-  const calendar = buildCalendarClient(opts);
+  const calendar = buildCalendarClient(opts, opts.sharedAuth);
   const response = await retryOnTransient(() =>
     calendar.events.patch({
       calendarId: opts.calendarId,
@@ -496,9 +527,9 @@ export async function updateAllDayEvent(
 }
 
 export async function deleteCalendarEvent(
-  opts: CalendarAuthOptions & { calendarId: string; eventId: string },
+  opts: CalendarAuthOptions & { calendarId: string; eventId: string; sharedAuth?: CalendarAuth },
 ): Promise<DeletedCalendarEvent> {
-  const calendar = buildCalendarClient(opts);
+  const calendar = buildCalendarClient(opts, opts.sharedAuth);
   await retryOnTransient(() =>
     calendar.events.delete({
       calendarId: opts.calendarId,

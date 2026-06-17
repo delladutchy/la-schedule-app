@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { buildAndPersistSnapshot } from "@/lib/sync";
-import { deleteCalendarEvent, updateAllDayEvent } from "@/lib/google";
+import { deleteCalendarEvent, updateAllDayEvent, buildWarmedCalendarAuth, type CalendarAuth } from "@/lib/google";
 import {
   classifyGoogleError,
   CALENDAR_AUTH_FAILED_MESSAGE,
@@ -34,6 +34,7 @@ import { closeJobTimeEntriesForDeletedEvent } from "@/lib/job-time";
 export const dynamic = "force-dynamic";
 
 interface RouteTimings {
+  authWarmUpMs: number;
   snapshotReadMs: number;
   preflightSyncMs: number;
   googleWriteMs: number;
@@ -43,6 +44,7 @@ interface RouteTimings {
 
 function createEmptyRouteTimings(): RouteTimings {
   return {
+    authWarmUpMs: 0,
     snapshotReadMs: 0,
     preflightSyncMs: 0,
     googleWriteMs: 0,
@@ -60,7 +62,7 @@ function logGigRouteTiming(
 ): void {
   const totalMs = Date.now() - routeStartedAt;
   console.info(
-    `[gigs:${action}] ${outcome} editor=${editorId} ms snapshotRead=${timings.snapshotReadMs} preflightSync=${timings.preflightSyncMs} googleWrite=${timings.googleWriteMs} postSync=${timings.postSyncMs} reconcileQueue=${timings.reconcileQueueMs} total=${totalMs}`,
+    `[gigs:${action}] ${outcome} editor=${editorId} ms authWarmUp=${timings.authWarmUpMs} snapshotRead=${timings.snapshotReadMs} preflightSync=${timings.preflightSyncMs} googleWrite=${timings.googleWriteMs} postSync=${timings.postSyncMs} reconcileQueue=${timings.reconcileQueueMs} total=${totalMs}`,
   );
 }
 
@@ -225,12 +227,33 @@ export async function PATCH(
     );
   }
 
+  const authOpts = {
+    clientId: env.GOOGLE_CLIENT_ID,
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+    refreshToken: env.GOOGLE_REFRESH_TOKEN,
+  };
+  const authWarmUpStartedAt = Date.now();
+  let sharedAuth: CalendarAuth;
+  try {
+    sharedAuth = await buildWarmedCalendarAuth(authOpts);
+    timings.authWarmUpMs = Date.now() - authWarmUpStartedAt;
+  } catch (authErr) {
+    timings.authWarmUpMs = Date.now() - authWarmUpStartedAt;
+    const cls = classifyGoogleError(authErr);
+    console.error(`[gigs:patch] auth_warm_up_failed editor=${editorId} raw=${cls.raw}`);
+    logGigRouteTiming("patch", "calendar_auth_failed_warmup", editorId, routeStartedAt, timings);
+    return NextResponse.json(
+      { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
+      { status: 503 },
+    );
+  }
+
   const snapshotReadStartedAt = Date.now();
   let validationSnapshot = await readCurrentSnapshot(env.BLOBS_STORE_NAME, { consistency: "strong" });
   timings.snapshotReadMs = Date.now() - snapshotReadStartedAt;
   if (!validationSnapshot) {
     const preflightStartedAt = Date.now();
-    const preflight = await buildAndPersistSnapshot();
+    const preflight = await buildAndPersistSnapshot(Date.now(), { sharedAuth });
     timings.preflightSyncMs = Date.now() - preflightStartedAt;
     if (preflight.status !== "ok" || !preflight.snapshot) {
       if (preflight.isAuthFailure) {
@@ -290,9 +313,7 @@ export async function PATCH(
   try {
     const googleWriteStartedAt = Date.now();
     const updated = await updateAllDayEvent({
-      clientId: env.GOOGLE_CLIENT_ID,
-      clientSecret: env.GOOGLE_CLIENT_SECRET,
-      refreshToken: env.GOOGLE_REFRESH_TOKEN,
+      ...authOpts,
       calendarId: editorCalendarId,
       eventId,
       summary: payload.summary,
@@ -301,6 +322,7 @@ export async function PATCH(
       ...(ownerEditor ? { ownerEditor } : {}),
       startDate: payload.startDate,
       endDateExclusive: payload.endDateExclusive,
+      sharedAuth,
     });
     timings.googleWriteMs = Date.now() - googleWriteStartedAt;
 
@@ -453,12 +475,33 @@ export async function DELETE(
     return NextResponse.json({ error: "invalid_event_id" }, { status: 400 });
   }
 
+  const authOpts = {
+    clientId: env.GOOGLE_CLIENT_ID,
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+    refreshToken: env.GOOGLE_REFRESH_TOKEN,
+  };
+  const authWarmUpStartedAt = Date.now();
+  let sharedAuth: CalendarAuth;
+  try {
+    sharedAuth = await buildWarmedCalendarAuth(authOpts);
+    timings.authWarmUpMs = Date.now() - authWarmUpStartedAt;
+  } catch (authErr) {
+    timings.authWarmUpMs = Date.now() - authWarmUpStartedAt;
+    const cls = classifyGoogleError(authErr);
+    console.error(`[gigs:delete] auth_warm_up_failed editor=${editorId} raw=${cls.raw}`);
+    logGigRouteTiming("delete", "calendar_auth_failed_warmup", editorId, routeStartedAt, timings);
+    return NextResponse.json(
+      { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
+      { status: 503 },
+    );
+  }
+
   const snapshotReadStartedAt = Date.now();
   let deleteAuditSource = await readCurrentSnapshot(env.BLOBS_STORE_NAME, { consistency: "strong" });
   timings.snapshotReadMs = Date.now() - snapshotReadStartedAt;
   if (!deleteAuditSource) {
     const preflightStartedAt = Date.now();
-    const preflight = await buildAndPersistSnapshot();
+    const preflight = await buildAndPersistSnapshot(Date.now(), { sharedAuth });
     timings.preflightSyncMs = Date.now() - preflightStartedAt;
     if (preflight.status !== "ok" || !preflight.snapshot) {
       if (preflight.isAuthFailure) {
@@ -499,11 +542,10 @@ export async function DELETE(
   try {
     const googleWriteStartedAt = Date.now();
     await deleteCalendarEvent({
-      clientId: env.GOOGLE_CLIENT_ID,
-      clientSecret: env.GOOGLE_CLIENT_SECRET,
-      refreshToken: env.GOOGLE_REFRESH_TOKEN,
+      ...authOpts,
       calendarId: editorCalendarId,
       eventId,
+      sharedAuth,
     });
     timings.googleWriteMs = Date.now() - googleWriteStartedAt;
 

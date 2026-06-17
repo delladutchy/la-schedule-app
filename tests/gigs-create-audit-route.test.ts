@@ -57,6 +57,9 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/lib/google", () => ({
   CalendarEventAlreadyExistsError: class CalendarEventAlreadyExistsError extends Error {},
   createAllDayEvent: (...args: unknown[]) => createAllDayEvent(...args),
+  buildWarmedCalendarAuth: () => Promise.resolve({
+    getAccessToken: () => Promise.resolve({ token: "mock-access-token" }),
+  }),
 }));
 
 vi.mock("@/lib/sync", () => ({
