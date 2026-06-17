@@ -6,16 +6,6 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# Scheduled sync: pulls fresh FreeBusy data from Google every 10 minutes
-# and writes a normalized snapshot into Netlify Blobs.
-[functions."scheduled-sync"]
-  schedule = "*/10 * * * *"
-
-# Scheduled watch renewal: validates existing watch metadata and only
-# registers a fresh Google Calendar watch when missing or expiring soon.
-[functions."scheduled-google-watch-renew"]
-  schedule = "17 4 * * *"
-
 # Security headers on every response.
 [[headers]]
   for = "/*"

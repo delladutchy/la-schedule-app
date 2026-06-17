@@ -18,16 +18,17 @@ vi.mock("@netlify/blobs", () => ({
 
 async function loadHandler() {
   const mod = await import("@/netlify/functions/reconcile-snapshot-background");
-  return mod.handler;
+  return mod.default;
 }
 
-function buildEvent(overrides: Partial<{ authorization: string; body: string }> = {}): any {
-  return {
-    headers: {
-      authorization: overrides.authorization,
-    },
+function buildRequest(overrides: Partial<{ authorization: string; body: string }> = {}): Request {
+  const headers: Record<string, string> = {};
+  if (overrides.authorization) headers["authorization"] = overrides.authorization;
+  return new Request("http://localhost/.netlify/functions/reconcile-snapshot-background", {
+    method: "POST",
+    headers,
     body: overrides.body ?? JSON.stringify({ action: "create" }),
-  };
+  });
 }
 
 describe("reconcile snapshot background function", () => {
@@ -66,17 +67,17 @@ describe("reconcile snapshot background function", () => {
 
   it("rejects unauthorized requests", async () => {
     const handler = await loadHandler();
-    const res = await handler(buildEvent({ authorization: "Bearer wrong-token" }), {} as any);
+    const res = await handler(buildRequest({ authorization: "Bearer wrong-token" }));
 
-    expect(res?.statusCode).toBe(401);
+    expect(res.status).toBe(401);
     expect(buildAndPersistSnapshot).not.toHaveBeenCalled();
   });
 
   it("runs primary reconciliation when lock is available", async () => {
     const handler = await loadHandler();
-    const res = await handler(buildEvent({ authorization: "Bearer admin-token-0123456789" }), {} as any);
+    const res = await handler(buildRequest({ authorization: "Bearer admin-token-0123456789" }));
 
-    expect(res?.statusCode).toBe(202);
+    expect(res.status).toBe(202);
     expect(buildAndPersistSnapshot).toHaveBeenCalledTimes(1);
   });
 
@@ -93,9 +94,9 @@ describe("reconcile snapshot background function", () => {
     getStore.mockReturnValue(store);
 
     const handler = await loadHandler();
-    const res = await handler(buildEvent({ authorization: "Bearer admin-token-0123456789" }), {} as any);
+    const res = await handler(buildRequest({ authorization: "Bearer admin-token-0123456789" }));
 
-    expect(res?.statusCode).toBe(202);
+    expect(res.status).toBe(202);
     expect(buildAndPersistSnapshot).not.toHaveBeenCalled();
     expect(store.setJSON).toHaveBeenCalledWith(
       "internal/reconcile/pending",
@@ -115,12 +116,12 @@ describe("reconcile snapshot background function", () => {
     getStore.mockReturnValue(store);
 
     const handler = await loadHandler();
-    const res = await handler(buildEvent({
+    const res = await handler(buildRequest({
       authorization: "Bearer admin-token-0123456789",
       body: JSON.stringify({ action: "delete", requestedAtUtc: "2026-05-12T12:00:00.000Z" }),
-    }), {} as any);
+    }));
 
-    expect(res?.statusCode).toBe(202);
+    expect(res.status).toBe(202);
     expect(buildAndPersistSnapshot).toHaveBeenCalledTimes(2);
   });
 });

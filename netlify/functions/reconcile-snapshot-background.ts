@@ -1,5 +1,4 @@
 import { getStore } from "@netlify/blobs";
-import type { Handler } from "@netlify/functions";
 import { getEnvConfig } from "../../lib/config";
 import { buildAndPersistSnapshot } from "../../lib/sync";
 
@@ -79,19 +78,17 @@ async function runFullReconciliation(tag: "primary" | "coalesced"): Promise<void
   console.error(`[reconcile:bg] ${tag} failed error=${error} ms=${durationMs}`);
 }
 
-export const handler: Handler = async (event) => {
+export default async (req: Request) => {
   const startedAt = Date.now();
   const env = getEnvConfig();
 
-  if (!isAuthorizedHeader(event.headers?.authorization, env.ADMIN_TOKEN)) {
+  if (!isAuthorizedHeader(req.headers.get("authorization") ?? undefined, env.ADMIN_TOKEN)) {
     console.info("[reconcile:bg] unauthorized");
-    return {
-      statusCode: 401,
-      body: JSON.stringify({ error: "unauthorized" }),
-    };
+    return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
   }
 
-  const body = parseBody(event.body ?? null);
+  const rawBody = await req.text().catch(() => null);
+  const body = parseBody(rawBody);
   const requestedAtUtc = body.requestedAtUtc ?? new Date().toISOString();
   const requestedAtMs = parseGeneratedAtMs(requestedAtUtc) ?? Date.now();
 
@@ -115,10 +112,7 @@ export const handler: Handler = async (event) => {
       `[reconcile:bg] coalesced lock_busy action=${body.action ?? "unknown"} editor=${body.editorId ?? "unknown"}`,
     );
 
-    return {
-      statusCode: 202,
-      body: JSON.stringify({ status: "coalesced" }),
-    };
+    return new Response(JSON.stringify({ status: "coalesced" }), { status: 202 });
   }
 
   await store.setJSON(LOCK_KEY, {
@@ -148,17 +142,14 @@ export const handler: Handler = async (event) => {
       `[reconcile:bg] queued action=${body.action ?? "unknown"} editor=${body.editorId ?? "unknown"} ms=${Date.now() - startedAt}`,
     );
 
-    return {
-      statusCode: 202,
-      body: JSON.stringify({ status: "queued" }),
-    };
+    return new Response(JSON.stringify({ status: "queued" }), { status: 202 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[reconcile:bg] failed message=${message}`);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ status: "failed", error: "reconcile_background_failed" }),
-    };
+    return new Response(
+      JSON.stringify({ status: "failed", error: "reconcile_background_failed" }),
+      { status: 500 },
+    );
   } finally {
     await store.delete(LOCK_KEY).catch(() => undefined);
   }

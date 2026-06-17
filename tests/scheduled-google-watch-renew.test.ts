@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { HandlerResponse } from "@netlify/functions";
 
 const getEnvConfig = vi.fn();
 const ensureGoogleCalendarWatch = vi.fn();
@@ -22,14 +21,11 @@ vi.mock("../lib/google-watch", () => ({
 
 async function loadHandler() {
   const mod = await import("../netlify/functions/scheduled-google-watch-renew");
-  return mod.handler;
+  return mod.default;
 }
 
-function requireResponse(result: void | HandlerResponse): HandlerResponse {
-  if (!result) {
-    throw new Error("Expected handler response");
-  }
-  return result;
+async function parseResponse(res: Response): Promise<{ status: number; body: unknown }> {
+  return { status: res.status, body: await res.json() };
 }
 
 describe("scheduled-google-watch-renew function", () => {
@@ -65,9 +61,9 @@ describe("scheduled-google-watch-renew function", () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     try {
       const handler = await loadHandler();
-      const result = requireResponse(await handler({} as never, {} as never));
-      expect(result.statusCode).toBe(200);
-      expect(JSON.parse(result.body ?? "{}")).toMatchObject({
+      const result = await parseResponse(await handler());
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({
         status: "ok",
         action: "skipped",
         expiresInMs: 172800000,
@@ -109,9 +105,9 @@ describe("scheduled-google-watch-renew function", () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     try {
       const handler = await loadHandler();
-      const result = requireResponse(await handler({} as never, {} as never));
-      expect(result.statusCode).toBe(200);
-      expect(JSON.parse(result.body ?? "{}")).toMatchObject({
+      const result = await parseResponse(await handler());
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({
         status: "ok",
         action: "registered",
       });
@@ -137,9 +133,9 @@ describe("scheduled-google-watch-renew function", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const handler = await loadHandler();
-      const result = requireResponse(await handler({} as never, {} as never));
-      expect(result.statusCode).toBe(500);
-      expect(JSON.parse(result.body ?? "{}")).toMatchObject({
+      const result = await parseResponse(await handler());
+      expect(result.status).toBe(500);
+      expect(result.body).toMatchObject({
         status: "failed",
         error: "watch_auto_renew_failed",
       });
