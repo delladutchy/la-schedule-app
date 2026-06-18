@@ -1,4 +1,5 @@
 import "server-only";
+import { getStore } from "@netlify/blobs";
 import { google } from "googleapis";
 import type { SheetRow } from "./invoice-types";
 
@@ -7,10 +8,17 @@ import type { SheetRow } from "./invoice-types";
  *
  * Required env vars:
  *   GOOGLE_SERVICE_ACCOUNT_EMAIL  — service account email with Sheets Editor access
- *   GOOGLE_PRIVATE_KEY            — service account private key (newlines as \n)
  *   GOOGLE_SHEET_ID               — spreadsheet ID from the URL
  *   GOOGLE_SHEET_NAME             — tab name (default: "LA PAY (2026)")
+ *
+ * GOOGLE_PRIVATE_KEY is read from env first; if absent, falls back to Netlify
+ * Blobs ("app-secrets" / "google-private-key"). This lets you remove the key
+ * from Netlify env vars (keeping Lambda payloads under the 4KB AWS limit) after
+ * running POST /api/admin/migrate-sheets-key once.
  */
+
+export const SHEETS_KEY_STORE = "app-secrets";
+export const SHEETS_KEY_BLOB  = "google-private-key";
 
 const SHEET_NAME = process.env.GOOGLE_SHEET_NAME ?? "LA PAY (2026)";
 
@@ -44,14 +52,32 @@ const COLUMN_ORDER: Array<keyof SheetRow> = [
   "paidDate",
 ];
 
-function getSheetAuth() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const rawKey = process.env.GOOGLE_PRIVATE_KEY;
-  if (!email || !rawKey) {
-    throw new Error(
-      "[google-sheets] GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_PRIVATE_KEY must be set",
-    );
+async function getPrivateKey(): Promise<string> {
+  // Env var takes priority — required for local dev and during migration window.
+  const envKey = process.env.GOOGLE_PRIVATE_KEY;
+  if (envKey) return envKey;
+
+  // Fallback: Netlify Blobs (production after env var removal).
+  try {
+    const store = getStore(SHEETS_KEY_STORE);
+    const key = await store.get(SHEETS_KEY_BLOB);
+    if (key) return key;
+  } catch {
+    // Blobs unavailable (local dev without netlify dev context).
   }
+
+  throw new Error(
+    "[google-sheets] GOOGLE_PRIVATE_KEY not found in env or Netlify Blobs. " +
+    "Set the env var, or call POST /api/admin/migrate-sheets-key to upload it.",
+  );
+}
+
+async function getSheetAuth() {
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  if (!email) {
+    throw new Error("[google-sheets] GOOGLE_SERVICE_ACCOUNT_EMAIL must be set");
+  }
+  const rawKey = await getPrivateKey();
   const privateKey = rawKey.replace(/\\n/g, "\n");
   return new google.auth.GoogleAuth({
     credentials: { client_email: email, private_key: privateKey },
@@ -76,7 +102,7 @@ export async function upsertSheetRow(row: SheetRow): Promise<void> {
   const sheetId = process.env.GOOGLE_SHEET_ID;
   if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
 
-  const auth = getSheetAuth();
+  const auth = await getSheetAuth();
   const sheets = google.sheets({ version: "v4", auth });
 
   // Read existing rows to find a match by LA Job #

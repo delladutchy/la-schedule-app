@@ -6,6 +6,17 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
+# Scheduled jobs — run as Next.js API routes (not Lambda), so there is no
+# 4KB AWS Lambda env var limit. The scheduler sends GET with the header
+# x-netlify-event: scheduled; routes check this OR ADMIN_TOKEN bearer auth.
+[[crons]]
+  path     = "/api/cron/sync"
+  schedule = "*/10 * * * *"
+
+[[crons]]
+  path     = "/api/cron/google-watch-renew"
+  schedule = "17 4 * * *"
+
 # Security headers on every response.
 [[headers]]
   for = "/*"

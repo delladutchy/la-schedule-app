@@ -1,3 +1,4 @@
+import { type NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getEnvConfig = vi.fn();
@@ -19,16 +20,23 @@ vi.mock("../lib/google-watch", () => ({
   },
 }));
 
-async function loadHandler() {
-  const mod = await import("../netlify/functions/scheduled-google-watch-renew");
-  return mod.default;
+// Simulate Netlify's cron scheduler request (x-netlify-event: scheduled).
+function makeCronRequest(): NextRequest {
+  return new Request("http://localhost/api/cron/google-watch-renew", {
+    headers: { "x-netlify-event": "scheduled" },
+  }) as unknown as NextRequest;
+}
+
+async function loadGET() {
+  const mod = await import("../app/api/cron/google-watch-renew/route");
+  return mod.GET;
 }
 
 async function parseResponse(res: Response): Promise<{ status: number; body: unknown }> {
   return { status: res.status, body: await res.json() };
 }
 
-describe("scheduled-google-watch-renew function", () => {
+describe("cron google-watch-renew route", () => {
   beforeEach(() => {
     getEnvConfig.mockReset();
     ensureGoogleCalendarWatch.mockReset();
@@ -37,6 +45,7 @@ describe("scheduled-google-watch-renew function", () => {
 
   afterEach(() => {
     delete process.env.URL;
+    vi.resetModules();
   });
 
   it("logs skipped when watch is healthy", async () => {
@@ -48,6 +57,7 @@ describe("scheduled-google-watch-renew function", () => {
       GOOGLE_WEBHOOK_TOKEN: "google-webhook-token",
       BLOBS_STORE_NAME: "availability-snapshots",
       PUBLIC_SITE_URL: "https://la-schedule-app.netlify.app",
+      ADMIN_TOKEN: "test-admin-token",
     });
     ensureGoogleCalendarWatch.mockResolvedValue({
       status: "ok",
@@ -60,8 +70,8 @@ describe("scheduled-google-watch-renew function", () => {
 
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     try {
-      const handler = await loadHandler();
-      const result = await parseResponse(await handler());
+      const GET = await loadGET();
+      const result = await parseResponse(await GET(makeCronRequest()));
       expect(result.status).toBe(200);
       expect(result.body).toMatchObject({
         status: "ok",
@@ -76,7 +86,7 @@ describe("scheduled-google-watch-renew function", () => {
         }),
       );
       const logs = infoSpy.mock.calls.map((args) => args.join(" ")).join("\n");
-      expect(logs).toContain("[google:watch:auto-renew] skipped");
+      expect(logs).toContain("[cron:watch-renew] skipped");
       expect(logs).toContain("reason=healthy");
     } finally {
       infoSpy.mockRestore();
@@ -92,6 +102,7 @@ describe("scheduled-google-watch-renew function", () => {
       GOOGLE_WEBHOOK_TOKEN: "google-webhook-token",
       BLOBS_STORE_NAME: "availability-snapshots",
       PUBLIC_SITE_URL: "https://la-schedule-app.netlify.app",
+      ADMIN_TOKEN: "test-admin-token",
     });
     ensureGoogleCalendarWatch.mockResolvedValue({
       status: "ok",
@@ -104,15 +115,15 @@ describe("scheduled-google-watch-renew function", () => {
 
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     try {
-      const handler = await loadHandler();
-      const result = await parseResponse(await handler());
+      const GET = await loadGET();
+      const result = await parseResponse(await GET(makeCronRequest()));
       expect(result.status).toBe(200);
       expect(result.body).toMatchObject({
         status: "ok",
         action: "registered",
       });
       const logs = infoSpy.mock.calls.map((args) => args.join(" ")).join("\n");
-      expect(logs).toContain("[google:watch:auto-renew] renewed");
+      expect(logs).toContain("[cron:watch-renew] renewed");
     } finally {
       infoSpy.mockRestore();
     }
@@ -127,20 +138,21 @@ describe("scheduled-google-watch-renew function", () => {
       GOOGLE_WEBHOOK_TOKEN: "google-webhook-token",
       BLOBS_STORE_NAME: "availability-snapshots",
       PUBLIC_SITE_URL: "https://la-schedule-app.netlify.app",
+      ADMIN_TOKEN: "test-admin-token",
     });
     ensureGoogleCalendarWatch.mockRejectedValue(new Error("google blew up"));
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const handler = await loadHandler();
-      const result = await parseResponse(await handler());
+      const GET = await loadGET();
+      const result = await parseResponse(await GET(makeCronRequest()));
       expect(result.status).toBe(500);
       expect(result.body).toMatchObject({
         status: "failed",
         error: "watch_auto_renew_failed",
       });
       const logs = errorSpy.mock.calls.map((args) => args.join(" ")).join("\n");
-      expect(logs).toContain("[google:watch:auto-renew] failed");
+      expect(logs).toContain("[cron:watch-renew] failed");
       expect(logs).not.toContain("google-webhook-token");
       expect(logs).not.toContain("refresh-token");
     } finally {
