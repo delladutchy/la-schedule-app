@@ -2142,6 +2142,7 @@ html.modal-open body {
   padding: 24px;
 }
 .admin h1 { font-size: 24px; margin: 0 0 16px; }
+.admin h2 { font-size: 16px; margin: 0 0 10px; font-weight: 600; }
 .admin .kv {
   display: grid;
   grid-template-columns: 200px 1fr;
@@ -2158,6 +2159,86 @@ html.modal-open body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   word-break: break-all;
+}
+
+/* QuickBooks admin page */
+.qb-section {
+  margin-top: 24px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.qb-readiness {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0 4px;
+}
+.qb-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.qb-badge--ok   { background: #dcfce7; color: #15803d; }
+.qb-badge--warn { background: #fef3c7; color: #92400e; }
+:root[data-theme="dark"] .qb-badge--ok   { background: #14532d; color: #86efac; }
+:root[data-theme="dark"] .qb-badge--warn { background: #451a03; color: #fcd34d; }
+.qb-banner {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  margin-bottom: 16px;
+  border: 1px solid transparent;
+}
+.qb-banner--ok    { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.qb-banner--error { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+:root[data-theme="dark"] .qb-banner--ok    { background: #14532d; color: #86efac; border-color: #166534; }
+:root[data-theme="dark"] .qb-banner--error { background: #450a0a; color: #fca5a5; border-color: #7f1d1d; }
+.qb-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 8px 0 0;
+}
+.qb-steps {
+  font-size: 14px;
+  margin: 0;
+  padding-left: 20px;
+}
+.qb-steps li + li { margin-top: 4px; }
+.qb-btn {
+  margin-top: 12px;
+  padding: 8px 18px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 0.15s;
+}
+.qb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.qb-btn--primary  { background: #2563eb; color: #fff; border-color: #1d4ed8; }
+.qb-btn--secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+.qb-btn--ghost    { background: transparent; color: var(--text-muted); border-color: var(--border); }
+.qb-btn + .qb-btn { margin-left: 8px; }
+.qb-error-list {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: #991b1b;
+}
+:root[data-theme="dark"] .qb-error-list { color: #fca5a5; }
+.qb-bootstrap-result {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
 }
 
 /* ---------- Mobile ---------- */

@@ -176,9 +176,18 @@ const EnvSchema = z.object({
   QUICKBOOKS_CLIENT_ID: z.string().min(1).optional(),
   /** OAuth 2.0 Client Secret from Intuit Developer Portal. */
   QUICKBOOKS_CLIENT_SECRET: z.string().min(1).optional(),
-  /** Company/Realm ID — shown in QBO URL as realmId=XXXXXXXXXX. */
+  /**
+   * OAuth 2.0 Redirect URI registered in Intuit Developer Portal.
+   * Used during the Connect to QuickBooks flow.
+   * Example: https://your-site.netlify.app/api/quickbooks/callback
+   */
+  QUICKBOOKS_REDIRECT_URI: z.string().url().optional(),
+  /**
+   * Realm ID and refresh token are stored in Supabase after OAuth.
+   * These env vars are an optional override if you want to bypass DB storage.
+   * Normally leave them empty — the OAuth flow fills them in automatically.
+   */
   QUICKBOOKS_REALM_ID: z.string().min(1).optional(),
-  /** Long-lived refresh token produced during the one-time OAuth flow. */
   QUICKBOOKS_REFRESH_TOKEN: z.string().min(1).optional(),
   /**
    * Display name of the QBO customer to invoice.

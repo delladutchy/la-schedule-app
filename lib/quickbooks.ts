@@ -1,17 +1,15 @@
 /**
  * QuickBooks Online API service — server-only.
  *
- * Bootstrap flow (one-time):
+ * Credential resolution order:
+ *   1. QUICKBOOKS_REALM_ID / QUICKBOOKS_REFRESH_TOKEN env vars (manual override)
+ *   2. Supabase quickbooks_connection table (populated by OAuth flow)
+ *
+ * Bootstrap flow (one-time, after OAuth connect):
  *   POST /api/quickbooks/bootstrap
  *     → finds or creates all required QBO service items by name
  *     → looks up the customer by QUICKBOOKS_CUSTOMER_NAME
  *     → caches resolved IDs in Supabase `quickbooks_setup` table
- *
- * After bootstrap, creating invoices requires no additional env vars:
- *   POST /api/quickbooks/draft/:eventId
- *     → loads cached IDs from Supabase
- *     → builds line items from InvoicePacket
- *     → POSTs draft invoice to QBO (not sent to client)
  *
  * OAuth reference:
  *   https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0
@@ -24,7 +22,6 @@ import type { EnvConfig } from "./config";
 import type { InvoicePacket } from "./invoice-types";
 import {
   buildQBInvoiceLines,
-  findMissingItemNames,
   QB_LINE_NAMES,
   QB_REQUIRED_ITEM_KEYS,
   type QBAccountQueryResponse,
@@ -37,11 +34,16 @@ import {
   type QBSetupCache,
   type QBTokenResponse,
 } from "./quickbooks-types";
+import { getQBConnection, saveQBConnection } from "./quickbooks-connection";
 import { getSupabaseServerClient } from "./supabase";
 
 const QB_BASE_URL = "https://quickbooks.api.intuit.com/v3/company";
 const QB_TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
+const QB_AUTH_URL  = "https://appcenter.intuit.com/connect/oauth2";
 const QB_API_VERSION = "65";
+
+/** Scopes required to create invoices. Space-separated. */
+export const QB_SCOPES = "com.intuit.quickbooks.accounting";
 
 export type { QBSetupCache };
 
@@ -69,23 +71,84 @@ export interface QBBootstrapResult {
   errors: string[];
 }
 
-// ── OAuth token refresh ───────────────────────────────────────────────────────
+// ── OAuth helpers ─────────────────────────────────────────────────────────────
 
+function qbBasicAuth(clientId: string, clientSecret: string): string {
+  return Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+}
+
+/**
+ * Exchange an OAuth authorization code for access + refresh tokens.
+ * Called once from the /api/quickbooks/callback route.
+ */
+export async function exchangeQBAuthCode(
+  code: string,
+  redirectUri: string,
+  clientId: string,
+  clientSecret: string,
+): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  accessTokenExpiresAt: string;
+  refreshTokenExpiresAt: string;
+}> {
+  const res = await fetch(QB_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${qbBasicAuth(clientId, clientSecret)}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: new URLSearchParams({
+      grant_type:   "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`QB code exchange failed (${res.status}): ${body}`);
+  }
+
+  const data = (await res.json()) as QBTokenResponse;
+  const now = Date.now();
+  return {
+    accessToken:           data.access_token,
+    refreshToken:          data.refresh_token,
+    accessTokenExpiresAt:  new Date(now + data.expires_in * 1000).toISOString(),
+    refreshTokenExpiresAt: new Date(now + data.x_refresh_token_expires_in * 1000).toISOString(),
+  };
+}
+
+/**
+ * Build the Intuit authorization URL to redirect the user to.
+ */
+export function buildQBAuthUrl(clientId: string, redirectUri: string, state: string): string {
+  const url = new URL(QB_AUTH_URL);
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", QB_SCOPES);
+  url.searchParams.set("state", state);
+  return url.toString();
+}
+
+/** Exchange a refresh token for a new access token. */
 async function getQBAccessToken(
   clientId: string,
   clientSecret: string,
   refreshToken: string,
 ): Promise<{ accessToken: string; newRefreshToken: string }> {
-  const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
   const res = await fetch(QB_TOKEN_URL, {
     method: "POST",
     headers: {
-      Authorization: `Basic ${credentials}`,
+      Authorization: `Basic ${qbBasicAuth(clientId, clientSecret)}`,
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
     },
     body: new URLSearchParams({
-      grant_type: "refresh_token",
+      grant_type:    "refresh_token",
       refresh_token: refreshToken,
     }),
   });
@@ -97,12 +160,66 @@ async function getQBAccessToken(
   return { accessToken: data.access_token, newRefreshToken: data.refresh_token };
 }
 
-// ── Setup cache (Supabase quickbooks_setup table) ─────────────────────────────
+// ── Runtime credential resolver ───────────────────────────────────────────────
+
+interface QBRuntimeCredentials {
+  clientId: string;
+  clientSecret: string;
+  realmId: string;
+  refreshToken: string;
+  /** true when realm/refreshToken came from DB rather than env vars */
+  fromDatabase: boolean;
+}
 
 /**
- * Load the bootstrapped QB setup from Supabase. Returns null if not yet
- * bootstrapped or if the table doesn't exist (migration not yet applied).
+ * Resolve the full set of QB credentials needed to make API calls.
+ *
+ * client_id / client_secret must be in env vars.
+ * realm_id / refresh_token are read from env vars first; if absent, fall back
+ * to the Supabase quickbooks_connection row (populated by the OAuth flow).
  */
+async function resolveQBRuntimeCredentials(
+  env: Pick<EnvConfig,
+    | "QUICKBOOKS_CLIENT_ID"
+    | "QUICKBOOKS_CLIENT_SECRET"
+    | "QUICKBOOKS_REALM_ID"
+    | "QUICKBOOKS_REFRESH_TOKEN"
+  >,
+): Promise<QBRuntimeCredentials> {
+  if (!env.QUICKBOOKS_CLIENT_ID) throw new Error("Missing QUICKBOOKS_CLIENT_ID");
+  if (!env.QUICKBOOKS_CLIENT_SECRET) throw new Error("Missing QUICKBOOKS_CLIENT_SECRET");
+
+  // Prefer env vars (manual override)
+  if (env.QUICKBOOKS_REALM_ID && env.QUICKBOOKS_REFRESH_TOKEN) {
+    return {
+      clientId:      env.QUICKBOOKS_CLIENT_ID,
+      clientSecret:  env.QUICKBOOKS_CLIENT_SECRET,
+      realmId:       env.QUICKBOOKS_REALM_ID,
+      refreshToken:  env.QUICKBOOKS_REFRESH_TOKEN,
+      fromDatabase:  false,
+    };
+  }
+
+  // Fall back to Supabase connection
+  const conn = await getQBConnection();
+  if (!conn) {
+    throw new Error(
+      "QuickBooks is not connected. " +
+      "Visit /admin/quickbooks and click 'Connect to QuickBooks' to complete OAuth setup.",
+    );
+  }
+
+  return {
+    clientId:      env.QUICKBOOKS_CLIENT_ID,
+    clientSecret:  env.QUICKBOOKS_CLIENT_SECRET,
+    realmId:       conn.realmId,
+    refreshToken:  conn.refreshToken,
+    fromDatabase:  true,
+  };
+}
+
+// ── Setup cache (Supabase quickbooks_setup table) ─────────────────────────────
+
 export async function readQBSetupCache(realmId: string): Promise<QBSetupCache | null> {
   try {
     const client = getSupabaseServerClient();
@@ -113,12 +230,12 @@ export async function readQBSetupCache(realmId: string): Promise<QBSetupCache | 
       .maybeSingle();
     if (!data) return null;
     return {
-      realmId: String(data.realm_id),
-      customerId: String(data.customer_id),
-      customerName: String(data.customer_name),
-      itemIds: (data.item_ids ?? {}) as Record<string, string>,
+      realmId:          String(data.realm_id),
+      customerId:       String(data.customer_id),
+      customerName:     String(data.customer_name),
+      itemIds:          (data.item_ids ?? {}) as Record<string, string>,
       incomeAccountRef: (data.income_account_ref ?? {}) as { value: string; name: string },
-      bootstrappedAt: String(data.bootstrapped_at),
+      bootstrappedAt:   String(data.bootstrapped_at),
     };
   } catch {
     return null; // table not yet migrated, or connection error
@@ -144,10 +261,6 @@ async function saveQBSetupCache(setup: QBSetupCache): Promise<void> {
   if (error) throw new Error(`[quickbooks] setup cache save failed: ${error.message}`);
 }
 
-/**
- * Get the bootstrapped setup — throws with a clear message if not yet run.
- * Called by createQBDraftInvoice before creating any invoices.
- */
 export async function getQBSetup(realmId: string): Promise<QBSetupCache> {
   const cache = await readQBSetupCache(realmId);
   if (!cache) {
@@ -205,7 +318,6 @@ async function queryQBIncomeAccount(
     "SELECT * FROM Account WHERE AccountType='Income' AND Active=true MAXRESULTS 20",
   );
   const accounts = data.QueryResponse.Account ?? [];
-  // Prefer an account whose name contains "Service"; otherwise take the first income account
   const preferred = accounts.find((a) => /service/i.test(a.Name)) ?? accounts[0];
   if (!preferred) return null;
   return { value: preferred.Id, name: preferred.Name };
@@ -258,13 +370,6 @@ async function createQBItem(
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-/**
- * One-time setup: find or create all required QBO service items, look up
- * the customer, then cache the resolved IDs in Supabase.
- *
- * Safe to re-run — existing items are found by name, not re-created.
- * Customer is NEVER auto-created — must already exist in QBO.
- */
 export async function runQBBootstrap(
   env: Pick<EnvConfig,
     | "QUICKBOOKS_CLIENT_ID"
@@ -277,14 +382,12 @@ export async function runQBBootstrap(
   const errors: string[] = [];
   const customerName = env.QUICKBOOKS_CUSTOMER_NAME ?? "Light Action";
 
-  const missingCreds = [
-    !env.QUICKBOOKS_CLIENT_ID && "QUICKBOOKS_CLIENT_ID",
-    !env.QUICKBOOKS_CLIENT_SECRET && "QUICKBOOKS_CLIENT_SECRET",
-    !env.QUICKBOOKS_REALM_ID && "QUICKBOOKS_REALM_ID",
-    !env.QUICKBOOKS_REFRESH_TOKEN && "QUICKBOOKS_REFRESH_TOKEN",
-  ].filter(Boolean) as string[];
-
-  if (missingCreds.length > 0) {
+  // Resolve credentials (env → DB)
+  let creds: QBRuntimeCredentials;
+  try {
+    creds = await resolveQBRuntimeCredentials(env);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     const emptyItems = Object.fromEntries(
       QB_REQUIRED_ITEM_KEYS.map((k) => [k, { name: QB_LINE_NAMES[k], found: false, created: false, id: null }]),
     );
@@ -294,20 +397,27 @@ export async function runQBBootstrap(
       items: emptyItems,
       incomeAccount: { found: false, id: null, name: null },
       cached: false,
-      errors: [`Missing required env vars: ${missingCreds.join(", ")}`],
+      errors: [msg],
     };
   }
 
-  const realmId = env.QUICKBOOKS_REALM_ID!;
-
-  // 1. OAuth token
-  const { accessToken } = await getQBAccessToken(
-    env.QUICKBOOKS_CLIENT_ID!,
-    env.QUICKBOOKS_CLIENT_SECRET!,
-    env.QUICKBOOKS_REFRESH_TOKEN!,
+  const { accessToken, newRefreshToken } = await getQBAccessToken(
+    creds.clientId,
+    creds.clientSecret,
+    creds.refreshToken,
   );
 
-  // 2. Income account (needed if any items must be created)
+  // Persist refreshed token back to DB so it doesn't expire
+  if (creds.fromDatabase) {
+    const conn = await getQBConnection();
+    if (conn) {
+      await saveQBConnection({ ...conn, refreshToken: newRefreshToken }).catch(() => undefined);
+    }
+  }
+
+  const realmId = creds.realmId;
+
+  // Income account (needed if any items must be created)
   let incomeAccountRef: { value: string; name: string } | null = null;
   try {
     incomeAccountRef = await queryQBIncomeAccount(accessToken, realmId);
@@ -321,7 +431,7 @@ export async function runQBBootstrap(
     errors.push(`Income account lookup failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // 3. Fetch all existing active Service items
+  // Fetch all existing active Service items
   const existingItems = await queryQBActiveItems(accessToken, realmId).catch((err) => {
     errors.push(`Item query failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
@@ -329,7 +439,7 @@ export async function runQBBootstrap(
 
   const existingByName = new Map(existingItems.map((i) => [i.Name.toLowerCase(), i]));
 
-  // 4. Find or create each required item
+  // Find or create each required item
   const itemResults: QBBootstrapResult["items"] = {};
   const resolvedIds: Record<string, string> = {};
 
@@ -358,7 +468,7 @@ export async function runQBBootstrap(
     }
   }
 
-  // 5. Look up customer (never auto-create)
+  // Look up customer (never auto-create)
   let customer: { id: string; name: string } | null = null;
   try {
     customer = await queryQBCustomer(accessToken, realmId, customerName);
@@ -373,7 +483,7 @@ export async function runQBBootstrap(
     );
   }
 
-  // 6. Cache if fully resolved
+  // Cache if fully resolved
   const allItemsResolved = QB_REQUIRED_ITEM_KEYS.every((k) => k in resolvedIds);
   let cached = false;
 
@@ -389,8 +499,7 @@ export async function runQBBootstrap(
       });
       cached = true;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Cache save failed: ${msg}`);
+      errors.push(`Cache save failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -399,9 +508,9 @@ export async function runQBBootstrap(
     customer: { found: !!customer, id: customer?.id ?? null, name: customerName },
     items: itemResults,
     incomeAccount: {
-      found: !!incomeAccountRef,
-      id: incomeAccountRef?.value ?? null,
-      name: incomeAccountRef?.name ?? null,
+      found:  !!incomeAccountRef,
+      id:     incomeAccountRef?.value ?? null,
+      name:   incomeAccountRef?.name ?? null,
     },
     cached,
     errors,
@@ -414,18 +523,13 @@ export async function checkQBConnection(
   env: Pick<EnvConfig,
     | "QUICKBOOKS_CLIENT_ID"
     | "QUICKBOOKS_CLIENT_SECRET"
+    | "QUICKBOOKS_REALM_ID"
     | "QUICKBOOKS_REFRESH_TOKEN"
   >,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!env.QUICKBOOKS_CLIENT_ID || !env.QUICKBOOKS_CLIENT_SECRET || !env.QUICKBOOKS_REFRESH_TOKEN) {
-    return { ok: false, error: "missing_credentials" };
-  }
   try {
-    await getQBAccessToken(
-      env.QUICKBOOKS_CLIENT_ID,
-      env.QUICKBOOKS_CLIENT_SECRET,
-      env.QUICKBOOKS_REFRESH_TOKEN,
-    );
+    const creds = await resolveQBRuntimeCredentials(env);
+    await getQBAccessToken(creds.clientId, creds.clientSecret, creds.refreshToken);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -434,13 +538,6 @@ export async function checkQBConnection(
 
 // ── Draft invoice creation ────────────────────────────────────────────────────
 
-/**
- * Create a draft invoice in QuickBooks Online.
- *
- * Requires a successful bootstrap (POST /api/quickbooks/bootstrap) first.
- * Does NOT send the invoice or notify the client.
- * Caller is responsible for persisting the QB invoice ID via markQBDraftCreated().
- */
 export async function createQBDraftInvoice(
   packet: InvoicePacket,
   gigSummary: string,
@@ -455,26 +552,24 @@ export async function createQBDraftInvoice(
   if (!env.QUICKBOOKS_ENABLED) {
     throw new Error("QuickBooks is not enabled (QUICKBOOKS_ENABLED=false)");
   }
-  if (!env.QUICKBOOKS_CLIENT_ID || !env.QUICKBOOKS_CLIENT_SECRET) {
-    throw new Error("Missing QUICKBOOKS_CLIENT_ID or QUICKBOOKS_CLIENT_SECRET");
-  }
-  if (!env.QUICKBOOKS_REALM_ID) {
-    throw new Error("Missing QUICKBOOKS_REALM_ID");
-  }
-  if (!env.QUICKBOOKS_REFRESH_TOKEN) {
-    throw new Error("Missing QUICKBOOKS_REFRESH_TOKEN — complete OAuth setup first");
-  }
 
-  // Load bootstrapped IDs — throws if bootstrap hasn't been run
-  const setup = await getQBSetup(env.QUICKBOOKS_REALM_ID);
-
-  const { accessToken } = await getQBAccessToken(
-    env.QUICKBOOKS_CLIENT_ID,
-    env.QUICKBOOKS_CLIENT_SECRET,
-    env.QUICKBOOKS_REFRESH_TOKEN,
+  const creds = await resolveQBRuntimeCredentials(env);
+  const { accessToken, newRefreshToken } = await getQBAccessToken(
+    creds.clientId,
+    creds.clientSecret,
+    creds.refreshToken,
   );
 
-  // Convert cached itemIds (all strings) to QBItemConfig (string | null)
+  // Persist refreshed token back to DB
+  if (creds.fromDatabase) {
+    const conn = await getQBConnection();
+    if (conn) {
+      await saveQBConnection({ ...conn, refreshToken: newRefreshToken }).catch(() => undefined);
+    }
+  }
+
+  const setup = await getQBSetup(creds.realmId);
+
   const itemConfig: QBItemConfig = {
     dayRate:       setup.itemIds["dayRate"] ?? null,
     overtime:      setup.itemIds["overtime"] ?? null,
@@ -503,7 +598,7 @@ export async function createQBDraftInvoice(
     PrivateNote: gigSummary || undefined,
   };
 
-  const url = `${QB_BASE_URL}/${env.QUICKBOOKS_REALM_ID}/invoice?minorversion=${QB_API_VERSION}`;
+  const url = `${QB_BASE_URL}/${creds.realmId}/invoice?minorversion=${QB_API_VERSION}`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
