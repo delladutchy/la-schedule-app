@@ -4988,13 +4988,19 @@ html.modal-open body {
 }
 
 .invoice-mileage-editor {
-  position: relative;
   background: var(--surface-dim, rgba(0,0,0,0.03));
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 10px 44px 10px 10px; /* right padding reserves space for the confirm button */
+  padding: 8px;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+/* Top row: mode buttons left, ✕/✓ stacked on right */
+.invoice-mileage-top-row {
+  display: flex;
+  align-items: flex-start;
   gap: 8px;
 }
 
@@ -5003,6 +5009,15 @@ html.modal-open body {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+  flex: 1;
+}
+
+/* ✕ and ✓ stacked vertically, right-aligned */
+.invoice-mileage-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .invoice-mileage-mode-btn {
@@ -5025,16 +5040,22 @@ html.modal-open body {
 }
 
 .invoice-mileage-remove-btn {
-  font-size: 0.78rem;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
   font-family: inherit;
   color: var(--text-muted);
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
   cursor: pointer;
-  margin-left: auto;
-  transition: color 0.15s;
+  transition: color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
 }
 
 .invoice-mileage-remove-btn:hover {
@@ -5070,15 +5091,14 @@ html.modal-open body {
 }
 
 .invoice-mileage-confirm-btn {
-  position: absolute;
-  bottom: 8px;
-  right: 8px;
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1rem;
+  font-size: 1.1rem;
   font-family: inherit;
   font-weight: 700;
   color: var(--text-muted);
@@ -5089,6 +5109,7 @@ html.modal-open body {
   transition: color 0.15s, border-color 0.15s, background 0.15s;
   line-height: 1;
   user-select: none;
+  flex-shrink: 0;
 }
 
 .invoice-mileage-confirm-btn--valid {

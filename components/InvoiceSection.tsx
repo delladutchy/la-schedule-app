@@ -5,6 +5,7 @@ import type { InvoiceData, InvoicePacket, MileageMode, WorkdayEntry } from "@/li
 import {
   calculateWorkdayMileage,
   getDefaultDeductionForMode,
+  initWorkdayEntries,
   round2,
 } from "@/lib/invoice-calculations";
 
@@ -265,26 +266,38 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
             const mileageValid = mode !== "none" && milesDriven > 0 && effectiveDeduction >= 0;
             return (
           <div className="invoice-mileage-editor">
-            {/* Mode selector buttons */}
-            <div className="invoice-mileage-modes">
-              {ACTIVE_MODES.map((m) => (
+            {/* Top row: mode buttons (left) + remove/confirm controls (right) */}
+            <div className="invoice-mileage-top-row">
+              <div className="invoice-mileage-modes">
+                {ACTIVE_MODES.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`invoice-mileage-mode-btn${mode === m ? " invoice-mileage-mode-btn--active" : ""}`}
+                    onClick={() => setMode(m)}
+                  >
+                    {MODE_LABELS[m]}
+                  </button>
+                ))}
+              </div>
+              <div className="invoice-mileage-controls">
                 <button
-                  key={m}
                   type="button"
-                  className={`invoice-mileage-mode-btn${mode === m ? " invoice-mileage-mode-btn--active" : ""}`}
-                  onClick={() => setMode(m)}
+                  className="invoice-mileage-remove-btn"
+                  onClick={() => setMode("none")}
+                  aria-label="Remove mileage"
                 >
-                  {MODE_LABELS[m]}
+                  ✕
                 </button>
-              ))}
-              <button
-                type="button"
-                className="invoice-mileage-remove-btn"
-                onClick={() => setMode("none")}
-                aria-label="Remove mileage"
-              >
-                ✕
-              </button>
+                <button
+                  type="button"
+                  className={`invoice-mileage-confirm-btn${mileageValid ? " invoice-mileage-confirm-btn--valid" : ""}`}
+                  aria-label="Confirm mileage entry"
+                  onClick={() => { if (mileageValid) setMileageOpen(false); }}
+                >
+                  ✓
+                </button>
+              </div>
             </div>
 
             {/* Auto-mileage hint — shown when miles can't be auto-filled */}
@@ -343,15 +356,6 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
                 ) : null}
               </div>
             ) : null}
-
-            <button
-              type="button"
-              className={`invoice-mileage-confirm-btn${mileageValid ? " invoice-mileage-confirm-btn--valid" : ""}`}
-              aria-label="Confirm mileage entry"
-              onClick={() => { if (mileageValid) setMileageOpen(false); }}
-            >
-              ✓
-            </button>
           </div>
             );
           })()
@@ -499,20 +503,6 @@ export function InvoiceSection({
       })
       .catch(() => { setAutoMileageNote("api_error"); });
   }, [jobLocation, editorToken]);
-
-  function initWorkdayEntries(
-    existing: WorkdayEntry[],
-    dates: string[],
-    defaultStart?: string,
-    defaultEnd?: string,
-  ): WorkdayEntry[] {
-    const map = new Map(existing.map((e) => [e.date, e]));
-    return dates.map((date) => {
-      const saved = map.get(date);
-      if (saved) return saved;
-      return { date, startTime: defaultStart ?? "", endTime: defaultEnd ?? "" };
-    });
-  }
 
   // ---------------------------------------------------------------------------
   // Save helpers

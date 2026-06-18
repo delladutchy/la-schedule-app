@@ -113,6 +113,32 @@ export function calculateMileage(
   };
 }
 
+/**
+ * Merge saved workday entries with the expected work dates for a job.
+ *
+ * Rules (in priority order):
+ *  1. If a saved entry exists for a date, return it unchanged — never overwrite
+ *     with scheduled defaults, even if the calendar event later changes.
+ *  2. If no saved entry exists for a date (brand-new job), create one seeded
+ *     with the scheduled event start/end times as defaults.
+ *  3. If no defaults are provided, create an empty entry.
+ *
+ * This function is pure — it never mutates existing entries.
+ */
+export function initWorkdayEntries(
+  existing: WorkdayEntry[],
+  dates: string[],
+  defaultStart?: string,
+  defaultEnd?: string,
+): WorkdayEntry[] {
+  const savedByDate = new Map(existing.map((e) => [e.date, e]));
+  return dates.map((date) => {
+    const saved = savedByDate.get(date);
+    if (saved) return saved; // always trust saved data over calendar defaults
+    return { date, startTime: defaultStart ?? "", endTime: defaultEnd ?? "" };
+  });
+}
+
 /** Convert stored workday entries into calculated rows. */
 export function calculateWorkdays(entries: WorkdayEntry[]): WorkdayCalculated[] {
   return entries.map((entry) => {

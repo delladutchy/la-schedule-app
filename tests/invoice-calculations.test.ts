@@ -5,6 +5,7 @@ import {
   calculateMileage,
   calculateWorkdayMileage,
   getDefaultDeductionForMode,
+  initWorkdayEntries,
   calculateInvoicePacket,
   generateSheetRow,
   round2,
@@ -437,5 +438,81 @@ describe("legacy total_miles → custom per-day conversion", () => {
     expect(p.mileage!.reimbursedMiles).toBe(50);
     // The legacy 644 total is completely ignored
     expect(p.mileage!.totalMiles).not.toBe(644);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// initWorkdayEntries — default time seeding and saved-data precedence
+// ---------------------------------------------------------------------------
+
+describe("initWorkdayEntries — default time behavior", () => {
+  const DATES = ["2026-06-18", "2026-06-19", "2026-06-20"];
+  const DEFAULT_START = "6:00 AM";
+  const DEFAULT_END = "5:00 PM";
+
+  it("new job (no saved data): seeds all dates with scheduled event times", () => {
+    const entries = initWorkdayEntries([], DATES, DEFAULT_START, DEFAULT_END);
+    expect(entries).toHaveLength(3);
+    for (const e of entries) {
+      expect(e.startTime).toBe(DEFAULT_START);
+      expect(e.endTime).toBe(DEFAULT_END);
+    }
+  });
+
+  it("new job (no saved data, no defaults): creates empty entries", () => {
+    const entries = initWorkdayEntries([], DATES);
+    for (const e of entries) {
+      expect(e.startTime).toBe("");
+      expect(e.endTime).toBe("");
+    }
+  });
+
+  it("manual edits persist: saved start/end are returned unchanged", () => {
+    const saved: WorkdayEntry[] = [
+      { date: "2026-06-18", startTime: "7:30 AM", endTime: "8:00 PM" },
+    ];
+    const entries = initWorkdayEntries(saved, DATES, DEFAULT_START, DEFAULT_END);
+    const first = entries.find((e) => e.date === "2026-06-18")!;
+    // Saved values, not defaults
+    expect(first.startTime).toBe("7:30 AM");
+    expect(first.endTime).toBe("8:00 PM");
+    // Dates without saved data still get defaults
+    const second = entries.find((e) => e.date === "2026-06-19")!;
+    expect(second.startTime).toBe(DEFAULT_START);
+    expect(second.endTime).toBe(DEFAULT_END);
+  });
+
+  it("saved values are never overwritten by defaults: even empty strings are preserved", () => {
+    // User explicitly cleared start/end times — empty string is a valid saved state.
+    const saved: WorkdayEntry[] = [
+      { date: "2026-06-18", startTime: "", endTime: "" },
+    ];
+    const entries = initWorkdayEntries(saved, ["2026-06-18"], DEFAULT_START, DEFAULT_END);
+    expect(entries[0]!.startTime).toBe(""); // empty saved value preserved, not replaced
+    expect(entries[0]!.endTime).toBe("");
+  });
+
+  it("calendar event time change: existing saved invoice times are untouched", () => {
+    const saved: WorkdayEntry[] = [
+      { date: "2026-06-18", startTime: "8:00 AM", endTime: "6:00 PM" },
+      { date: "2026-06-19", startTime: "9:00 AM", endTime: "7:00 PM" },
+    ];
+    // Calendar event moved to 5 AM start — should NOT affect already-saved entries.
+    const newDefaultStart = "5:00 AM";
+    const newDefaultEnd = "3:00 PM";
+    const entries = initWorkdayEntries(saved, DATES, newDefaultStart, newDefaultEnd);
+    expect(entries.find((e) => e.date === "2026-06-18")!.startTime).toBe("8:00 AM");
+    expect(entries.find((e) => e.date === "2026-06-19")!.startTime).toBe("9:00 AM");
+    // Only a brand-new date (no saved entry) picks up the new default.
+    expect(entries.find((e) => e.date === "2026-06-20")!.startTime).toBe(newDefaultStart);
+  });
+
+  it("does not mutate the existing entries array", () => {
+    const saved: WorkdayEntry[] = [
+      { date: "2026-06-18", startTime: "8:00 AM", endTime: "6:00 PM" },
+    ];
+    const original = JSON.stringify(saved);
+    initWorkdayEntries(saved, DATES, DEFAULT_START, DEFAULT_END);
+    expect(JSON.stringify(saved)).toBe(original);
   });
 });
