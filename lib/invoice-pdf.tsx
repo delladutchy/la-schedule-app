@@ -9,8 +9,6 @@
  */
 import "server-only";
 
-import fs from "fs";
-import path from "path";
 import React from "react";
 import {
   Document,
@@ -23,6 +21,10 @@ import {
   renderToBuffer,
 } from "@react-pdf/renderer";
 import type { InvoicePacket } from "./invoice-types";
+
+// Logo hosted on Netlify CDN. Fetched at PDF render time and embedded as base64.
+// Falls back to text branding when unavailable (file not yet deployed, network error, etc.).
+const LOGO_PDF_URL = "https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png";
 
 // ---------------------------------------------------------------------------
 // Business info
@@ -516,13 +518,18 @@ export interface RenderInvoicePDFOptions {
 export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<Buffer> {
   const issuedDate = opts.issuedDate ?? new Date().toISOString().slice(0, 10);
 
-  // Detect logo file at render time; fall back to text branding if missing.
+  // Fetch logo from Netlify CDN; embed as base64 so react-pdf renders it without
+  // a second network round-trip. Falls back to text branding on any error or 404.
+  // Note: public/ files are NOT on the serverless function's filesystem — URL fetch is required.
   let logoSrc: string | null = null;
   try {
-    const logoPath = path.join(process.cwd(), "public", "brand", "jeff-ulsh-logo.png");
-    if (fs.existsSync(logoPath)) logoSrc = logoPath;
+    const res = await fetch(LOGO_PDF_URL);
+    if (res.ok) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      logoSrc = `data:image/png;base64,${buf.toString("base64")}`;
+    }
   } catch {
-    // leave logoSrc null — text fallback
+    // Logo unavailable — text fallback used
   }
 
   const element = React.createElement(InvoicePDF, {
