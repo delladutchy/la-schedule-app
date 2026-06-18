@@ -401,7 +401,6 @@ export function InvoiceSection({
   const [syncState, setSyncState] = useState<SyncState>({ status: "idle", message: null, syncedAt: null });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [isMarkingComplete, setIsMarkingComplete] = useState(false);
   const [pdfState, setPdfState] = useState<PdfState>({ status: "idle", error: null });
   const [emailDialog, setEmailDialog] = useState<EmailDialogState>({
     open: false, to: "", status: "idle", error: null,
@@ -592,26 +591,44 @@ export function InvoiceSection({
     }
   }
 
-  async function handleMarkComplete() {
-    if (isMarkingComplete) return;
-    setIsMarkingComplete(true);
-    try {
-      await save({ invoice_status: "ready" });
-    } catch {
-      // non-fatal
-    } finally {
-      setIsMarkingComplete(false);
-    }
-    void handleSyncSheet();
-  }
-
   // ---------------------------------------------------------------------------
-  // PDF generation
+  // PDF generation — full one-shot workflow:
+  //   flush save → generate PDF (server handles: mark complete + sheet sync + upload)
   // ---------------------------------------------------------------------------
 
   async function handleCreatePdf() {
     if (pdfState.status === "generating") return;
+
+    // Cancel any pending debounced save so we don't double-write after the flush.
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+
     setPdfState({ status: "generating", error: null });
+    setSaveError(null);
+
+    // Step 1: flush current workday state to DB before the PDF route reads it.
+    try {
+      const flushRes = await fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
+        method: "PATCH",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        body: JSON.stringify({ workday_entries: workdayEntries }),
+      });
+      if (!flushRes.ok) {
+        setPdfState({ status: "error", error: "Could not save invoice data — try again" });
+        return;
+      }
+      const flushJson = await flushRes.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
+      setInvoiceData(flushJson.invoiceData);
+      setPacket(flushJson.packet);
+    } catch {
+      setPdfState({ status: "error", error: "Network error — could not save before generating PDF" });
+      return;
+    }
+
+    // Step 2: generate PDF. The route handles: mark complete, sheet sync, PDF upload, metadata.
     try {
       const res = await fetch(`/api/invoice/pdf/${encodeURIComponent(eventId)}`, {
         method: "POST",
@@ -632,17 +649,21 @@ export function InvoiceSection({
         setPdfState({ status: "error", error: json.detail ?? json.error ?? "PDF generation failed" });
         return;
       }
-      // Refresh invoice data from the server so pdfUrl / invoiceNumber appear.
+
+      // Step 3: refresh all invoice state so the PDF actions appear.
       const refreshRes = await fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
         headers: buildAuthHeaders(editorToken),
         credentials: "same-origin",
         cache: "no-store",
       });
       if (refreshRes.ok) {
-        const refreshJson = await refreshRes.json() as { invoiceData: InvoiceData | null; packet: InvoicePacket | null };
-        if (refreshJson.invoiceData) {
-          setInvoiceData(refreshJson.invoiceData);
-          setPacket(refreshJson.packet);
+        const rj = await refreshRes.json() as { invoiceData: InvoiceData | null; packet: InvoicePacket | null };
+        if (rj.invoiceData) {
+          setInvoiceData(rj.invoiceData);
+          setPacket(rj.packet);
+          if (rj.invoiceData.sheet_synced_at) {
+            setSyncState({ status: "success", message: null, syncedAt: rj.invoiceData.sheet_synced_at });
+          }
         }
       }
       setPdfState({ status: "done", error: null });
@@ -737,10 +758,6 @@ export function InvoiceSection({
 
   const hasPreviouslySynced = syncState.syncedAt != null;
   const currentStatus = invoiceData?.invoice_status;
-  const isComplete = !!(currentStatus && (
-    currentStatus === "ready" || currentStatus === "sheet_synced" || currentStatus === "draft_created" ||
-    TERMINAL_STATUSES.has(currentStatus)
-  ));
   const isTerminal = !!(currentStatus && TERMINAL_STATUSES.has(currentStatus));
   const hasPdf = !!(invoiceData?.invoice_pdf_url);
   const pdfUrl = invoiceData?.invoice_pdf_url ?? null;
@@ -954,86 +971,37 @@ export function InvoiceSection({
         </div>
       ) : null}
 
-      {/* ── Sheet Sync ─────────────────────────────────────────── */}
-      <div className="invoice-sync-row">
-        {isSaving ? <span className="invoice-saving-indicator">Saving…</span> : null}
-        {syncState.status === "success" && syncedLabel ? (
-          <p className="invoice-sync-success">Sheet synced {syncedLabel}</p>
-        ) : syncState.status === "error" ? (
-          <p className="invoice-error" role="alert">{syncState.message ?? "Sheet sync failed — retry"}</p>
-        ) : null}
-        <div className="invoice-sync-buttons">
-          {!isComplete ? (
-            <button
-              type="button"
-              className="invoice-complete-button"
-              onClick={() => { void handleMarkComplete(); }}
-              disabled={isMarkingComplete || isSaving}
-            >
-              {isMarkingComplete ? "Marking…" : "Mark as Complete & Sync"}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="invoice-sync-button"
-            onClick={() => { void handleSyncSheet(); }}
-            disabled={syncState.status === "syncing" || isSaving}
-          >
-            {syncState.status === "syncing"
-              ? "Syncing…"
-              : hasPreviouslySynced
-                ? "Update Google Sheet"
-                : "Sync to Google Sheet"}
-          </button>
-        </div>
-      </div>
-
-      {/* ── Native Invoice PDF ─────────────────────────────────── */}
-      {isComplete ? (
+      {/* ── Primary action: Create Invoice PDF ───────────────── */}
+      {p ? (
         <div className="invoice-block invoice-pdf-block">
-          <p className="invoice-block-label">Invoice PDF</p>
+          {isSaving ? <span className="invoice-saving-indicator">Saving…</span> : null}
 
-          {/* Status badge */}
-          {currentStatus ? (
-            <p className="invoice-status-badge" data-status={currentStatus}>
-              {INVOICE_STATUS_LABELS[currentStatus]}
-              {isTerminal && invoiceTotal != null ? (
-                <span className="invoice-status-total"> · {fmtCurrency(invoiceTotal)}</span>
-              ) : null}
-            </p>
-          ) : null}
-
-          {/* Payment status when partially paid or paid */}
-          {(currentStatus === "partially_paid" || currentStatus === "paid") && invoiceTotal != null ? (
-            <div className="invoice-payment-summary">
-              <span>Paid: {fmtCurrency(amountPaid)}</span>
-              {currentStatus === "partially_paid" && remainingBalance != null ? (
-                <span className="invoice-payment-remaining"> · Remaining: {fmtCurrency(remainingBalance)}</span>
-              ) : null}
-            </div>
-          ) : null}
-
-          {/* PDF generation button */}
-          {!hasPdf ? (
-            <div className="invoice-pdf-actions">
-              <button
-                type="button"
-                className={`invoice-pdf-create-btn${pdfState.status === "generating" ? " invoice-pdf-create-btn--loading" : ""}`}
-                onClick={() => { void handleCreatePdf(); }}
-                disabled={pdfState.status === "generating"}
-              >
-                {pdfState.status === "generating" ? "Generating PDF…" : "Create Invoice PDF"}
-              </button>
-              {pdfState.status === "error" ? (
-                <p className="invoice-error" role="alert">{pdfState.error}</p>
-              ) : null}
-            </div>
-          ) : (
-            // PDF exists — show open / download / email actions
+          {hasPdf ? (
+            // PDF exists — show actions
             <div className="invoice-pdf-actions">
               {invoiceNumber ? (
                 <p className="invoice-pdf-number">Invoice #{invoiceNumber}</p>
               ) : null}
+
+              {/* Status + payment summary */}
+              {currentStatus ? (
+                <p className="invoice-status-badge" data-status={currentStatus}>
+                  {INVOICE_STATUS_LABELS[currentStatus]}
+                  {isTerminal && invoiceTotal != null ? (
+                    <span className="invoice-status-total"> · {fmtCurrency(invoiceTotal)}</span>
+                  ) : null}
+                </p>
+              ) : null}
+              {(currentStatus === "partially_paid" || currentStatus === "paid") && invoiceTotal != null ? (
+                <div className="invoice-payment-summary">
+                  <span>Paid: {fmtCurrency(amountPaid)}</span>
+                  {currentStatus === "partially_paid" && remainingBalance != null ? (
+                    <span className="invoice-payment-remaining"> · Remaining: {fmtCurrency(remainingBalance)}</span>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* PDF action buttons */}
               <div className="invoice-pdf-buttons">
                 <a
                   href={pdfUrl ?? "#"}
@@ -1053,29 +1021,11 @@ export function InvoiceSection({
                 <button
                   type="button"
                   className="invoice-pdf-email-btn"
-                  onClick={() => setEmailDialog((prev) => ({
-                    ...prev,
-                    open: true,
-                    status: "idle",
-                    error: null,
-                  }))}
+                  onClick={() => setEmailDialog((prev) => ({ ...prev, open: true, status: "idle", error: null }))}
                 >
                   Email Invoice
                 </button>
               </div>
-
-              {/* Regenerate option */}
-              <button
-                type="button"
-                className="invoice-pdf-regen-btn"
-                onClick={() => { void handleCreatePdf(); }}
-                disabled={pdfState.status === "generating"}
-              >
-                {pdfState.status === "generating" ? "Regenerating…" : "Regenerate PDF"}
-              </button>
-              {pdfState.status === "error" ? (
-                <p className="invoice-error" role="alert">{pdfState.error}</p>
-              ) : null}
 
               {/* Email dialog */}
               {emailDialog.open ? (
@@ -1117,10 +1067,63 @@ export function InvoiceSection({
                   </div>
                 </div>
               ) : null}
+
+              {pdfState.status === "error" ? (
+                <p className="invoice-error" role="alert">{pdfState.error}</p>
+              ) : null}
+
+              {/* Regenerate — secondary action below the PDF buttons */}
+              <button
+                type="button"
+                className="invoice-pdf-regen-btn"
+                onClick={() => { void handleCreatePdf(); }}
+                disabled={pdfState.status === "generating"}
+              >
+                {pdfState.status === "generating" ? "Regenerating…" : "Regenerate PDF"}
+              </button>
+            </div>
+          ) : (
+            // No PDF yet — primary CTA
+            <div className="invoice-pdf-actions">
+              <button
+                type="button"
+                className={`invoice-pdf-create-btn${pdfState.status === "generating" ? " invoice-pdf-create-btn--loading" : ""}`}
+                onClick={() => { void handleCreatePdf(); }}
+                disabled={pdfState.status === "generating" || isSaving || p.dayRateQty === 0}
+              >
+                {pdfState.status === "generating" ? "Generating PDF…" : "Create Invoice PDF"}
+              </button>
+              {p.dayRateQty === 0 ? (
+                <p className="invoice-status-muted">Enter start/end times for at least one day first.</p>
+              ) : null}
+              {pdfState.status === "error" ? (
+                <p className="invoice-error" role="alert">{pdfState.error}</p>
+              ) : null}
             </div>
           )}
         </div>
       ) : null}
+
+      {/* ── Secondary: manual sheet sync ─────────────────────────── */}
+      <div className="invoice-sync-row invoice-sync-row--secondary">
+        {syncState.status === "success" && syncedLabel ? (
+          <p className="invoice-sync-success">Sheet synced {syncedLabel}</p>
+        ) : syncState.status === "error" ? (
+          <p className="invoice-error" role="alert">{syncState.message ?? "Sheet sync failed — retry"}</p>
+        ) : null}
+        <button
+          type="button"
+          className="invoice-sync-button"
+          onClick={() => { void handleSyncSheet(); }}
+          disabled={syncState.status === "syncing" || isSaving}
+        >
+          {syncState.status === "syncing"
+            ? "Syncing…"
+            : hasPreviouslySynced
+              ? "Update Google Sheet"
+              : "Sync to Google Sheet"}
+        </button>
+      </div>
     </div>
   );
 }
