@@ -1,18 +1,13 @@
 /**
  * QuickBooks Online API types and invoice line item mapping.
  *
- * This module is intentionally free of server-only imports so it can be
- * used in tests and, if needed, in shared UI code (e.g. to preview what
- * will be sent to QB before the user confirms).
- *
- * QB item IDs (QBItemConfig) are placeholders until the QuickBooks account
- * is set up. Configure them via QUICKBOOKS_ITEM_* env vars (see lib/quickbooks.ts).
+ * Intentionally free of server-only imports — safe to use in tests and UI code.
  */
 
 import type { InvoicePacket } from "./invoice-types";
 import { round2 } from "./invoice-calculations";
 
-// ── QB Online API types ───────────────────────────────────────────────────────
+// ── QB Online API request types ───────────────────────────────────────────────
 
 export interface QBItemRef {
   value: string;   // QB internal item ID (integer string, e.g. "42")
@@ -27,7 +22,7 @@ export interface QBSalesItemLineDetail {
 
 export interface QBLine {
   DetailType: "SalesItemLineDetail";
-  Amount: number;            // total line amount; may be negative (e.g. mileage adjustment)
+  Amount: number;            // may be negative (e.g. mileage adjustment)
   Description?: string;
   SalesItemLineDetail: QBSalesItemLineDetail;
 }
@@ -40,6 +35,8 @@ export interface QBInvoiceBody {
   TxnDate?: string;     // YYYY-MM-DD
   DueDate?: string;
 }
+
+// ── QB Online API response types ──────────────────────────────────────────────
 
 export interface QBInvoiceObject {
   Id: string;
@@ -61,15 +58,53 @@ export interface QBTokenResponse {
   x_refresh_token_expires_in: number;
 }
 
+export interface QBItemRow {
+  Id: string;
+  Name: string;
+  Type: string;
+  Active: boolean;
+  IncomeAccountRef?: { value: string; name?: string };
+}
+
+export interface QBItemQueryResponse {
+  QueryResponse: { Item?: QBItemRow[]; maxResults?: number };
+  time: string;
+}
+
+export interface QBItemCreateResponse {
+  Item: QBItemRow;
+  time: string;
+}
+
+export interface QBCustomerRow {
+  Id: string;
+  DisplayName: string;
+  Active: boolean;
+}
+
+export interface QBCustomerQueryResponse {
+  QueryResponse: { Customer?: QBCustomerRow[]; maxResults?: number };
+  time: string;
+}
+
+export interface QBAccountRow {
+  Id: string;
+  Name: string;
+  AccountType: string;
+  AccountSubType?: string;
+  Active: boolean;
+}
+
+export interface QBAccountQueryResponse {
+  QueryResponse: { Account?: QBAccountRow[]; maxResults?: number };
+  time: string;
+}
+
 // ── QB item configuration ─────────────────────────────────────────────────────
 
 /**
- * QB item IDs that map each line type to a service item in the QBO account.
- * All fields are nullable — null means the item has not been configured yet.
- * Lines with null item IDs are silently skipped by buildQBInvoiceLines().
- *
- * To configure: look up each item in QBO → Products & Services and note its ID,
- * then set QUICKBOOKS_ITEM_* env vars accordingly.
+ * QB item IDs keyed by invoice line type.
+ * null = not yet resolved; populated after a successful bootstrap.
  */
 export interface QBItemConfig {
   dayRate: string | null;
@@ -85,9 +120,30 @@ export interface QBItemConfig {
   otherExpenses: string | null;
 }
 
-/** Human-readable names that appear on each QB invoice line. */
+/**
+ * Ordered list of all item keys — used by bootstrap to know which items to
+ * find or create. Order matches QB invoice line order.
+ */
+export const QB_REQUIRED_ITEM_KEYS: ReadonlyArray<keyof QBItemConfig> = [
+  "dayRate",
+  "overtime",
+  "perDiem",
+  "mileage",
+  "mileageAdj",
+  "bagFees",
+  "hotel",
+  "parking",
+  "tolls",
+  "uber",
+  "otherExpenses",
+] as const;
+
+/**
+ * Exact names used for QBO Products & Services items.
+ * These are looked up by name during bootstrap; if not found they are created.
+ */
 export const QB_LINE_NAMES: Record<keyof QBItemConfig, string> = {
-  dayRate:       "Freelance Audio Engineer / Day Rate",
+  dayRate:       "Freelance Audio Engineer – Day Rate",
   overtime:      "Overtime",
   perDiem:       "Per Diem",
   mileage:       "Mileage",
@@ -100,6 +156,35 @@ export const QB_LINE_NAMES: Record<keyof QBItemConfig, string> = {
   otherExpenses: "Other Expenses",
 };
 
+// ── Bootstrap cache ───────────────────────────────────────────────────────────
+
+/** Resolved QB entity IDs, stored in Supabase after a successful bootstrap. */
+export interface QBSetupCache {
+  realmId: string;
+  customerId: string;
+  customerName: string;
+  itemIds: Record<string, string>;             // all keys present after successful bootstrap
+  incomeAccountRef: { value: string; name: string };
+  bootstrappedAt: string;                       // ISO timestamp
+}
+
+// ── Bootstrap helper (pure — testable without HTTP) ──────────────────────────
+
+/**
+ * Given a list of existing item names (from QBO), return the QB_LINE_NAMES
+ * values that are NOT yet present. These are the items that bootstrap will create.
+ *
+ * Comparison is case-insensitive.
+ */
+export function findMissingItemNames(
+  existingNames: string[],
+): string[] {
+  const lower = new Set(existingNames.map((n) => n.toLowerCase()));
+  return QB_REQUIRED_ITEM_KEYS
+    .filter((key) => !lower.has(QB_LINE_NAMES[key].toLowerCase()))
+    .map((key) => QB_LINE_NAMES[key]);
+}
+
 // ── Line builder ──────────────────────────────────────────────────────────────
 
 function makeLine(
@@ -110,7 +195,7 @@ function makeLine(
   unitPrice: number,
   description?: string,
 ): QBLine | null {
-  if (!itemId) return null;   // item not yet configured in QB
+  if (!itemId) return null;
   if (amount === 0) return null;
   return {
     DetailType: "SalesItemLineDetail",
@@ -127,13 +212,10 @@ function makeLine(
 /**
  * Convert a calculated InvoicePacket into QB invoice line items.
  *
- * - Lines with null item IDs (not yet configured) are omitted.
+ * - Lines with null item IDs are omitted (items not yet bootstrapped).
  * - Lines with zero amounts are omitted.
- * - The mileage adjustment is a negative line representing the non-reimbursable deduction.
- * - Expense notes (if present) are attached as the Description on the Other Expenses line.
- *
- * Returns an empty array when no items are configured — the caller should treat
- * this as a configuration error rather than creating an empty QB invoice.
+ * - The mileage adjustment is a negative line for the non-reimbursable deduction.
+ * - Expense notes are attached as the Description on the Other Expenses line.
  */
 export function buildQBInvoiceLines(
   packet: InvoicePacket,
@@ -142,56 +224,31 @@ export function buildQBInvoiceLines(
   const m = packet.mileage;
 
   const candidates: (QBLine | null)[] = [
-    // Labor
-    makeLine(
-      items.dayRate,
-      QB_LINE_NAMES.dayRate,
-      packet.dayRateTotal,
-      packet.dayRateQty,
-      packet.dayRate,
-    ),
+    makeLine(items.dayRate, QB_LINE_NAMES.dayRate, packet.dayRateTotal, packet.dayRateQty, packet.dayRate),
+
     packet.overtimeTotal > 0
-      ? makeLine(
-          items.overtime,
-          QB_LINE_NAMES.overtime,
-          packet.overtimeTotal,
-          round2(packet.totalOvertimeHours),
-          packet.overtimeRate,
-        )
-      : null,
-    packet.perDiemTotal > 0
-      ? makeLine(
-          items.perDiem,
-          QB_LINE_NAMES.perDiem,
-          packet.perDiemTotal,
-          packet.perDiemQty,
-          packet.perDiemRate,
-        )
+      ? makeLine(items.overtime, QB_LINE_NAMES.overtime, packet.overtimeTotal, round2(packet.totalOvertimeHours), packet.overtimeRate)
       : null,
 
-    // Mileage (billable miles × rate)
-    m && m.mileageAmount > 0
-      ? makeLine(
-          items.mileage,
-          QB_LINE_NAMES.mileage,
-          m.mileageAmount,
-          m.reimbursedMiles,
-          m.mileageRate,
-        )
+    packet.perDiemTotal > 0
+      ? makeLine(items.perDiem, QB_LINE_NAMES.perDiem, packet.perDiemTotal, packet.perDiemQty, packet.perDiemRate)
       : null,
-    // Mileage adjustment — negative line for the non-reimbursable deduction
+
+    m && m.mileageAmount > 0
+      ? makeLine(items.mileage, QB_LINE_NAMES.mileage, m.mileageAmount, m.reimbursedMiles, m.mileageRate)
+      : null,
+
     m && m.mileageAdjustmentAmount < 0
       ? makeLine(
           items.mileageAdj,
           QB_LINE_NAMES.mileageAdj,
-          m.mileageAdjustmentAmount,          // already negative
-          -m.deductionMiles,                   // negative qty × positive rate = negative amount
+          m.mileageAdjustmentAmount,
+          -m.deductionMiles,
           m.mileageRate,
           `Non-reimbursable: ${m.deductionMiles} mi`,
         )
       : null,
 
-    // Expenses
     packet.bagFees > 0
       ? makeLine(items.bagFees, QB_LINE_NAMES.bagFees, packet.bagFees, 1, packet.bagFees)
       : null,

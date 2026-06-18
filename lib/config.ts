@@ -163,7 +163,7 @@ const EnvSchema = z.object({
 
   // ── QuickBooks Online (all optional; gated by QUICKBOOKS_ENABLED) ──────────
 
-  /** Master switch. Set to "true" once OAuth is complete and item IDs are confirmed. */
+  /** Master switch. Set to "true" once OAuth is complete and bootstrap has run. */
   QUICKBOOKS_ENABLED: z.string().optional()
     .transform((raw): boolean => {
       if (raw === undefined || raw === "") return false;
@@ -176,14 +176,16 @@ const EnvSchema = z.object({
   QUICKBOOKS_CLIENT_ID: z.string().min(1).optional(),
   /** OAuth 2.0 Client Secret from Intuit Developer Portal. */
   QUICKBOOKS_CLIENT_SECRET: z.string().min(1).optional(),
-  /** Redirect URI registered in Intuit Developer Portal (used during initial OAuth flow). */
-  QUICKBOOKS_REDIRECT_URI: z.string().url().optional(),
   /** Company/Realm ID — shown in QBO URL as realmId=XXXXXXXXXX. */
   QUICKBOOKS_REALM_ID: z.string().min(1).optional(),
   /** Long-lived refresh token produced during the one-time OAuth flow. */
   QUICKBOOKS_REFRESH_TOKEN: z.string().min(1).optional(),
-  /** QBO Customer entity ID for the client (look up in QBO → Customers). */
-  QUICKBOOKS_CUSTOMER_ID: z.string().min(1).optional(),
+  /**
+   * Display name of the QBO customer to invoice.
+   * Bootstrap will look up this customer in QBO → Customers.
+   * Defaults to "Light Action" if not set.
+   */
+  QUICKBOOKS_CUSTOMER_NAME: z.string().default("Light Action"),
 }).superRefine((env, ctx) => {
   const hasNamed = !!env.EDITOR_TOKENS_JSON?.trim();
   const hasLegacy = !!env.EDITOR_TOKEN?.trim();

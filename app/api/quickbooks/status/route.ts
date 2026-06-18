@@ -1,21 +1,21 @@
 /**
  * GET /api/quickbooks/status
  *
- * Jeff-only debug endpoint. Returns:
- *  - Whether the feature flag is on
- *  - Which required env vars are present vs. missing
- *  - Which QB item IDs are configured
- *  - A live connection test (token refresh) when credentials are present
+ * Jeff-only. Shows:
+ *  - Feature flag and credential presence
+ *  - Live OAuth connection test (token refresh)
+ *  - Bootstrap cache state: customer + all 11 service items
+ *  - readyToCreate: true only when everything is in place
  *
- * Use this to confirm QB is ready before flipping QUICKBOOKS_ENABLED=true.
+ * Use this after running POST /api/quickbooks/bootstrap to confirm setup.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
-import { checkQBConnection, getQBItemConfig } from "@/lib/quickbooks";
-import { QB_LINE_NAMES } from "@/lib/quickbooks-types";
+import { checkQBConnection, readQBSetupCache } from "@/lib/quickbooks";
+import { QB_LINE_NAMES, QB_REQUIRED_ITEM_KEYS } from "@/lib/quickbooks-types";
 
 export const dynamic = "force-dynamic";
 
@@ -31,59 +31,97 @@ export async function GET(request: NextRequest) {
   const credentials = {
     clientId:     !!env.QUICKBOOKS_CLIENT_ID,
     clientSecret: !!env.QUICKBOOKS_CLIENT_SECRET,
-    redirectUri:  !!env.QUICKBOOKS_REDIRECT_URI,
     realmId:      !!env.QUICKBOOKS_REALM_ID,
     refreshToken: !!env.QUICKBOOKS_REFRESH_TOKEN,
-    customerId:   !!env.QUICKBOOKS_CUSTOMER_ID,
+    customerName: env.QUICKBOOKS_CUSTOMER_NAME,
   };
 
-  const missing = Object.entries(credentials)
+  const missingCreds = Object.entries({
+    clientId:     credentials.clientId,
+    clientSecret: credentials.clientSecret,
+    realmId:      credentials.realmId,
+    refreshToken: credentials.refreshToken,
+  })
     .filter(([, v]) => !v)
     .map(([k]) => `QUICKBOOKS_${k.replace(/([A-Z])/g, "_$1").toUpperCase()}`);
 
-  // Item ID configuration
-  const rawItems = getQBItemConfig();
-  const itemIds = Object.fromEntries(
-    (Object.keys(rawItems) as Array<keyof typeof rawItems>).map((key) => [
-      key,
-      {
-        label:       QB_LINE_NAMES[key],
-        configured:  rawItems[key] !== null,
-        envVar:      `QUICKBOOKS_ITEM_${key.replace(/([A-Z])/g, "_$1").toUpperCase()}`,
-      },
-    ]),
-  ) as Record<string, { label: string; configured: boolean; envVar: string }>;
-
-  const allItemsConfigured = Object.values(itemIds).every((i) => i.configured);
-  const configuredItemCount = Object.values(itemIds).filter((i) => i.configured).length;
-
-  // Live connection test — only when credentials are present (avoids noisy errors)
+  // Live connection test (only when credentials are present)
   let connectionTest: { ok: boolean; error?: string } | null = null;
   const canTest = credentials.clientId && credentials.clientSecret && credentials.refreshToken;
   if (canTest) {
     connectionTest = await checkQBConnection(env);
   }
 
-  // Supabase migration note
-  const migrationRequired =
-    "Run scripts/qb-migration.sql against your Supabase project to add QB columns " +
-    "(quickbooks_invoice_id, quickbooks_invoice_link, quickbooks_synced_at, quickbooks_sync_error).";
+  // Bootstrap cache
+  let setup = null;
+  let setupItems: Record<string, { name: string; resolved: boolean; id: string | null }> = {};
+  let bootstrappedAt: string | null = null;
+  let customerResolved = false;
+
+  if (env.QUICKBOOKS_REALM_ID) {
+    setup = await readQBSetupCache(env.QUICKBOOKS_REALM_ID);
+  }
+
+  if (setup) {
+    bootstrappedAt = setup.bootstrappedAt;
+    customerResolved = !!setup.customerId;
+    setupItems = Object.fromEntries(
+      QB_REQUIRED_ITEM_KEYS.map((key) => [
+        key,
+        {
+          name:     QB_LINE_NAMES[key],
+          resolved: !!setup!.itemIds[key],
+          id:       setup!.itemIds[key] ?? null,
+        },
+      ]),
+    );
+  } else {
+    setupItems = Object.fromEntries(
+      QB_REQUIRED_ITEM_KEYS.map((key) => [
+        key,
+        { name: QB_LINE_NAMES[key], resolved: false, id: null },
+      ]),
+    );
+  }
+
+  const allItemsResolved = Object.values(setupItems).every((i) => i.resolved);
+  const resolvedItemCount = Object.values(setupItems).filter((i) => i.resolved).length;
+
+  const readyToCreate =
+    enabled &&
+    missingCreds.length === 0 &&
+    connectionTest?.ok === true &&
+    !!setup &&
+    customerResolved &&
+    allItemsResolved;
 
   return NextResponse.json({
     enabled,
-    readyToCreate: enabled && missing.length === 0 && allItemsConfigured && connectionTest?.ok === true,
+    readyToCreate,
     credentials,
-    missing: missing.length > 0 ? missing : null,
-    itemIds,
-    allItemsConfigured,
-    configuredItemCount,
-    totalItemCount: Object.keys(itemIds).length,
+    missingCredentials: missingCreds.length > 0 ? missingCreds : null,
     connectionTest,
-    notes: {
-      migration: migrationRequired,
-      oauthFlow:
-        "To obtain QUICKBOOKS_REFRESH_TOKEN, complete the OAuth 2.0 flow via " +
-        "https://developer.intuit.com/app/developer/playground",
+    bootstrap: {
+      completed:    !!setup,
+      bootstrappedAt,
+      customer: setup
+        ? { resolved: customerResolved, id: setup.customerId, name: setup.customerName }
+        : { resolved: false, id: null, name: env.QUICKBOOKS_CUSTOMER_NAME },
+      incomeAccount: setup?.incomeAccountRef ?? null,
+      items: setupItems,
+      resolvedItemCount,
+      totalItemCount: QB_REQUIRED_ITEM_KEYS.length,
+      allItemsResolved,
     },
+    nextSteps: !setup
+      ? ["POST /api/quickbooks/bootstrap to find or create QBO service items"]
+      : !readyToCreate
+      ? [
+          !enabled           && "Set QUICKBOOKS_ENABLED=true",
+          missingCreds.length > 0 && `Add env vars: ${missingCreds.join(", ")}`,
+          !customerResolved  && `Create customer "${env.QUICKBOOKS_CUSTOMER_NAME}" in QBO → Customers`,
+          !allItemsResolved  && "Re-run POST /api/quickbooks/bootstrap",
+        ].filter(Boolean)
+      : null,
   });
 }
