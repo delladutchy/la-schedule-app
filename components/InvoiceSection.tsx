@@ -261,6 +261,9 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
           )
         ) : (
           /* Expanded state */
+          (() => {
+            const mileageValid = mode !== "none" && milesDriven > 0 && effectiveDeduction >= 0;
+            return (
           <div className="invoice-mileage-editor">
             {/* Mode selector buttons */}
             <div className="invoice-mileage-modes">
@@ -343,12 +346,15 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
 
             <button
               type="button"
-              className="invoice-mileage-done-btn"
-              onClick={() => setMileageOpen(false)}
+              className={`invoice-mileage-confirm-btn${mileageValid ? " invoice-mileage-confirm-btn--valid" : ""}`}
+              aria-label="Confirm mileage entry"
+              onClick={() => { if (mileageValid) setMileageOpen(false); }}
             >
-              Done
+              ✓
             </button>
           </div>
+            );
+          })()
         )}
       </div>
     </div>
