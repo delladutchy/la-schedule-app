@@ -339,8 +339,7 @@ function buildEmailHtml(p: EmailParams): string {
           <td style="vertical-align:middle;padding-right:14px">
             <img src="${LOGO_URL}"
                  alt="Jeff Ulsh"
-                 width="68" height="68"
-                 style="display:block;border-radius:50%;border:2px solid rgba(255,255,255,0.35)">
+                 style="display:block;max-width:140px;width:140px;height:auto">
           </td>
           <td style="vertical-align:middle">
             <div style="color:#fff;font-size:20px;font-weight:800;letter-spacing:-0.3px;margin-bottom:2px">Jeff Ulsh</div>
