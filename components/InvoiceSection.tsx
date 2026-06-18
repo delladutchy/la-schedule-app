@@ -616,11 +616,27 @@ export function InvoiceSection({
     invoiceData?.invoice_status === "paid"
   );
 
-  // Check whether any per-day mileage is set (used for legacy warning)
+  // Per-day mileage is the source of truth. Legacy total_miles only matters when
+  // no per-day mileage has been entered yet.
   const hasPerDayMileage = workdayEntries.some(
     (e) => e.mileageMode && e.mileageMode !== "none",
   );
-  const hasLegacyMileage = !hasPerDayMileage && (invoiceData?.total_miles ?? 0) > 0;
+  const legacyMiles = invoiceData?.total_miles ?? 0;
+  const hasLegacyMileage = !hasPerDayMileage && legacyMiles > 0;
+
+  async function handleConvertLegacyMileage() {
+    if (!invoiceData || legacyMiles <= 0 || workdayEntries.length === 0) return;
+    const deduction = invoiceData.mileage_deduction_miles ?? 60;
+    // Write legacy miles into the first workday as a custom entry.
+    const updated = workdayEntries.map((e, i) =>
+      i === 0
+        ? { ...e, mileageMode: "custom" as const, milesDriven: legacyMiles, mileageDeduction: deduction }
+        : e,
+    );
+    setWorkdayEntries(updated);
+    // Single atomic save: update workday entries + zero out legacy total_miles.
+    await save({ workday_entries: updated, total_miles: null });
+  }
 
   return (
     <div className="invoice-section">
@@ -644,13 +660,20 @@ export function InvoiceSection({
         ))}
       </div>
 
-      {/* Legacy total_miles notice (backward compat for old records) */}
+      {/* Compact legacy mileage migration note — only shown when no per-day mileage exists */}
       {hasLegacyMileage ? (
-        <div className="invoice-block invoice-block--legacy">
-          <p className="invoice-block-label">Mileage (Legacy)</p>
-          <p className="invoice-legacy-note">
-            {invoiceData!.total_miles} mi from previous entry — use per-day mileage above to replace
+        <div className="invoice-legacy-banner">
+          <p className="invoice-legacy-banner-text">
+            Previous mileage exists: {legacyMiles} mi. Add per-day mileage above to replace it.
           </p>
+          <button
+            type="button"
+            className="invoice-legacy-convert-btn"
+            onClick={() => { void handleConvertLegacyMileage(); }}
+            disabled={isSaving}
+          >
+            Convert to custom entry on {fmtDate(workdayEntries[0]?.date ?? "")}
+          </button>
         </div>
       ) : null}
 

@@ -334,4 +334,108 @@ describe("generateSheetRow — mileage columns", () => {
     expect(row.unreimbursedMiles).toBe(0);
     expect(row.mileagePaid).toBe(0);
   });
+
+  it("legacy total_miles is ignored for sheet export when per-day mileage exists", () => {
+    const data = makeInvoiceData({
+      total_miles: 644,              // old legacy value
+      mileage_deduction_miles: 60,
+      workday_entries: [
+        { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "round_trip_dewey", milesDriven: 120 },
+      ],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "Test Gig");
+    expect(row.totalBusinessMiles).toBe(120);  // per-day wins; legacy 644 ignored
+    expect(row.laPaidMiles).toBe(60);
+    expect(row.unreimbursedMiles).toBe(60);
+    expect(row.mileagePaid).toBeCloseTo(31.2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Legacy mileage → per-day conversion (calculation layer)
+// ---------------------------------------------------------------------------
+
+describe("legacy total_miles → custom per-day conversion", () => {
+  it("after conversion: packet uses per-day entry, not total_miles", () => {
+    // Simulate the result after UI calls: workday_entries[0] = custom 644 mi,
+    // total_miles = null (cleared by the PATCH).
+    const data = makeInvoiceData({
+      total_miles: null,             // cleared after conversion
+      mileage_deduction_miles: 60,
+      workday_entries: [
+        {
+          date: "2026-06-01",
+          startTime: "8:00 AM",
+          endTime: "6:00 PM",
+          mileageMode: "custom",
+          milesDriven: 644,
+          mileageDeduction: 60,
+        },
+      ],
+    });
+    const p = calculateInvoicePacket(data);
+    expect(p.mileage).not.toBeNull();
+    expect(p.mileage!.totalMiles).toBe(644);
+    expect(p.mileage!.deductionMiles).toBe(60);
+    expect(p.mileage!.reimbursedMiles).toBe(584);
+    expect(p.mileage!.mileageAmount).toBeCloseTo(584 * 0.52);
+  });
+
+  it("after conversion: sheet export reflects per-day values", () => {
+    const data = makeInvoiceData({
+      total_miles: null,
+      mileage_deduction_miles: 60,
+      workday_entries: [
+        {
+          date: "2026-06-01",
+          startTime: "8:00 AM",
+          endTime: "6:00 PM",
+          mileageMode: "custom",
+          milesDriven: 644,
+          mileageDeduction: 60,
+        },
+      ],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "Test Gig");
+    expect(row.totalBusinessMiles).toBe(644);
+    expect(row.laPaidMiles).toBe(584);
+    expect(row.unreimbursedMiles).toBe(60);
+    expect(row.mileagePaid).toBeCloseTo(584 * 0.52);
+  });
+
+  it("legacy total_miles still used when total_miles set and no per-day mileage", () => {
+    const data = makeInvoiceData({
+      total_miles: 644,
+      mileage_deduction_miles: 60,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    expect(p.mileage!.totalMiles).toBe(644);
+    expect(p.mileage!.reimbursedMiles).toBe(584);
+  });
+
+  it("legacy total_miles NOT used in invoice preview when per-day mileage present", () => {
+    const data = makeInvoiceData({
+      total_miles: 644,              // would produce wrong total if used
+      mileage_deduction_miles: 60,
+      workday_entries: [
+        {
+          date: "2026-06-01",
+          startTime: "8:00 AM",
+          endTime: "6:00 PM",
+          mileageMode: "from_dewey",
+          milesDriven: 80,
+        },
+      ],
+    });
+    const p = calculateInvoicePacket(data);
+    // Only the per-day entry (80 mi, 30 mi deduction) should appear
+    expect(p.mileage!.totalMiles).toBe(80);
+    expect(p.mileage!.deductionMiles).toBe(30);
+    expect(p.mileage!.reimbursedMiles).toBe(50);
+    // The legacy 644 total is completely ignored
+    expect(p.mileage!.totalMiles).not.toBe(644);
+  });
 });

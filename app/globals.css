@@ -5081,17 +5081,36 @@ html.modal-open body {
   width: fit-content;
 }
 
-/* Legacy mileage notice */
-.invoice-block--legacy {
-  border-color: var(--border);
+/* Legacy mileage migration banner */
+.invoice-legacy-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
   background: var(--surface-dim, rgba(0,0,0,0.03));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 4px;
 }
 
-.invoice-legacy-note {
+.invoice-legacy-banner-text {
   font-size: 0.78rem;
   color: var(--text-muted);
-  font-style: italic;
   margin: 0;
+}
+
+.invoice-legacy-convert-btn {
+  font-size: 0.75rem;
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--accent, #2563eb);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline;
+  width: fit-content;
 }
 
 /* Invoice preview */
