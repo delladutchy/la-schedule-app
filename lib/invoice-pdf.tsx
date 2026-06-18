@@ -188,7 +188,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate }: InvoicePD
           </View>
           <View style={styles.headerRight}>
             <Text style={styles.invoiceTitle}>INVOICE</Text>
-            <Text style={styles.invoiceNumber}>{invoiceNumber}</Text>
+            <Text style={styles.invoiceNumber}># {invoiceNumber}</Text>
           </View>
         </View>
 
@@ -199,21 +199,12 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate }: InvoicePD
             <Text style={styles.metaValueBold}>{packet.client}</Text>
           </View>
           <View style={styles.metaBlock}>
-            <Text style={styles.metaLabel}>Job</Text>
-            <Text style={styles.metaValueBold}>{gigSummary}</Text>
-            {packet.laNumber ? <Text style={styles.metaValue}>LA Job #{packet.laNumber}</Text> : null}
-            {workDateStr ? <Text style={styles.metaValue}>{workDateStr}</Text> : null}
-          </View>
-        </View>
-
-        <View style={styles.metaRow}>
-          <View style={styles.metaBlock}>
-            <Text style={styles.metaLabel}>Invoice Date</Text>
-            <Text style={styles.metaValue}>{fmtDate(issuedDate)}</Text>
-          </View>
-          <View style={styles.metaBlock}>
-            <Text style={styles.metaLabel}>Payment</Text>
-            <Text style={styles.metaValue}>Direct Deposit</Text>
+            <Text style={styles.metaLabel}>Job Details</Text>
+            {packet.laNumber ? <Text style={styles.metaValue}>LA Job #: {packet.laNumber}</Text> : null}
+            {gigSummary ? <Text style={styles.metaValueBold}>{gigSummary}</Text> : null}
+            <Text style={styles.metaValue}>Date Issued: {fmtDate(issuedDate)}</Text>
+            {workDateStr ? <Text style={styles.metaValue}>Work Dates: {workDateStr}</Text> : null}
+            <Text style={styles.metaValue}>Payment: Direct Deposit</Text>
           </View>
         </View>
 

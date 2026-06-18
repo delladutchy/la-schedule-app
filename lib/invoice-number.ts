@@ -1,53 +1,47 @@
 /**
- * Stable invoice number generation.
+ * Numeric invoice number generation.
  *
  * Rules:
- *  1. If the invoice already has an invoice_number, always reuse it — never
- *     generate a new one for the same job.
- *  2. Prefer: JU-{LA#} when a LA job number is known.
- *  3. Fallback: JU-{YYYYMMDD} using the first work date (or today).
+ *  1. If `existing` is a non-empty, purely numeric string, reuse it unchanged.
+ *  2. Otherwise, scan all known invoice numbers, keep only purely-numeric ones,
+ *     find the max, and return max + 1.
+ *  3. If no numeric invoice numbers exist yet, start at 1001.
  *
- * "JU" = Jeff Ulsh. Format is recognizable, collision-resistant within a
- * single-user system, and matches how LA job numbers are referenced on sheets.
+ * LA job numbers are separate references and are never merged into the invoice number.
  *
  * Pure functions — no I/O, fully testable.
  */
 
-/** Sanitize a raw LA number for use in an invoice number. */
-function sanitizeLaNumber(raw: string): string {
-  // Remove characters that are unsafe in URLs/filenames; preserve alphanumeric, hyphens, dots.
-  return raw.trim().replace(/[^a-zA-Z0-9.\-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-}
+const STARTING_NUMBER = 1001;
 
-/** Format a YYYY-MM-DD date string as YYYYMMDD for the fallback format. */
-function dateToCompact(isoDate: string): string {
-  return isoDate.replace(/-/g, "").slice(0, 8);
+/** Returns true when the string is a non-empty sequence of digits only. */
+export function isNumericInvoiceNumber(s: string | null | undefined): boolean {
+  return typeof s === "string" && s.trim().length > 0 && /^\d+$/.test(s.trim());
 }
 
 /**
- * Generate (or preserve) a stable invoice number.
+ * Resolve or generate the next invoice number.
  *
- * @param existing  The invoice_number already stored in the database (if any).
- * @param laNumber  The LA job number from the invoice data (if any).
- * @param workDates Array of YYYY-MM-DD work dates for this job.
+ * @param existing        The invoice_number already stored for this job (if any).
+ * @param allExistingNums All invoice_number values from the database.
+ *                        Non-numeric entries (e.g. old "JU-XXXXXXXX" values) are ignored.
+ * @returns A numeric string, e.g. "1001".
  */
 export function resolveInvoiceNumber(
   existing: string | null | undefined,
-  laNumber: string | null | undefined,
-  workDates: string[],
+  allExistingNums: string[],
 ): string {
-  // Never regenerate if one already exists.
-  if (existing?.trim()) return existing.trim();
+  // Reuse if already a valid numeric invoice number.
+  if (isNumericInvoiceNumber(existing)) return existing!.trim();
 
-  if (laNumber?.trim()) {
-    const safe = sanitizeLaNumber(laNumber);
-    if (safe) return `JU-${safe}`;
+  // Find the highest numeric invoice number across all jobs.
+  let max = STARTING_NUMBER - 1;
+  for (const n of allExistingNums) {
+    if (isNumericInvoiceNumber(n)) {
+      const num = parseInt(n.trim(), 10);
+      if (num > max) max = num;
+    }
   }
 
-  // Fallback: use first work date.
-  const firstDate = workDates.find((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
-  if (firstDate) return `JU-${dateToCompact(firstDate)}`;
-
-  // Last resort: today.
-  return `JU-${dateToCompact(new Date().toISOString().slice(0, 10))}`;
+  return String(max + 1);
 }

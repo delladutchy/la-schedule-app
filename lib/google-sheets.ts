@@ -162,3 +162,85 @@ export async function upsertSheetRow(row: SheetRow): Promise<void> {
     });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Targeted payment-status update
+// ---------------------------------------------------------------------------
+
+export interface SheetPaymentUpdate {
+  laJobNumber:         string; // key to find the row (column C)
+  invoiceNumber:       string; // column A — updated to fix any stale values
+  status:              string; // column T
+  paidDate:            string; // column U
+  invoicePdfUrl:       string; // column V
+  invoiceSentDate:     string; // column W
+  amountPaid:          number; // column X
+  remainingBalance:    number; // column Y
+  paymentMethod:       string; // column Z
+  paymentReceivedDate: string; // column AA
+  paymentBatchRef:     string; // column AB
+}
+
+/**
+ * Targeted update of payment columns (T:AB) in an existing sheet row.
+ * Also refreshes column A (invoice number) in case it was generated in the old JU-format.
+ *
+ * Matches by LA Job # in column C. No-op if the row does not exist — the row
+ * will receive the full update the next time upsertSheetRow() is called (e.g.
+ * on PDF regeneration). Does NOT append new rows.
+ *
+ * Throws on auth/API failure so callers can catch and handle non-fatally.
+ */
+export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Promise<void> {
+  if (!update.laJobNumber.trim()) return; // can't find a row without a job number
+
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
+
+  const auth = await getSheetAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // Find row by LA Job # in column C
+  const readRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_SHEET_NAME}!A:C`,
+  });
+
+  const rows = readRes.data.values ?? [];
+  const laNumber = update.laJobNumber.trim();
+  let matchRowIndex = -1;
+
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i]?.[2] ?? "").trim() === laNumber) {
+      matchRowIndex = i + 1; // 1-indexed; header is row 1
+      break;
+    }
+  }
+
+  if (matchRowIndex < 0) return; // row not in sheet yet — no-op
+
+  // Columns T:AB = COLUMN_ORDER indices 19–27 (status → paymentBatchRef).
+  // We also refresh column A (invoiceNumber) via a separate range.
+  const tAbValues = [
+    update.status,               // T  col 20
+    update.paidDate,             // U  col 21
+    update.invoicePdfUrl,        // V  col 22
+    update.invoiceSentDate,      // W  col 23
+    update.amountPaid,           // X  col 24
+    update.remainingBalance,     // Y  col 25
+    update.paymentMethod,        // Z  col 26
+    update.paymentReceivedDate,  // AA col 27
+    update.paymentBatchRef,      // AB col 28
+  ];
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: sheetId,
+    requestBody: {
+      valueInputOption: "USER_ENTERED",
+      data: [
+        { range: `${QUOTED_SHEET_NAME}!A${matchRowIndex}`, values: [[update.invoiceNumber]] },
+        { range: `${QUOTED_SHEET_NAME}!T${matchRowIndex}:AB${matchRowIndex}`, values: [tAbValues] },
+      ],
+    },
+  });
+}

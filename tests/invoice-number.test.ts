@@ -1,66 +1,112 @@
 import { describe, it, expect } from "vitest";
-import { resolveInvoiceNumber } from "@/lib/invoice-number";
+import { resolveInvoiceNumber, isNumericInvoiceNumber } from "@/lib/invoice-number";
+
+describe("isNumericInvoiceNumber", () => {
+  it("accepts pure digit strings", () => {
+    expect(isNumericInvoiceNumber("1001")).toBe(true);
+    expect(isNumericInvoiceNumber("9999")).toBe(true);
+    expect(isNumericInvoiceNumber("1")).toBe(true);
+  });
+
+  it("rejects JU-date style numbers", () => {
+    expect(isNumericInvoiceNumber("JU-20260618")).toBe(false);
+    expect(isNumericInvoiceNumber("JU-12345")).toBe(false);
+  });
+
+  it("rejects empty, null, undefined, and whitespace", () => {
+    expect(isNumericInvoiceNumber("")).toBe(false);
+    expect(isNumericInvoiceNumber(null)).toBe(false);
+    expect(isNumericInvoiceNumber(undefined)).toBe(false);
+    expect(isNumericInvoiceNumber("   ")).toBe(false);
+  });
+
+  it("rejects strings with letters or punctuation", () => {
+    expect(isNumericInvoiceNumber("1001a")).toBe(false);
+    expect(isNumericInvoiceNumber("LA71760")).toBe(false);
+  });
+});
 
 describe("resolveInvoiceNumber", () => {
-  // Existing invoice number is always preserved
-  it("returns existing number unchanged when set", () => {
-    expect(resolveInvoiceNumber("JU-12345", "67890", ["2025-09-01"])).toBe("JU-12345");
+  // ── New invoice (no existing in DB) ────────────────────────────────────────
+
+  it("defaults to 1001 when no numeric invoice numbers exist yet", () => {
+    expect(resolveInvoiceNumber(null, [])).toBe("1001");
   });
 
-  it("returns trimmed existing number", () => {
-    expect(resolveInvoiceNumber("  JU-99  ", null, [])).toBe("JU-99");
+  it("defaults to 1001 when allExistingNums is empty", () => {
+    expect(resolveInvoiceNumber(undefined, [])).toBe("1001");
   });
 
-  it("does not reuse existing when it is empty string", () => {
-    const result = resolveInvoiceNumber("", "LA-001", ["2025-09-01"]);
-    expect(result).toBe("JU-LA-001");
+  it("defaults to 1001 when existing is empty string and no prior nums", () => {
+    expect(resolveInvoiceNumber("", [])).toBe("1001");
   });
 
-  it("does not reuse existing when it is whitespace-only", () => {
-    const result = resolveInvoiceNumber("   ", "LA-001", ["2025-09-01"]);
-    expect(result).toBe("JU-LA-001");
+  it("defaults to 1001 when existing is whitespace-only and no prior nums", () => {
+    expect(resolveInvoiceNumber("   ", [])).toBe("1001");
   });
 
-  // LA number format
-  it("uses LA number as JU-{laNumber} when no existing", () => {
-    expect(resolveInvoiceNumber(null, "12345", [])).toBe("JU-12345");
+  // ── Sequential numbering ───────────────────────────────────────────────────
+
+  it("returns 1002 after 1001 exists in DB", () => {
+    expect(resolveInvoiceNumber(null, ["1001"])).toBe("1002");
   });
 
-  it("strips unsafe chars from LA number", () => {
-    // Only alphanumeric, hyphens, underscores, dots should survive
-    const result = resolveInvoiceNumber(null, "LA 001/B", []);
-    expect(result).toMatch(/^JU-[A-Za-z0-9\-_.]+$/);
-    expect(result).not.toContain(" ");
-    expect(result).not.toContain("/");
+  it("returns max+1 when multiple numeric numbers exist", () => {
+    expect(resolveInvoiceNumber(null, ["1001", "1003", "1002"])).toBe("1004");
   });
 
-  it("falls back to date when LA number sanitizes to empty", () => {
-    // A number made of only disallowed chars
-    const result = resolveInvoiceNumber(null, "/ /!!", ["2025-09-01"]);
-    expect(result).toBe("JU-20250901");
+  it("returns 2001 after 2000", () => {
+    expect(resolveInvoiceNumber(null, ["2000"])).toBe("2001");
   });
 
-  // Date fallback
-  it("uses first valid work date as YYYYMMDD when no LA number", () => {
-    expect(resolveInvoiceNumber(null, null, ["2025-09-01", "2025-09-02"])).toBe("JU-20250901");
+  // ── Reuse existing numeric number ──────────────────────────────────────────
+
+  it("reuses an existing numeric invoice number unchanged", () => {
+    expect(resolveInvoiceNumber("1001", ["1001", "1002"])).toBe("1001");
   });
 
-  it("skips invalid dates and uses first valid one", () => {
-    expect(resolveInvoiceNumber(null, null, ["not-a-date", "2025-09-03"])).toBe("JU-20250903");
+  it("trims whitespace from an existing numeric number before reuse", () => {
+    expect(resolveInvoiceNumber("  1005  ", ["1005"])).toBe("1005");
   });
 
-  it("skips empty LA number and uses date", () => {
-    expect(resolveInvoiceNumber(null, "  ", ["2025-10-15"])).toBe("JU-20251015");
+  // ── Old non-numeric numbers are ignored ───────────────────────────────────
+
+  it("ignores old JU-date-style existing and generates 1001", () => {
+    expect(resolveInvoiceNumber("JU-20260618", [])).toBe("1001");
   });
 
-  // Today fallback
-  it("returns a JU- prefixed string when no dates or LA number", () => {
-    const result = resolveInvoiceNumber(null, null, []);
-    expect(result).toMatch(/^JU-\d{8}$/);
+  it("ignores JU-date-style entries in allExistingNums when finding max", () => {
+    // Only numeric "1001" should count; "JU-20260618" is ignored
+    expect(resolveInvoiceNumber(null, ["1001", "JU-20260618"])).toBe("1002");
   });
 
-  it("returns a JU- prefixed string when dates array has only invalid entries", () => {
-    const result = resolveInvoiceNumber(undefined, undefined, ["", "bad"]);
-    expect(result).toMatch(/^JU-\d{8}$/);
+  it("returns 1001 when allExistingNums contains only non-numeric values", () => {
+    expect(resolveInvoiceNumber(null, ["JU-20260101", "JU-20260618", ""])).toBe("1001");
+  });
+
+  // ── LA job number stays separate ──────────────────────────────────────────
+
+  it("never includes JU prefix in output", () => {
+    const result = resolveInvoiceNumber(null, []);
+    expect(result).not.toMatch(/^JU/i);
+  });
+
+  it("never includes LA job number in the invoice number", () => {
+    // LA numbers go on the invoice separately; they must not bleed into invoice numbering
+    const result = resolveInvoiceNumber(null, []);
+    expect(result).toMatch(/^\d+$/);
+  });
+
+  it("returns a purely numeric string for all new invoices", () => {
+    const cases = [
+      resolveInvoiceNumber(null, []),
+      resolveInvoiceNumber(null, ["1001"]),
+      resolveInvoiceNumber(null, ["1001", "1002", "1003"]),
+      resolveInvoiceNumber("", []),
+      resolveInvoiceNumber("JU-20260618", []),
+    ];
+    for (const result of cases) {
+      expect(result).toMatch(/^\d+$/);
+    }
   });
 });

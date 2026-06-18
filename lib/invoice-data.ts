@@ -47,6 +47,64 @@ function coerceInvoiceData(row: Record<string, unknown>): InvoiceData {
   };
 }
 
+/** Lightweight invoice row for payment-matching and reconciliation UIs. */
+export interface InvoiceListItem {
+  google_event_id:  string;
+  invoice_number:   string | null;
+  la_number:        string | null;
+  invoice_total:    number | null;
+  amount_paid:      number;
+  remaining_balance: number | null;
+  invoice_status:   InvoiceStatus;
+  invoice_sent_at:  string | null;
+}
+
+/**
+ * Returns all invoice_data rows that have an invoice_total (PDF created).
+ * Used to populate the payments page invoice picker and smart-match logic.
+ * Ordered: newest invoice first.
+ */
+export async function listInvoicesForPayments(): Promise<InvoiceListItem[]> {
+  const client = getSupabaseServerClient();
+  const { data, error } = await client
+    .from("invoice_data")
+    .select(
+      "google_event_id, invoice_number, la_number, invoice_total, amount_paid, remaining_balance, invoice_status, invoice_sent_at",
+    )
+    .not("invoice_total", "is", null)
+    .order("invoice_number", { ascending: false });
+
+  if (error) throw new Error(`[invoice-data] list-for-payments failed: ${error.message}`);
+
+  return (data ?? []).map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      google_event_id:  String(r.google_event_id  ?? ""),
+      invoice_number:   r.invoice_number   != null ? String(r.invoice_number)   : null,
+      la_number:        r.la_number        != null ? String(r.la_number)        : null,
+      invoice_total:    r.invoice_total    != null ? Number(r.invoice_total)    : null,
+      amount_paid:      Number(r.amount_paid ?? 0),
+      remaining_balance: r.remaining_balance != null ? Number(r.remaining_balance) : null,
+      invoice_status:   (r.invoice_status as InvoiceStatus) ?? "none",
+      invoice_sent_at:  r.invoice_sent_at  != null ? String(r.invoice_sent_at)  : null,
+    };
+  });
+}
+
+/** Returns all stored invoice_number values (non-null) from every row. Used to compute the next sequential number. */
+export async function getAllInvoiceNumbers(): Promise<string[]> {
+  const client = getSupabaseServerClient();
+  const { data, error } = await client
+    .from("invoice_data")
+    .select("invoice_number")
+    .not("invoice_number", "is", null);
+
+  if (error) throw new Error(`[invoice-data] get-all-invoice-numbers failed: ${error.message}`);
+  return (data ?? [])
+    .map((row) => (row as Record<string, unknown>).invoice_number)
+    .filter((n): n is string => typeof n === "string" && n.length > 0);
+}
+
 export async function getInvoiceData(googleEventId: string): Promise<InvoiceData | null> {
   const client = getSupabaseServerClient();
   const { data, error } = await client

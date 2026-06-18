@@ -251,6 +251,48 @@ export async function deleteAllocation(
  * Recompute and persist amount_paid + remaining_balance + status on invoice_data
  * based on the current allocations. Called after any allocation change.
  */
+// ---------------------------------------------------------------------------
+// Pure calculation (exported for testing)
+// ---------------------------------------------------------------------------
+
+export type PaymentStatus = "sent" | "partially_paid" | "paid";
+
+export interface PaymentCalcResult {
+  amountPaid:       number;
+  remainingBalance: number;
+  status:           PaymentStatus;
+  paidDate:         string | null; // YYYY-MM-DD when fully paid, else null
+}
+
+/**
+ * Pure function — no I/O. Determines invoice payment status from allocation totals.
+ * Exported so unit tests can verify it without hitting the database.
+ *
+ * @param totalAllocated  Sum of all payment_batch_allocations for this invoice.
+ * @param invoiceTotal    The invoice's total due amount.
+ * @param today           YYYY-MM-DD to stamp paid_date (injected so tests are deterministic).
+ */
+export function calcPaymentResult(
+  totalAllocated: number,
+  invoiceTotal:   number,
+  today:          string,
+): PaymentCalcResult {
+  const amountPaid       = round2(Math.min(totalAllocated, invoiceTotal));
+  const remainingBalance = round2(Math.max(0, invoiceTotal - totalAllocated));
+
+  let status: PaymentStatus;
+  if (totalAllocated <= 0)            status = "sent";
+  else if (remainingBalance <= 0.005) status = "paid";
+  else                                status = "partially_paid";
+
+  return {
+    amountPaid,
+    remainingBalance,
+    status,
+    paidDate: status === "paid" ? today : null,
+  };
+}
+
 export async function recalcInvoicePayments(
   googleEventId: string,
   invoiceTotal: number,
@@ -268,31 +310,54 @@ export async function recalcInvoicePayments(
     (rows ?? []).reduce((s, r) => s + Number((r as Record<string, unknown>).allocated_amount ?? 0), 0),
   );
 
-  const amountPaid      = Math.min(totalAllocated, invoiceTotal);
-  const remainingBalance = round2(Math.max(0, invoiceTotal - totalAllocated));
-
-  // Determine new status
-  type St = "sent" | "partially_paid" | "paid";
-  let newStatus: St;
-  if (totalAllocated <= 0)                    newStatus = "sent";
-  else if (remainingBalance <= 0.005)         newStatus = "paid";
-  else                                        newStatus = "partially_paid";
+  const today = new Date().toISOString().slice(0, 10);
+  const calc  = calcPaymentResult(totalAllocated, invoiceTotal, today);
 
   const now = new Date().toISOString();
   const { error: updError } = await client
     .from("invoice_data")
     .update({
-      amount_paid:       round2(amountPaid),
-      remaining_balance: remainingBalance,
-      invoice_status:    newStatus,
-      paid_date:         newStatus === "paid" ? now.slice(0, 10) : null,
+      amount_paid:       calc.amountPaid,
+      remaining_balance: calc.remainingBalance,
+      invoice_status:    calc.status,
+      paid_date:         calc.paidDate,
       updated_at:        now,
     })
     .eq("google_event_id", googleEventId);
 
   if (updError) throw new Error(`[payments] recalc-update failed: ${updError.message}`);
 
-  return { newAmountPaid: round2(amountPaid), newRemainingBalance: remainingBalance };
+  return { newAmountPaid: calc.amountPaid, newRemainingBalance: calc.remainingBalance };
+}
+
+/**
+ * Returns payment batch metadata for the most recently created allocation on this
+ * invoice. Used to populate the Google Sheet's payment columns after a recalc.
+ * Returns empty strings when no allocations exist (e.g. after last allocation removed).
+ */
+export async function getLatestPaymentMeta(googleEventId: string): Promise<{
+  paymentMethod:       string;
+  paymentReceivedDate: string;
+  paymentBatchRef:     string;
+}> {
+  const client = getSupabaseServerClient();
+  const { data, error } = await client
+    .from("payment_batch_allocations")
+    .select("payment_batches(payment_method, received_date, reference)")
+    .eq("google_event_id", googleEventId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(`[payments] get-latest-payment-meta failed: ${error.message}`);
+  if (!data) return { paymentMethod: "", paymentReceivedDate: "", paymentBatchRef: "" };
+
+  const batch = (data as Record<string, unknown>).payment_batches as Record<string, unknown> | null;
+  return {
+    paymentMethod:       batch?.payment_method != null ? String(batch.payment_method)  : "",
+    paymentReceivedDate: batch?.received_date  != null ? String(batch.received_date)   : "",
+    paymentBatchRef:     batch?.reference      != null ? String(batch.reference)       : "",
+  };
 }
 
 // ---------------------------------------------------------------------------

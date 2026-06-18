@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
-import { getInvoiceData, markInvoicePdfCreated } from "@/lib/invoice-data";
+import { getInvoiceData, getAllInvoiceNumbers, markInvoicePdfCreated } from "@/lib/invoice-data";
 import { calculateInvoicePacket } from "@/lib/invoice-calculations";
 import { resolveInvoiceNumber } from "@/lib/invoice-number";
 import { renderInvoicePDF } from "@/lib/invoice-pdf";
@@ -105,11 +105,8 @@ export async function POST(
   if (!invoiceData) return NextResponse.json({ error: "invoice_data_not_found" }, { status: 404 });
 
   const packet  = calculateInvoicePacket(invoiceData);
-  const invoiceNumber = resolveInvoiceNumber(
-    invoiceData.invoice_number,
-    invoiceData.la_number,
-    invoiceData.workday_entries.map((w) => w.date),
-  );
+  const allNums = await getAllInvoiceNumbers();
+  const invoiceNumber = resolveInvoiceNumber(invoiceData.invoice_number, allNums);
 
   const issuedDate = new Date().toISOString().slice(0, 10);
 

@@ -5,6 +5,12 @@ import { Truck } from "lucide-react";
 import type { InvoiceData, InvoicePacket, MileageMode, WorkdayEntry } from "@/lib/invoice-types";
 import { INVOICE_STATUS_LABELS, TERMINAL_STATUSES } from "@/lib/invoice-types";
 import {
+  RECIPIENT_PRESETS,
+  findPreset,
+  isPresetConfigured,
+  type RecipientPreset,
+} from "@/lib/invoice-recipients";
+import {
   calculateWorkdayMileage,
   getDefaultDeductionForMode,
   initWorkdayEntries,
@@ -38,6 +44,12 @@ function fmtCurrency(n: number): string {
 
 function fmtHours(n: number): string {
   return n % 1 === 0 ? `${n}` : n.toFixed(2);
+}
+
+function buildPdfFilename(invoiceNumber: string | null, laNumber: string | null): string {
+  const parts: string[] = ["Invoice", invoiceNumber ?? "invoice"];
+  if (laNumber) parts.push(`LA${laNumber.replace(/[^a-zA-Z0-9-]/g, "")}`);
+  return `${parts.join("-")}.pdf`;
 }
 
 function fmtDate(isoDate: string): string {
@@ -97,12 +109,21 @@ interface PdfState {
   error: string | null;
 }
 
+// "custom" means the user typed their own address; a preset id means they
+// selected one of the RECIPIENT_PRESETS.
+type EmailPresetId = "custom" | string;
+
 interface EmailDialogState {
   open: boolean;
-  to: string;
+  presetId: EmailPresetId;   // "" = nothing selected yet
+  customTo: string;           // only used when presetId === "custom"
   status: "idle" | "sending" | "success" | "error";
   error: string | null;
 }
+
+const EMAIL_DIALOG_RESET: EmailDialogState = {
+  open: false, presetId: "", customTo: "", status: "idle", error: null,
+};
 
 interface ExpenseFields {
   bag_fees: string;
@@ -368,6 +389,149 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
 }
 
 // ---------------------------------------------------------------------------
+// EmailDialog sub-component
+// ---------------------------------------------------------------------------
+
+interface EmailDialogProps {
+  dialog: EmailDialogState;
+  onChange: React.Dispatch<React.SetStateAction<EmailDialogState>>;
+  onSend: () => void;
+  onClose: () => void;
+}
+
+function EmailDialog({ dialog, onChange, onSend, onClose }: EmailDialogProps) {
+  const isBusy    = dialog.status === "sending";
+  const isDone    = dialog.status === "success";
+
+  // Derive the resolved addresses for the confirmation preview.
+  let previewTo: string[] = [];
+  let previewCc: string[] = [];
+  let previewUnconfigured = false;
+
+  if (dialog.presetId === "custom") {
+    previewTo = dialog.customTo.trim() ? [dialog.customTo.trim()] : [];
+  } else if (dialog.presetId) {
+    const preset = findPreset(dialog.presetId);
+    if (preset) {
+      if (isPresetConfigured(preset)) {
+        previewTo = preset.to;
+        previewCc = preset.cc;
+      } else {
+        previewUnconfigured = true;
+      }
+    }
+  }
+
+  const canSend = !isBusy && !isDone && !previewUnconfigured && previewTo.length > 0;
+
+  return (
+    <div className="invoice-email-dialog" role="dialog" aria-label="Email Invoice">
+      <p className="invoice-block-label">Send Invoice</p>
+
+      {/* Preset selector */}
+      {!isDone ? (
+        <div className="invoice-email-field">
+          <label className="invoice-label-sm" htmlFor="inv-email-preset">Recipient</label>
+          <select
+            id="inv-email-preset"
+            className="invoice-select invoice-email-select"
+            value={dialog.presetId}
+            disabled={isBusy}
+            onChange={(e) => onChange((prev) => ({
+              ...prev,
+              presetId: e.target.value,
+              customTo: "",
+              error: null,
+            }))}
+          >
+            <option value="">Choose recipient…</option>
+            {RECIPIENT_PRESETS.map((preset) => {
+              const configured = isPresetConfigured(preset);
+              return (
+                <option
+                  key={preset.id}
+                  value={preset.id}
+                  disabled={!configured}
+                >
+                  {preset.label}{!configured ? " (not configured)" : ""}
+                </option>
+              );
+            })}
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+      ) : null}
+
+      {/* Custom address input — only shown when "Custom" is selected */}
+      {dialog.presetId === "custom" && !isDone ? (
+        <div className="invoice-email-field">
+          <label className="invoice-label-sm" htmlFor="inv-email-custom">Email address</label>
+          <input
+            id="inv-email-custom"
+            type="email"
+            className="invoice-email-full-input"
+            value={dialog.customTo}
+            onChange={(e) => onChange((prev) => ({ ...prev, customTo: e.target.value, error: null }))}
+            placeholder="client@example.com"
+            disabled={isBusy}
+            autoFocus
+          />
+        </div>
+      ) : null}
+
+      {/* Address preview — shown once a valid preset or custom address is entered */}
+      {previewUnconfigured && !isDone ? (
+        <p className="invoice-status-muted invoice-email-preview">
+          This preset is not configured yet. Edit <code>lib/invoice-recipients.ts</code> to add the address.
+        </p>
+      ) : previewTo.length > 0 && !isDone ? (
+        <div className="invoice-email-preview">
+          <p className="invoice-label-sm">Will send to:</p>
+          <p className="invoice-email-preview-addr">To: {previewTo.join(", ")}</p>
+          {previewCc.length > 0 ? (
+            <p className="invoice-email-preview-addr">CC: {previewCc.join(", ")}</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Success */}
+      {isDone ? (
+        <p className="invoice-sync-success">
+          Invoice sent to {previewTo.join(", ")}.
+          {previewCc.length > 0 ? ` CC: ${previewCc.join(", ")}` : ""}
+        </p>
+      ) : null}
+
+      {/* Error */}
+      {dialog.error ? (
+        <p className="invoice-error" role="alert">{dialog.error}</p>
+      ) : null}
+
+      {/* Actions */}
+      <div className="invoice-email-actions">
+        {!isDone ? (
+          <button
+            type="button"
+            className="invoice-pdf-create-btn"
+            onClick={onSend}
+            disabled={!canSend}
+          >
+            {isBusy ? "Sending…" : "Send Invoice"}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="invoice-pdf-regen-btn"
+          onClick={onClose}
+        >
+          {isDone ? "Done" : "Cancel"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // InvoiceSection
 // ---------------------------------------------------------------------------
 
@@ -402,9 +566,7 @@ export function InvoiceSection({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [pdfState, setPdfState] = useState<PdfState>({ status: "idle", error: null });
-  const [emailDialog, setEmailDialog] = useState<EmailDialogState>({
-    open: false, to: "", status: "idle", error: null,
-  });
+  const [emailDialog, setEmailDialog] = useState<EmailDialogState>(EMAIL_DIALOG_RESET);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestKey = `${eventId}::${workDates.join("|")}`;
@@ -674,17 +836,38 @@ export function InvoiceSection({
 
   async function handleSendEmail() {
     if (emailDialog.status === "sending") return;
-    if (!emailDialog.to.trim()) {
-      setEmailDialog((prev) => ({ ...prev, error: "Enter a recipient email" }));
+
+    // Resolve addresses from the selected preset or custom input.
+    let toAddresses: string[] = [];
+    let ccAddresses: string[] = [];
+
+    if (emailDialog.presetId === "custom") {
+      const addr = emailDialog.customTo.trim();
+      if (!addr) {
+        setEmailDialog((prev) => ({ ...prev, error: "Enter a recipient email address." }));
+        return;
+      }
+      toAddresses = [addr];
+    } else if (emailDialog.presetId) {
+      const preset = findPreset(emailDialog.presetId);
+      if (!preset || !isPresetConfigured(preset)) {
+        setEmailDialog((prev) => ({ ...prev, error: "This recipient preset is not configured yet." }));
+        return;
+      }
+      toAddresses = preset.to;
+      ccAddresses = preset.cc;
+    } else {
+      setEmailDialog((prev) => ({ ...prev, error: "Select a recipient before sending." }));
       return;
     }
+
     setEmailDialog((prev) => ({ ...prev, status: "sending", error: null }));
     try {
       const res = await fetch(`/api/invoice/email/${encodeURIComponent(eventId)}`, {
         method: "POST",
         headers: buildAuthHeaders(editorToken),
         credentials: "same-origin",
-        body: JSON.stringify({ to: emailDialog.to.trim(), gigSummary }),
+        body: JSON.stringify({ to: toAddresses, cc: ccAddresses, gigSummary }),
       });
       const json = await res.json() as { ok?: boolean; error?: string; detail?: string; sentAt?: string };
       if (!res.ok || !json.ok) {
@@ -707,7 +890,7 @@ export function InvoiceSection({
       }
       setEmailDialog((prev) => ({ ...prev, status: "success", error: null }));
     } catch {
-      setEmailDialog((prev) => ({ ...prev, status: "sending", error: "Network error — try again" }));
+      setEmailDialog((prev) => ({ ...prev, status: "error", error: "Network error — try again" }));
     }
   }
 
@@ -762,6 +945,7 @@ export function InvoiceSection({
   const hasPdf = !!(invoiceData?.invoice_pdf_url);
   const pdfUrl = invoiceData?.invoice_pdf_url ?? null;
   const invoiceNumber = invoiceData?.invoice_number ?? null;
+  const laNumber = invoiceData?.la_number ?? null;
   const invoiceTotal = invoiceData?.invoice_total ?? null;
   const amountPaid = invoiceData?.amount_paid ?? 0;
   const remainingBalance = invoiceData?.remaining_balance ?? null;
@@ -979,24 +1163,33 @@ export function InvoiceSection({
           {hasPdf ? (
             // PDF exists — show actions
             <div className="invoice-pdf-actions">
-              {invoiceNumber ? (
-                <p className="invoice-pdf-number">Invoice #{invoiceNumber}</p>
-              ) : null}
+              <div className="invoice-pdf-number-block">
+                {invoiceNumber ? (
+                  <p className="invoice-pdf-number">Invoice #{invoiceNumber}</p>
+                ) : null}
+                {laNumber ? (
+                  <p className="invoice-pdf-la-number">LA Job #{laNumber}</p>
+                ) : null}
+              </div>
 
               {/* Status + payment summary */}
               {currentStatus ? (
                 <p className="invoice-status-badge" data-status={currentStatus}>
                   {INVOICE_STATUS_LABELS[currentStatus]}
-                  {isTerminal && invoiceTotal != null ? (
+                  {hasPdf && invoiceTotal != null ? (
                     <span className="invoice-status-total"> · {fmtCurrency(invoiceTotal)}</span>
                   ) : null}
                 </p>
               ) : null}
-              {(currentStatus === "partially_paid" || currentStatus === "paid") && invoiceTotal != null ? (
+              {invoiceTotal != null && (currentStatus === "sent" || currentStatus === "partially_paid" || currentStatus === "paid") ? (
                 <div className="invoice-payment-summary">
-                  <span>Paid: {fmtCurrency(amountPaid)}</span>
-                  {currentStatus === "partially_paid" && remainingBalance != null ? (
-                    <span className="invoice-payment-remaining"> · Remaining: {fmtCurrency(remainingBalance)}</span>
+                  {(currentStatus === "partially_paid" || currentStatus === "paid") ? (
+                    <span>Amount Paid: {fmtCurrency(amountPaid)}</span>
+                  ) : null}
+                  {currentStatus === "sent" ? (
+                    <span className="invoice-payment-remaining">Balance Due: {fmtCurrency(invoiceTotal)}</span>
+                  ) : currentStatus === "partially_paid" && remainingBalance != null ? (
+                    <span className="invoice-payment-remaining"> · Balance Due: {fmtCurrency(remainingBalance)}</span>
                   ) : null}
                 </div>
               ) : null}
@@ -1013,59 +1206,30 @@ export function InvoiceSection({
                 </a>
                 <a
                   href={pdfUrl ?? "#"}
-                  download={invoiceNumber ? `${invoiceNumber}.pdf` : "invoice.pdf"}
+                  download={buildPdfFilename(invoiceNumber, laNumber)}
                   className="invoice-pdf-link-btn invoice-pdf-link-btn--secondary"
                 >
                   Download
                 </a>
-                <button
-                  type="button"
-                  className="invoice-pdf-email-btn"
-                  onClick={() => setEmailDialog((prev) => ({ ...prev, open: true, status: "idle", error: null }))}
-                >
-                  Email Invoice
-                </button>
+                {!emailDialog.open ? (
+                  <button
+                    type="button"
+                    className="invoice-pdf-email-btn"
+                    onClick={() => setEmailDialog({ ...EMAIL_DIALOG_RESET, open: true })}
+                  >
+                    Email Invoice
+                  </button>
+                ) : null}
               </div>
 
-              {/* Email dialog */}
+              {/* Email dialog — inline below action row */}
               {emailDialog.open ? (
-                <div className="invoice-email-dialog" role="dialog" aria-label="Email Invoice">
-                  <label className="invoice-label-sm" htmlFor="inv-email-to">Send to</label>
-                  <input
-                    id="inv-email-to"
-                    type="email"
-                    className="invoice-input-sm invoice-email-input"
-                    value={emailDialog.to}
-                    onChange={(e) => setEmailDialog((prev) => ({ ...prev, to: e.target.value }))}
-                    placeholder="client@example.com"
-                    disabled={emailDialog.status === "sending" || emailDialog.status === "success"}
-                  />
-                  {emailDialog.error ? (
-                    <p className="invoice-error" role="alert">{emailDialog.error}</p>
-                  ) : null}
-                  {emailDialog.status === "success" ? (
-                    <p className="invoice-sync-success">Invoice sent.</p>
-                  ) : null}
-                  <div className="invoice-email-dialog-buttons">
-                    {emailDialog.status !== "success" ? (
-                      <button
-                        type="button"
-                        className="invoice-pdf-create-btn"
-                        onClick={() => { void handleSendEmail(); }}
-                        disabled={emailDialog.status === "sending"}
-                      >
-                        {emailDialog.status === "sending" ? "Sending…" : "Send"}
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="invoice-pdf-regen-btn"
-                      onClick={() => setEmailDialog({ open: false, to: "", status: "idle", error: null })}
-                    >
-                      {emailDialog.status === "success" ? "Done" : "Cancel"}
-                    </button>
-                  </div>
-                </div>
+                <EmailDialog
+                  dialog={emailDialog}
+                  onChange={setEmailDialog}
+                  onSend={() => { void handleSendEmail(); }}
+                  onClose={() => setEmailDialog(EMAIL_DIALOG_RESET)}
+                />
               ) : null}
 
               {pdfState.status === "error" ? (
