@@ -29,6 +29,10 @@ function coerceInvoiceData(row: Record<string, unknown>): InvoiceData {
     sheet_synced_at: row.sheet_synced_at != null ? String(row.sheet_synced_at) : null,
     sheet_sync_error: row.sheet_sync_error != null ? String(row.sheet_sync_error) : null,
     paid_date: row.paid_date != null ? String(row.paid_date) : null,
+    quickbooks_invoice_id: row.quickbooks_invoice_id != null ? String(row.quickbooks_invoice_id) : null,
+    quickbooks_invoice_link: row.quickbooks_invoice_link != null ? String(row.quickbooks_invoice_link) : null,
+    quickbooks_synced_at: row.quickbooks_synced_at != null ? String(row.quickbooks_synced_at) : null,
+    quickbooks_sync_error: row.quickbooks_sync_error != null ? String(row.quickbooks_sync_error) : null,
     created_at: String(row.created_at ?? ""),
     updated_at: String(row.updated_at ?? ""),
   };
@@ -69,6 +73,11 @@ export interface InvoiceDataPatch {
   sheet_synced_at?: string | null;
   sheet_sync_error?: string | null;
   paid_date?: string | null;
+  // QB fields — only writable after running scripts/qb-migration.sql
+  quickbooks_invoice_id?: string | null;
+  quickbooks_invoice_link?: string | null;
+  quickbooks_synced_at?: string | null;
+  quickbooks_sync_error?: string | null;
 }
 
 export async function upsertInvoiceData(
@@ -129,4 +138,44 @@ export async function markSheetSyncError(
     .eq("google_event_id", googleEventId);
 
   if (error) throw new Error(`[invoice-data] mark-sync-error failed: ${error.message}`);
+}
+
+// Requires: scripts/qb-migration.sql applied to the Supabase invoice_data table.
+export async function markQBDraftCreated(
+  googleEventId: string,
+  invoiceId: string,
+  invoiceLink: string,
+): Promise<void> {
+  const client = getSupabaseServerClient();
+  const now = new Date().toISOString();
+  const { error } = await client
+    .from("invoice_data")
+    .update({
+      quickbooks_invoice_id: invoiceId,
+      quickbooks_invoice_link: invoiceLink,
+      quickbooks_synced_at: now,
+      quickbooks_sync_error: null,
+      invoice_status: "draft_created",
+      updated_at: now,
+    })
+    .eq("google_event_id", googleEventId);
+
+  if (error) throw new Error(`[invoice-data] mark-qb-draft failed: ${error.message}`);
+}
+
+export async function markQBSyncError(
+  googleEventId: string,
+  errorMessage: string,
+): Promise<void> {
+  const client = getSupabaseServerClient();
+  const now = new Date().toISOString();
+  const { error } = await client
+    .from("invoice_data")
+    .update({
+      quickbooks_sync_error: errorMessage,
+      updated_at: now,
+    })
+    .eq("google_event_id", googleEventId);
+
+  if (error) throw new Error(`[invoice-data] mark-qb-error failed: ${error.message}`);
 }

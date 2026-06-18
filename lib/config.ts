@@ -160,6 +160,30 @@ const EnvSchema = z.object({
 
   /** Set by Netlify automatically; used to detect deploy environment. */
   CONTEXT: z.string().optional(),
+
+  // ── QuickBooks Online (all optional; gated by QUICKBOOKS_ENABLED) ──────────
+
+  /** Master switch. Set to "true" once OAuth is complete and item IDs are confirmed. */
+  QUICKBOOKS_ENABLED: z.string().optional()
+    .transform((raw): boolean => {
+      if (raw === undefined || raw === "") return false;
+      const n = raw.trim().toLowerCase();
+      if (["1", "true", "yes", "on"].includes(n)) return true;
+      if (["0", "false", "no", "off"].includes(n)) return false;
+      throw new Error(`Invalid QUICKBOOKS_ENABLED value "${raw}". Use true/false.`);
+    }),
+  /** OAuth 2.0 Client ID from Intuit Developer Portal. */
+  QUICKBOOKS_CLIENT_ID: z.string().min(1).optional(),
+  /** OAuth 2.0 Client Secret from Intuit Developer Portal. */
+  QUICKBOOKS_CLIENT_SECRET: z.string().min(1).optional(),
+  /** Redirect URI registered in Intuit Developer Portal (used during initial OAuth flow). */
+  QUICKBOOKS_REDIRECT_URI: z.string().url().optional(),
+  /** Company/Realm ID — shown in QBO URL as realmId=XXXXXXXXXX. */
+  QUICKBOOKS_REALM_ID: z.string().min(1).optional(),
+  /** Long-lived refresh token produced during the one-time OAuth flow. */
+  QUICKBOOKS_REFRESH_TOKEN: z.string().min(1).optional(),
+  /** QBO Customer entity ID for the client (look up in QBO → Customers). */
+  QUICKBOOKS_CUSTOMER_ID: z.string().min(1).optional(),
 }).superRefine((env, ctx) => {
   const hasNamed = !!env.EDITOR_TOKENS_JSON?.trim();
   const hasLegacy = !!env.EDITOR_TOKEN?.trim();

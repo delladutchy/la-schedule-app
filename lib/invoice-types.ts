@@ -85,6 +85,11 @@ export interface InvoiceData {
   sheet_sync_error: string | null;
   paid_date: string | null;
 
+  quickbooks_invoice_id: string | null;
+  quickbooks_invoice_link: string | null;
+  quickbooks_synced_at: string | null;
+  quickbooks_sync_error: string | null;
+
   created_at: string;
   updated_at: string;
 }
