@@ -56,17 +56,16 @@ Font.registerHyphenationCallback((word) => [word]);
 // ---------------------------------------------------------------------------
 
 const C = {
-  orange:   "#E87722",
-  teal:     "#459BA3",
-  tealDark: "#32757C",
-  infoBg:   "#EAF5F6",
-  black:    "#1F2933",
-  dark:     "#343A40",
-  body:     "#4B5563",
-  muted:    "#6B7280",
-  light:    "#9CA3AF",
-  border:   "#DFE5E8",
-  row:      "#F7FAFB",
+  teal:     "#429AA3",
+  tealDark: "#357E86",
+  infoBg:   "#EDF7F8",
+  black:    "#2D3338",
+  dark:     "#3E454B",
+  body:     "#4F5961",
+  muted:    "#6F7880",
+  light:    "#A7B0B7",
+  border:   "#E3E8EB",
+  row:      "#FAFCFC",
   white:    "#FFFFFF",
 } as const;
 
@@ -77,9 +76,9 @@ const C = {
 const styles = StyleSheet.create({
   page: {
     fontFamily: "Helvetica",
-    fontSize: 9.5,
+    fontSize: 9,
     color: C.body,
-    paddingTop: 42,
+    paddingTop: 44,
     paddingBottom: 44,
     paddingHorizontal: 46,
     backgroundColor: C.white,
@@ -90,36 +89,35 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 22,
+    marginBottom: 24,
   },
   headerLeft: {
     flexDirection: "column",
     width: "70%",
   },
   logo: {
-    width: 92,
-    height: 92,
+    width: 88,
   },
   invoiceWordmark: {
-    fontSize: 17,
+    fontSize: 16,
     fontFamily: "Helvetica-Bold",
     color: C.teal,
-    letterSpacing: 1.4,
+    letterSpacing: 1.25,
     marginBottom: 5,
   },
   contractorName: {
-    fontSize: 9.5,
+    fontSize: 8.5,
     fontFamily: "Helvetica-Bold",
-    color: C.orange,
-    marginBottom: 2,
+    color: C.black,
+    marginBottom: 1,
   },
   contractorTitle: {
-    fontSize: 8.5,
+    fontSize: 7.8,
     color: C.body,
     marginBottom: 1,
   },
   contractorSub: {
-    fontSize: 8.5,
+    fontSize: 7.8,
     color: C.muted,
     marginBottom: 1,
   },
@@ -134,9 +132,9 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
   },
   logoFallback: {
-    width: 92,
-    height: 92,
-    borderRadius: 46,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     backgroundColor: C.infoBg,
     alignItems: "center",
     justifyContent: "center",
@@ -154,8 +152,9 @@ const styles = StyleSheet.create({
   infoPanel: {
     backgroundColor: C.infoBg,
     marginHorizontal: -46,
-    marginBottom: 28,
-    paddingVertical: 20,
+    marginBottom: 24,
+    paddingTop: 22,
+    paddingBottom: 24,
     paddingHorizontal: 46,
   },
   infoTopRow: {
@@ -167,40 +166,39 @@ const styles = StyleSheet.create({
     width: "47.5%",
   },
   infoLabel: {
-    fontSize: 8.5,
+    fontSize: 8,
     fontFamily: "Helvetica-Bold",
     color: C.dark,
-    marginBottom: 6,
+    marginBottom: 7,
   },
   infoPrimary: {
-    fontSize: 10,
+    fontSize: 9.6,
     color: C.black,
     marginBottom: 3,
   },
   infoLine: {
-    fontSize: 9.5,
+    fontSize: 9,
     color: C.body,
     marginBottom: 3,
   },
   detailRow: {
     flexDirection: "row",
-    marginBottom: 3,
+    marginBottom: 3.5,
   },
   detailLabel: {
     width: 82,
-    fontSize: 9.5,
+    fontSize: 9,
     color: C.body,
   },
   detailValue: {
     flex: 1,
-    fontSize: 9.5,
-    fontFamily: "Helvetica-Bold",
-    color: C.black,
+    fontSize: 9,
+    color: C.body,
   },
 
   // ── Line-item table ──────────────────────────────────────────────────────────
   table: {
-    marginBottom: 18,
+    marginBottom: 17,
   },
   tableHeader: {
     flexDirection: "row",
@@ -208,47 +206,47 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
-  thNumber: { width: "5%",  fontSize: 8.5, fontFamily: "Helvetica-Bold", color: C.black },
-  thService: { width: "28%", fontSize: 8.5, fontFamily: "Helvetica-Bold", color: C.black },
-  thDescription: { width: "32%", fontSize: 8.5, fontFamily: "Helvetica-Bold", color: C.black },
-  thQty: { width: "9%", fontSize: 8.5, fontFamily: "Helvetica-Bold", color: C.black, textAlign: "right" },
-  thRate: { width: "12%", fontSize: 8.5, fontFamily: "Helvetica-Bold", color: C.black, textAlign: "right" },
-  thAmount: { width: "14%", fontSize: 8.5, fontFamily: "Helvetica-Bold", color: C.black, textAlign: "right" },
+  thNumber: { width: "5%",  fontSize: 8.4, color: C.black },
+  thService: { width: "29%", fontSize: 8.4, color: C.black },
+  thDescription: { width: "31%", fontSize: 8.4, color: C.black },
+  thQty: { width: "9%", fontSize: 8.4, color: C.black, textAlign: "right" },
+  thRate: { width: "12%", fontSize: 8.4, color: C.black, textAlign: "right" },
+  thAmount: { width: "14%", fontSize: 8.4, color: C.black, textAlign: "right" },
   tableRow: {
     flexDirection: "row",
-    minHeight: 32,
-    paddingVertical: 8,
+    minHeight: 31,
+    paddingVertical: 7.5,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
   tableRowAlt: {
     backgroundColor: C.row,
   },
-  tdNumber: { width: "5%", fontSize: 9, color: C.body },
-  tdService: { width: "28%", fontSize: 9, fontFamily: "Helvetica-Bold", color: C.black, paddingRight: 8 },
-  tdDescription: { width: "32%", fontSize: 9, color: C.body, paddingRight: 8 },
-  tdQty: { width: "9%", fontSize: 9, color: C.body, textAlign: "right" },
-  tdRate: { width: "12%", fontSize: 9, color: C.body, textAlign: "right" },
-  tdAmount: { width: "14%", fontSize: 9, color: C.body, textAlign: "right" },
+  tdNumber: { width: "5%", fontSize: 8.8, color: C.body },
+  tdService: { width: "29%", fontSize: 8.8, fontFamily: "Helvetica-Bold", color: C.black, paddingRight: 8 },
+  tdDescription: { width: "31%", fontSize: 8.8, color: C.body, paddingRight: 8 },
+  tdQty: { width: "9%", fontSize: 8.8, color: C.body, textAlign: "right" },
+  tdRate: { width: "12%", fontSize: 8.8, color: C.body, textAlign: "right" },
+  tdAmount: { width: "14%", fontSize: 8.8, color: C.body, textAlign: "right" },
 
   // ── Totals ───────────────────────────────────────────────────────────────────
   lowerSection: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginTop: 4,
+    marginTop: 2,
   },
   noteBox: {
     width: "54%",
     paddingTop: 4,
   },
   noteTitle: {
-    fontSize: 13,
+    fontSize: 12.2,
     color: C.dark,
-    marginBottom: 10,
+    marginBottom: 9,
   },
   noteText: {
-    fontSize: 9,
+    fontSize: 8.8,
     color: C.body,
     lineHeight: 1.35,
     marginBottom: 11,
@@ -270,7 +268,7 @@ const styles = StyleSheet.create({
     marginTop: 7,
   },
   totalsBox: {
-    width: "36%",
+    width: "36.5%",
   },
   totalRow: {
     flexDirection: "row",
@@ -287,21 +285,21 @@ const styles = StyleSheet.create({
     borderBottomColor: C.border,
   },
   totalLabel: {
-    fontSize: 9.5,
+    fontSize: 9,
     color: C.body,
   },
   totalValue: {
-    fontSize: 9.5,
+    fontSize: 9,
     color: C.black,
     fontFamily: "Helvetica-Bold",
   },
   balanceLabel: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontFamily: "Helvetica-Bold",
     color: C.black,
   },
   balanceValue: {
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: "Helvetica-Bold",
     color: C.black,
   },
@@ -412,7 +410,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   if (packet.dayRateQty > 0) {
     lineItems.push({
       service: "Freelance Audio Engineer",
-      description: workDateStr ? `Day rate for ${workDateStr}` : "Day rate",
+      description: workDateStr ? `Audio services, ${workDateStr}` : "Audio services",
       qty: String(packet.dayRateQty),
       rate: fmt(packet.dayRate),
       amount: packet.dayRateTotal,
@@ -421,7 +419,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   if (hasOT) {
     lineItems.push({
       service: "Overtime",
-      description: "Audio engineering overtime",
+      description: "Overtime hours",
       qty: `${fmtHours(packet.totalOvertimeHours)} h`,
       rate: fmt(packet.overtimeRate),
       amount: packet.overtimeTotal,
@@ -430,7 +428,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   if (hasPD) {
     lineItems.push({
       service: "Per Diem",
-      description: "Daily per diem",
+      description: "Daily allowance",
       qty: String(packet.perDiemQty),
       rate: fmt(packet.perDiemRate),
       amount: packet.perDiemTotal,
@@ -439,7 +437,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   if (hasMile) {
     lineItems.push({
       service: "Mileage",
-      description: `${m!.reimbursedMiles} billable mi (${m!.totalMiles} total mi, ${m!.deductionMiles} mi deducted)`,
+      description: `${m!.reimbursedMiles} billable miles`,
       qty: `${m!.reimbursedMiles} mi`,
       rate: fmt(m!.mileageRate),
       amount: m!.mileageAmount,
@@ -493,44 +491,44 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
         {/* ── Bill To / Job Details ── */}
         <View style={styles.infoPanel}>
           <View style={styles.infoTopRow}>
-          <View style={styles.infoBlock}>
-            <Text style={styles.infoLabel}>Bill To</Text>
-            <Text style={styles.infoPrimary}>{packet.client}</Text>
-            {billToAddress.map((line) => (
-              <Text key={line} style={styles.infoLine}>{line}</Text>
-            ))}
-          </View>
-          <View style={styles.infoBlock}>
-            <Text style={styles.infoLabel}>Job / Invoice Details</Text>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Invoice #:</Text>
-              <Text style={styles.detailValue}>{invoiceNumber}</Text>
+            <View style={styles.infoBlock}>
+              <Text style={styles.infoLabel}>Bill to</Text>
+              <Text style={styles.infoPrimary}>{packet.client}</Text>
+              {billToAddress.map((line) => (
+                <Text key={line} style={styles.infoLine}>{line}</Text>
+              ))}
             </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>LA Job #:</Text>
-              <Text style={styles.detailValue}>{formattedLaJob ?? "—"}</Text>
-            </View>
-            {gigSummary ? (
+            <View style={styles.infoBlock}>
+              <Text style={styles.infoLabel}>Job / Invoice details</Text>
               <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Job:</Text>
-                <Text style={styles.detailValue}>{gigSummary}</Text>
+                <Text style={styles.detailLabel}>Invoice no.:</Text>
+                <Text style={styles.detailValue}>{invoiceNumber}</Text>
               </View>
-            ) : null}
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Invoice Date:</Text>
-              <Text style={styles.detailValue}>{fmtDate(issuedDate)}</Text>
-            </View>
-            {workDateStr ? (
               <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Work Dates:</Text>
-                <Text style={styles.detailValue}>{workDateStr}</Text>
+                <Text style={styles.detailLabel}>LA Job #:</Text>
+                <Text style={styles.detailValue}>{formattedLaJob ?? "—"}</Text>
               </View>
-            ) : null}
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Payment:</Text>
-              <Text style={styles.detailValue}>Direct Deposit</Text>
+              {gigSummary ? (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Job:</Text>
+                  <Text style={styles.detailValue}>{gigSummary}</Text>
+                </View>
+              ) : null}
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Invoice date:</Text>
+                <Text style={styles.detailValue}>{fmtDate(issuedDate)}</Text>
+              </View>
+              {workDateStr ? (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Work dates:</Text>
+                  <Text style={styles.detailValue}>{workDateStr}</Text>
+                </View>
+              ) : null}
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Payment:</Text>
+                <Text style={styles.detailValue}>Direct Deposit</Text>
+              </View>
             </View>
-          </View>
           </View>
         </View>
 
