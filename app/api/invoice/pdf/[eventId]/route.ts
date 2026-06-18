@@ -108,10 +108,17 @@ export async function POST(
   const allNums = await getAllInvoiceNumbers();
   const invoiceNumber = resolveInvoiceNumber(invoiceData.invoice_number, allNums);
 
-  // Diagnostic: visible in Netlify function logs — confirms deployed template version.
-  console.log(`[invoice/pdf] template=orange-2026 storedNumber=${invoiceData.invoice_number ?? "null"} resolvedNumber=${invoiceNumber}`);
-
   const issuedDate = new Date().toISOString().slice(0, 10);
+
+  // Unique storage path on every regeneration — prevents Supabase CDN from
+  // serving a cached older PDF at the same URL.
+  const laSlug = invoiceData.la_number
+    ? `-LA${invoiceData.la_number.replace(/[^a-zA-Z0-9]/g, "")}`
+    : "";
+  const ts = new Date().toISOString().replace(/[-:T.]/g, "").slice(0, 14); // YYYYMMDDHHmmss
+  const storagePath = `${params.eventId}/Invoice-${invoiceNumber}${laSlug}-${ts}.pdf`;
+
+  console.log(`[invoice/pdf] template=orange-2026 invoiceNumber=${invoiceNumber} storagePath=${storagePath} logoUrl=https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png`);
 
   // 1. Render PDF
   let pdfBuffer: Buffer;
@@ -125,10 +132,10 @@ export async function POST(
 
   // 2. Upload to Supabase Storage
   await ensureBucket();
-  const storagePath = `${params.eventId}/${invoiceNumber}.pdf`;
   let pdfUrl: string;
   try {
     pdfUrl = await uploadPdf(storagePath, pdfBuffer);
+    console.log(`[invoice/pdf] upload ok publicUrl=${pdfUrl}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[invoice/pdf] upload failed: ${msg}`);

@@ -523,13 +523,16 @@ export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<B
   // Note: public/ files are NOT on the serverless function's filesystem — URL fetch is required.
   let logoSrc: string | null = null;
   try {
+    console.log(`[invoice/pdf] fetching logo from ${LOGO_PDF_URL}`);
     const res = await fetch(LOGO_PDF_URL);
+    console.log(`[invoice/pdf] logo fetch status=${res.status} ok=${res.ok}`);
     if (res.ok) {
       const buf = Buffer.from(await res.arrayBuffer());
       logoSrc = `data:image/png;base64,${buf.toString("base64")}`;
+      console.log(`[invoice/pdf] logo embedded (${buf.byteLength} bytes)`);
     }
-  } catch {
-    // Logo unavailable — text fallback used
+  } catch (e) {
+    console.warn(`[invoice/pdf] logo fetch failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   const element = React.createElement(InvoicePDF, {
