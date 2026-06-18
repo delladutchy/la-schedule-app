@@ -223,25 +223,48 @@ export async function markInvoicePdfCreated(
     total: number;
     createdAt: string;
   },
-): Promise<void> {
+): Promise<InvoiceData> {
   const client = getSupabaseServerClient();
-  const { error } = await client
+
+  const { data: existing, error: readError } = await client
     .from("invoice_data")
-    .update({
-      invoice_number: opts.invoiceNumber,
-      invoice_pdf_url: opts.pdfUrl,
-      invoice_total: opts.total,
-      invoice_created_at: opts.createdAt,
-      amount_paid: 0,
-      remaining_balance: opts.total,
-      // Only advance status if not already in a terminal state
-      invoice_status: "sheet_synced",
-      updated_at: opts.createdAt,
-    })
+    .select("invoice_status, amount_paid")
     .eq("google_event_id", googleEventId)
-    .in("invoice_status", ["none", "ready", "sheet_synced"]);
+    .maybeSingle();
+
+  if (readError) throw new Error(`[invoice-data] mark-pdf-created read failed: ${readError.message}`);
+
+  const currentStatus = ((existing as Record<string, unknown> | null)?.invoice_status as InvoiceStatus | undefined) ?? "none";
+  const amountPaid = Number((existing as Record<string, unknown> | null)?.amount_paid ?? 0);
+  const resetWorkflow = ["none", "ready", "sheet_synced"].includes(currentStatus);
+  const recalculateBalance = ["sent", "draft_created", "partially_paid"].includes(currentStatus);
+
+  const patch: Record<string, unknown> = {
+    invoice_number: opts.invoiceNumber,
+    invoice_pdf_url: opts.pdfUrl,
+    invoice_total: opts.total,
+    invoice_created_at: opts.createdAt,
+    updated_at: opts.createdAt,
+  };
+
+  if (resetWorkflow) {
+    patch.amount_paid = 0;
+    patch.remaining_balance = opts.total;
+    patch.invoice_status = "sheet_synced";
+  } else if (recalculateBalance) {
+    patch.remaining_balance = Math.max(Number((opts.total - amountPaid).toFixed(2)), 0);
+  }
+
+  const { data, error } = await client
+    .from("invoice_data")
+    .update(patch)
+    .eq("google_event_id", googleEventId)
+    .select()
+    .single();
 
   if (error) throw new Error(`[invoice-data] mark-pdf-created failed: ${error.message}`);
+  if (!data) throw new Error("[invoice-data] mark-pdf-created returned no row");
+  return coerceInvoiceData(data as Record<string, unknown>);
 }
 
 export async function markInvoiceSent(

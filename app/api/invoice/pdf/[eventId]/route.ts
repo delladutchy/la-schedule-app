@@ -27,6 +27,7 @@ import { getSupabaseServerClient } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 
 const PDF_BUCKET = "invoice-pdfs";
+const PDF_TEMPLATE = "orange-2026";
 
 async function ensureBucket(): Promise<void> {
   const supabase = getSupabaseServerClient();
@@ -58,6 +59,19 @@ async function uploadPdf(
   return publicUrl;
 }
 
+function storagePathFromPublicUrl(publicUrl: string | null): string | null {
+  if (!publicUrl) return null;
+  try {
+    const url = new URL(publicUrl);
+    const marker = `/storage/v1/object/public/${PDF_BUCKET}/`;
+    const markerIndex = url.pathname.indexOf(marker);
+    if (markerIndex === -1) return null;
+    return decodeURIComponent(url.pathname.slice(markerIndex + marker.length));
+  } catch {
+    return null;
+  }
+}
+
 // ── GET ──────────────────────────────────────────────────────────────────────
 
 export async function GET(
@@ -71,10 +85,20 @@ export async function GET(
 
   const invoiceData = await getInvoiceData(params.eventId);
   if (!invoiceData) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  const storagePath = storagePathFromPublicUrl(invoiceData.invoice_pdf_url);
 
   return NextResponse.json({
+    invoice_number:  invoiceData.invoice_number,
+    invoice_pdf_url: invoiceData.invoice_pdf_url,
+    invoice_pdf_path: storagePath,
+    invoice_updated_at: invoiceData.updated_at,
+    invoice_created_at: invoiceData.invoice_created_at,
+    invoice_total: invoiceData.invoice_total,
+    timestamp: invoiceData.updated_at,
+    template: PDF_TEMPLATE,
     invoiceNumber:  invoiceData.invoice_number,
     pdfUrl:         invoiceData.invoice_pdf_url,
+    storagePath,
     invoiceStatus:  invoiceData.invoice_status,
     invoiceTotal:   invoiceData.invoice_total,
     invoiceCreatedAt: invoiceData.invoice_created_at,
@@ -107,6 +131,7 @@ export async function POST(
   const packet  = calculateInvoicePacket(invoiceData);
   const allNums = await getAllInvoiceNumbers();
   const invoiceNumber = resolveInvoiceNumber(invoiceData.invoice_number, allNums);
+  console.log(`[invoice/pdf] regenerate start template=${PDF_TEMPLATE} invoiceNumber=${invoiceNumber} oldInvoicePdfUrl=${invoiceData.invoice_pdf_url ?? "null"}`);
 
   const issuedDate = new Date().toISOString().slice(0, 10);
 
@@ -118,7 +143,7 @@ export async function POST(
   const ts = new Date().toISOString().replace(/[-:T.]/g, "").slice(0, 14); // YYYYMMDDHHmmss
   const storagePath = `${params.eventId}/Invoice-${invoiceNumber}${laSlug}-${ts}.pdf`;
 
-  console.log(`[invoice/pdf] template=orange-2026 invoiceNumber=${invoiceNumber} storagePath=${storagePath} logoUrl=https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png`);
+  console.log(`[invoice/pdf] template=${PDF_TEMPLATE} invoiceNumber=${invoiceNumber} storagePath=${storagePath} logoUrl=https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png`);
 
   // 1. Render PDF
   let pdfBuffer: Buffer;
@@ -144,12 +169,23 @@ export async function POST(
 
   // 3. Persist invoice metadata
   const createdAt = new Date().toISOString();
-  await markInvoicePdfCreated(params.eventId, {
-    invoiceNumber,
-    pdfUrl,
-    total: packet.estimatedTotal,
-    createdAt,
-  });
+  let updatedInvoiceData: Awaited<ReturnType<typeof markInvoicePdfCreated>>;
+  try {
+    updatedInvoiceData = await markInvoicePdfCreated(params.eventId, {
+      invoiceNumber,
+      pdfUrl,
+      total: packet.estimatedTotal,
+      createdAt,
+    });
+    console.log(`[invoice/pdf] metadata updated newInvoicePdfUrl=${updatedInvoiceData.invoice_pdf_url} invoiceUpdatedAt=${updatedInvoiceData.updated_at}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[invoice/pdf] metadata update failed: ${msg}`);
+    return NextResponse.json(
+      { error: "pdf_metadata_update_failed", detail: msg, invoice_pdf_url: pdfUrl, invoice_pdf_path: storagePath, storagePath },
+      { status: 500 },
+    );
+  }
 
   // 4. Sync Google Sheets (best-effort — don't fail the PDF if sheets is down)
   try {
@@ -161,8 +197,17 @@ export async function POST(
 
   return NextResponse.json({
     ok: true,
+    invoice_number: updatedInvoiceData.invoice_number,
+    invoice_pdf_url: updatedInvoiceData.invoice_pdf_url,
+    invoice_pdf_path: storagePath,
+    invoice_updated_at: updatedInvoiceData.updated_at,
+    invoice_created_at: updatedInvoiceData.invoice_created_at,
+    invoice_total: updatedInvoiceData.invoice_total,
+    timestamp: updatedInvoiceData.updated_at,
+    template: PDF_TEMPLATE,
     invoiceNumber,
     pdfUrl,
+    storagePath,
     invoiceTotal: packet.estimatedTotal,
     createdAt,
   });

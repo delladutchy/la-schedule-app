@@ -175,6 +175,7 @@ export async function POST(
   const remainingBalance = invoiceData.remaining_balance ?? invoiceTotal;
   const workDates        = (invoiceData.workday_entries ?? []).map((e) => e.date);
   const dateRange        = formatWorkDateRange(workDates);
+  console.log(`[invoice/email] attaching invoice_pdf_url=${invoiceData.invoice_pdf_url} invoiceNumber=${invoiceNumber} invoiceUpdatedAt=${invoiceData.updated_at}`);
 
   // Step 1: Fetch the PDF from Supabase Storage.
   // Fail early with a clear error — don't send the email without the attachment.

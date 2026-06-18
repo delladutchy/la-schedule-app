@@ -115,6 +115,37 @@ interface RenumberState {
   error: string | null;
 }
 
+interface InvoicePdfMetadataResponse {
+  ok?: boolean;
+  invoiceNumber?: string | null;
+  invoice_number?: string | null;
+  pdfUrl?: string | null;
+  invoice_pdf_url?: string | null;
+  storagePath?: string | null;
+  invoice_pdf_path?: string | null;
+  invoiceUpdatedAt?: string | null;
+  invoice_updated_at?: string | null;
+  timestamp?: string | null;
+  invoiceCreatedAt?: string | null;
+  invoice_created_at?: string | null;
+  createdAt?: string | null;
+  invoiceTotal?: number | null;
+  invoice_total?: number | null;
+  template?: string | null;
+  error?: string;
+  detail?: string;
+}
+
+interface NormalizedInvoicePdfMetadata {
+  invoiceNumber: string | null;
+  invoicePdfUrl: string | null;
+  storagePath: string | null;
+  invoiceUpdatedAt: string | null;
+  invoiceCreatedAt: string | null;
+  invoiceTotal: number | null;
+  template: string | null;
+}
+
 // "custom" means the user typed their own address; a preset id means they
 // selected one of the RECIPIENT_PRESETS.
 type EmailPresetId = "custom" | string;
@@ -174,6 +205,64 @@ function buildAuthHeaders(token: string | null): Record<string, string> {
   const base: Record<string, string> = { "Content-Type": "application/json" };
   if (token) base.Authorization = `Bearer ${token}`;
   return base;
+}
+
+function logInvoicePdfDiagnostic(message: string, details: Record<string, unknown>): void {
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`[invoice/ui] ${message}`, details);
+  }
+}
+
+function normalizeInvoicePdfMetadata(json: InvoicePdfMetadataResponse): NormalizedInvoicePdfMetadata {
+  return {
+    invoiceNumber: json.invoice_number ?? json.invoiceNumber ?? null,
+    invoicePdfUrl: json.invoice_pdf_url ?? json.pdfUrl ?? null,
+    storagePath: json.invoice_pdf_path ?? json.storagePath ?? null,
+    invoiceUpdatedAt: json.invoice_updated_at ?? json.invoiceUpdatedAt ?? json.timestamp ?? json.createdAt ?? null,
+    invoiceCreatedAt: json.invoice_created_at ?? json.invoiceCreatedAt ?? json.createdAt ?? null,
+    invoiceTotal: typeof json.invoice_total === "number"
+      ? json.invoice_total
+      : typeof json.invoiceTotal === "number"
+        ? json.invoiceTotal
+        : null,
+    template: json.template ?? null,
+  };
+}
+
+function preferGeneratedPdfMetadata(
+  generated: NormalizedInvoicePdfMetadata,
+  refreshed: NormalizedInvoicePdfMetadata,
+): NormalizedInvoicePdfMetadata {
+  return {
+    invoiceNumber: generated.invoiceNumber ?? refreshed.invoiceNumber,
+    invoicePdfUrl: generated.invoicePdfUrl ?? refreshed.invoicePdfUrl,
+    storagePath: generated.storagePath ?? refreshed.storagePath,
+    invoiceUpdatedAt: generated.invoiceUpdatedAt ?? refreshed.invoiceUpdatedAt,
+    invoiceCreatedAt: generated.invoiceCreatedAt ?? refreshed.invoiceCreatedAt,
+    invoiceTotal: generated.invoiceTotal ?? refreshed.invoiceTotal,
+    template: generated.template ?? refreshed.template,
+  };
+}
+
+function mergeInvoicePdfMetadata(
+  data: InvoiceData | null,
+  metadata: NormalizedInvoicePdfMetadata,
+): InvoiceData | null {
+  if (!data) return data;
+  return {
+    ...data,
+    invoice_number: metadata.invoiceNumber ?? data.invoice_number,
+    invoice_pdf_url: metadata.invoicePdfUrl ?? data.invoice_pdf_url,
+    invoice_created_at: metadata.invoiceCreatedAt ?? data.invoice_created_at,
+    invoice_total: metadata.invoiceTotal ?? data.invoice_total,
+    updated_at: metadata.invoiceUpdatedAt ?? data.updated_at,
+  };
+}
+
+function buildPdfActionUrl(pdfUrl: string | null, version: string | null): string {
+  if (!pdfUrl) return "#";
+  const separator = pdfUrl.includes("?") ? "&" : "?";
+  return `${pdfUrl}${separator}v=${encodeURIComponent(version ?? String(Date.now()))}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -794,6 +883,11 @@ export function InvoiceSection({
 
   async function handleCreatePdf() {
     if (pdfState.status === "generating") return;
+    const oldInvoicePdfUrl = invoiceData?.invoice_pdf_url ?? null;
+    logInvoicePdfDiagnostic("regenerate start", {
+      old_invoice_pdf_url: oldInvoicePdfUrl,
+      template: "orange-2026",
+    });
 
     // Cancel any pending debounced save so we don't double-write after the flush.
     if (saveTimer.current) {
@@ -832,18 +926,43 @@ export function InvoiceSection({
         credentials: "same-origin",
         body: JSON.stringify({ gigSummary }),
       });
-      const json = await res.json() as {
-        ok?: boolean;
-        invoiceNumber?: string;
-        pdfUrl?: string;
-        invoiceTotal?: number;
-        createdAt?: string;
-        error?: string;
-        detail?: string;
-      };
+      const json = await res.json() as InvoicePdfMetadataResponse;
       if (!res.ok || !json.ok) {
         setPdfState({ status: "error", error: json.detail ?? json.error ?? "PDF generation failed" });
         return;
+      }
+      const generatedPdfMetadata = normalizeInvoicePdfMetadata(json);
+      logInvoicePdfDiagnostic("regenerate POST returned", {
+        old_invoice_pdf_url: oldInvoicePdfUrl,
+        new_invoice_pdf_url: generatedPdfMetadata.invoicePdfUrl,
+        invoice_pdf_path: generatedPdfMetadata.storagePath,
+        invoice_updated_at: generatedPdfMetadata.invoiceUpdatedAt,
+        template: generatedPdfMetadata.template ?? "orange-2026",
+      });
+
+      setInvoiceData((prev) => mergeInvoicePdfMetadata(prev, generatedPdfMetadata));
+
+      let latestPdfMetadata = generatedPdfMetadata;
+      try {
+        const pdfMetaRes = await fetch(`/api/invoice/pdf/${encodeURIComponent(eventId)}`, {
+          headers: buildAuthHeaders(editorToken),
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (pdfMetaRes.ok) {
+          const pdfMetaJson = await pdfMetaRes.json() as InvoicePdfMetadataResponse;
+          const refreshedPdfMetadata = normalizeInvoicePdfMetadata(pdfMetaJson);
+          latestPdfMetadata = preferGeneratedPdfMetadata(generatedPdfMetadata, refreshedPdfMetadata);
+          setInvoiceData((prev) => mergeInvoicePdfMetadata(prev, latestPdfMetadata));
+          logInvoicePdfDiagnostic("regenerate metadata refreshed", {
+            refreshed_invoice_pdf_url: refreshedPdfMetadata.invoicePdfUrl,
+            active_invoice_pdf_url: latestPdfMetadata.invoicePdfUrl,
+            invoice_pdf_path: latestPdfMetadata.storagePath,
+            invoice_updated_at: latestPdfMetadata.invoiceUpdatedAt,
+          });
+        }
+      } catch {
+        // The POST response already has the authoritative freshly uploaded URL.
       }
 
       // Step 3: refresh all invoice state so the PDF actions appear.
@@ -855,7 +974,7 @@ export function InvoiceSection({
       if (refreshRes.ok) {
         const rj = await refreshRes.json() as { invoiceData: InvoiceData | null; packet: InvoicePacket | null };
         if (rj.invoiceData) {
-          setInvoiceData(rj.invoiceData);
+          setInvoiceData(mergeInvoicePdfMetadata(rj.invoiceData, latestPdfMetadata));
           setPacket(rj.packet);
           if (rj.invoiceData.sheet_synced_at) {
             setSyncState({ status: "success", message: null, syncedAt: rj.invoiceData.sheet_synced_at });
@@ -976,10 +1095,12 @@ export function InvoiceSection({
   const hasPreviouslySynced = syncState.syncedAt != null;
   const currentStatus = invoiceData?.invoice_status;
   const isTerminal = !!(currentStatus && TERMINAL_STATUSES.has(currentStatus));
-  const hasPdf = !!(invoiceData?.invoice_pdf_url);
   const pdfUrl = invoiceData?.invoice_pdf_url ?? null;
+  const hasPdf = !!pdfUrl;
   const invoiceNumber = invoiceData?.invoice_number ?? null;
   const laNumber = invoiceData?.la_number ?? null;
+  const pdfVersion = invoiceData?.updated_at ?? invoiceData?.invoice_created_at ?? null;
+  const pdfActionUrl = buildPdfActionUrl(pdfUrl, pdfVersion);
   const invoiceTotal = invoiceData?.invoice_total ?? null;
   const amountPaid = invoiceData?.amount_paid ?? 0;
   const remainingBalance = invoiceData?.remaining_balance ?? null;
@@ -1250,17 +1371,28 @@ export function InvoiceSection({
               {/* PDF action buttons */}
               <div className="invoice-pdf-buttons">
                 <a
-                  href={pdfUrl ?? "#"}
+                  href={pdfActionUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="invoice-pdf-link-btn"
+                  onClick={() => logInvoicePdfDiagnostic("open pdf", {
+                    invoice_pdf_url: pdfUrl,
+                    url_used: pdfActionUrl,
+                    invoice_updated_at: pdfVersion,
+                  })}
                 >
                   Open PDF
                 </a>
                 <a
-                  href={pdfUrl ?? "#"}
+                  href={pdfActionUrl}
                   download={buildPdfFilename(invoiceNumber, laNumber)}
                   className="invoice-pdf-link-btn invoice-pdf-link-btn--secondary"
+                  onClick={() => logInvoicePdfDiagnostic("download pdf", {
+                    invoice_pdf_url: pdfUrl,
+                    url_used: pdfActionUrl,
+                    filename: buildPdfFilename(invoiceNumber, laNumber),
+                    invoice_updated_at: pdfVersion,
+                  })}
                 >
                   Download
                 </a>
