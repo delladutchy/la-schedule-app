@@ -108,6 +108,9 @@ export async function POST(
   const allNums = await getAllInvoiceNumbers();
   const invoiceNumber = resolveInvoiceNumber(invoiceData.invoice_number, allNums);
 
+  // Diagnostic: visible in Netlify function logs — confirms deployed template version.
+  console.log(`[invoice/pdf] template=orange-2026 storedNumber=${invoiceData.invoice_number ?? "null"} resolvedNumber=${invoiceNumber}`);
+
   const issuedDate = new Date().toISOString().slice(0, 10);
 
   // 1. Render PDF
