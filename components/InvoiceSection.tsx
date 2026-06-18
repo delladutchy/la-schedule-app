@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Truck } from "lucide-react";
 import type { InvoiceData, InvoicePacket, MileageMode, WorkdayEntry } from "@/lib/invoice-types";
+import { INVOICE_STATUS_LABELS, TERMINAL_STATUSES } from "@/lib/invoice-types";
 import {
   calculateWorkdayMileage,
   getDefaultDeductionForMode,
@@ -89,6 +90,18 @@ interface SyncState {
   status: "idle" | "syncing" | "success" | "error";
   message: string | null;
   syncedAt: string | null;
+}
+
+interface PdfState {
+  status: "idle" | "generating" | "done" | "error";
+  error: string | null;
+}
+
+interface EmailDialogState {
+  open: boolean;
+  to: string;
+  status: "idle" | "sending" | "success" | "error";
+  error: string | null;
 }
 
 interface ExpenseFields {
@@ -389,6 +402,10 @@ export function InvoiceSection({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isMarkingComplete, setIsMarkingComplete] = useState(false);
+  const [pdfState, setPdfState] = useState<PdfState>({ status: "idle", error: null });
+  const [emailDialog, setEmailDialog] = useState<EmailDialogState>({
+    open: false, to: "", status: "idle", error: null,
+  });
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestKey = `${eventId}::${workDates.join("|")}`;
@@ -589,6 +606,91 @@ export function InvoiceSection({
   }
 
   // ---------------------------------------------------------------------------
+  // PDF generation
+  // ---------------------------------------------------------------------------
+
+  async function handleCreatePdf() {
+    if (pdfState.status === "generating") return;
+    setPdfState({ status: "generating", error: null });
+    try {
+      const res = await fetch(`/api/invoice/pdf/${encodeURIComponent(eventId)}`, {
+        method: "POST",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        body: JSON.stringify({ gigSummary }),
+      });
+      const json = await res.json() as {
+        ok?: boolean;
+        invoiceNumber?: string;
+        pdfUrl?: string;
+        invoiceTotal?: number;
+        createdAt?: string;
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok || !json.ok) {
+        setPdfState({ status: "error", error: json.detail ?? json.error ?? "PDF generation failed" });
+        return;
+      }
+      // Refresh invoice data from the server so pdfUrl / invoiceNumber appear.
+      const refreshRes = await fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (refreshRes.ok) {
+        const refreshJson = await refreshRes.json() as { invoiceData: InvoiceData | null; packet: InvoicePacket | null };
+        if (refreshJson.invoiceData) {
+          setInvoiceData(refreshJson.invoiceData);
+          setPacket(refreshJson.packet);
+        }
+      }
+      setPdfState({ status: "done", error: null });
+    } catch {
+      setPdfState({ status: "error", error: "Network error — check connection and retry" });
+    }
+  }
+
+  async function handleSendEmail() {
+    if (emailDialog.status === "sending") return;
+    if (!emailDialog.to.trim()) {
+      setEmailDialog((prev) => ({ ...prev, error: "Enter a recipient email" }));
+      return;
+    }
+    setEmailDialog((prev) => ({ ...prev, status: "sending", error: null }));
+    try {
+      const res = await fetch(`/api/invoice/email/${encodeURIComponent(eventId)}`, {
+        method: "POST",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        body: JSON.stringify({ to: emailDialog.to.trim(), gigSummary }),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string; detail?: string; sentAt?: string };
+      if (!res.ok || !json.ok) {
+        setEmailDialog((prev) => ({
+          ...prev,
+          status: "error",
+          error: json.detail ?? json.error ?? "Email failed to send",
+        }));
+        return;
+      }
+      // Refresh to pick up updated invoice_status = "sent"
+      const refreshRes = await fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (refreshRes.ok) {
+        const j = await refreshRes.json() as { invoiceData: InvoiceData | null; packet: InvoicePacket | null };
+        if (j.invoiceData) { setInvoiceData(j.invoiceData); setPacket(j.packet); }
+      }
+      setEmailDialog((prev) => ({ ...prev, status: "success", error: null }));
+    } catch {
+      setEmailDialog((prev) => ({ ...prev, status: "sending", error: "Network error — try again" }));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Render guards
   // ---------------------------------------------------------------------------
 
@@ -634,13 +736,18 @@ export function InvoiceSection({
     : null;
 
   const hasPreviouslySynced = syncState.syncedAt != null;
-  const isComplete = (
-    invoiceData?.invoice_status === "ready" ||
-    invoiceData?.invoice_status === "sheet_synced" ||
-    invoiceData?.invoice_status === "draft_created" ||
-    invoiceData?.invoice_status === "sent" ||
-    invoiceData?.invoice_status === "paid"
-  );
+  const currentStatus = invoiceData?.invoice_status;
+  const isComplete = !!(currentStatus && (
+    currentStatus === "ready" || currentStatus === "sheet_synced" || currentStatus === "draft_created" ||
+    TERMINAL_STATUSES.has(currentStatus)
+  ));
+  const isTerminal = !!(currentStatus && TERMINAL_STATUSES.has(currentStatus));
+  const hasPdf = !!(invoiceData?.invoice_pdf_url);
+  const pdfUrl = invoiceData?.invoice_pdf_url ?? null;
+  const invoiceNumber = invoiceData?.invoice_number ?? null;
+  const invoiceTotal = invoiceData?.invoice_total ?? null;
+  const amountPaid = invoiceData?.amount_paid ?? 0;
+  const remainingBalance = invoiceData?.remaining_balance ?? null;
 
   // Per-day mileage is the source of truth. Legacy total_miles only matters when
   // no per-day mileage has been entered yet.
@@ -880,6 +987,140 @@ export function InvoiceSection({
           </button>
         </div>
       </div>
+
+      {/* ── Native Invoice PDF ─────────────────────────────────── */}
+      {isComplete ? (
+        <div className="invoice-block invoice-pdf-block">
+          <p className="invoice-block-label">Invoice PDF</p>
+
+          {/* Status badge */}
+          {currentStatus ? (
+            <p className="invoice-status-badge" data-status={currentStatus}>
+              {INVOICE_STATUS_LABELS[currentStatus]}
+              {isTerminal && invoiceTotal != null ? (
+                <span className="invoice-status-total"> · {fmtCurrency(invoiceTotal)}</span>
+              ) : null}
+            </p>
+          ) : null}
+
+          {/* Payment status when partially paid or paid */}
+          {(currentStatus === "partially_paid" || currentStatus === "paid") && invoiceTotal != null ? (
+            <div className="invoice-payment-summary">
+              <span>Paid: {fmtCurrency(amountPaid)}</span>
+              {currentStatus === "partially_paid" && remainingBalance != null ? (
+                <span className="invoice-payment-remaining"> · Remaining: {fmtCurrency(remainingBalance)}</span>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* PDF generation button */}
+          {!hasPdf ? (
+            <div className="invoice-pdf-actions">
+              <button
+                type="button"
+                className={`invoice-pdf-create-btn${pdfState.status === "generating" ? " invoice-pdf-create-btn--loading" : ""}`}
+                onClick={() => { void handleCreatePdf(); }}
+                disabled={pdfState.status === "generating"}
+              >
+                {pdfState.status === "generating" ? "Generating PDF…" : "Create Invoice PDF"}
+              </button>
+              {pdfState.status === "error" ? (
+                <p className="invoice-error" role="alert">{pdfState.error}</p>
+              ) : null}
+            </div>
+          ) : (
+            // PDF exists — show open / download / email actions
+            <div className="invoice-pdf-actions">
+              {invoiceNumber ? (
+                <p className="invoice-pdf-number">Invoice #{invoiceNumber}</p>
+              ) : null}
+              <div className="invoice-pdf-buttons">
+                <a
+                  href={pdfUrl ?? "#"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="invoice-pdf-link-btn"
+                >
+                  Open PDF
+                </a>
+                <a
+                  href={pdfUrl ?? "#"}
+                  download={invoiceNumber ? `${invoiceNumber}.pdf` : "invoice.pdf"}
+                  className="invoice-pdf-link-btn invoice-pdf-link-btn--secondary"
+                >
+                  Download
+                </a>
+                <button
+                  type="button"
+                  className="invoice-pdf-email-btn"
+                  onClick={() => setEmailDialog((prev) => ({
+                    ...prev,
+                    open: true,
+                    status: "idle",
+                    error: null,
+                  }))}
+                >
+                  Email Invoice
+                </button>
+              </div>
+
+              {/* Regenerate option */}
+              <button
+                type="button"
+                className="invoice-pdf-regen-btn"
+                onClick={() => { void handleCreatePdf(); }}
+                disabled={pdfState.status === "generating"}
+              >
+                {pdfState.status === "generating" ? "Regenerating…" : "Regenerate PDF"}
+              </button>
+              {pdfState.status === "error" ? (
+                <p className="invoice-error" role="alert">{pdfState.error}</p>
+              ) : null}
+
+              {/* Email dialog */}
+              {emailDialog.open ? (
+                <div className="invoice-email-dialog" role="dialog" aria-label="Email Invoice">
+                  <label className="invoice-label-sm" htmlFor="inv-email-to">Send to</label>
+                  <input
+                    id="inv-email-to"
+                    type="email"
+                    className="invoice-input-sm invoice-email-input"
+                    value={emailDialog.to}
+                    onChange={(e) => setEmailDialog((prev) => ({ ...prev, to: e.target.value }))}
+                    placeholder="client@example.com"
+                    disabled={emailDialog.status === "sending" || emailDialog.status === "success"}
+                  />
+                  {emailDialog.error ? (
+                    <p className="invoice-error" role="alert">{emailDialog.error}</p>
+                  ) : null}
+                  {emailDialog.status === "success" ? (
+                    <p className="invoice-sync-success">Invoice sent.</p>
+                  ) : null}
+                  <div className="invoice-email-dialog-buttons">
+                    {emailDialog.status !== "success" ? (
+                      <button
+                        type="button"
+                        className="invoice-pdf-create-btn"
+                        onClick={() => { void handleSendEmail(); }}
+                        disabled={emailDialog.status === "sending"}
+                      >
+                        {emailDialog.status === "sending" ? "Sending…" : "Send"}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="invoice-pdf-regen-btn"
+                      onClick={() => setEmailDialog({ open: false, to: "", status: "idle", error: null })}
+                    >
+                      {emailDialog.status === "success" ? "Done" : "Cancel"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

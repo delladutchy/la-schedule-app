@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@netlify/blobs": "^8.1.0",
+    "@react-pdf/renderer": "^4.5.1",
     "@supabase/supabase-js": "^2.105.4",
     "@types/leaflet": "^1.9.21",
     "googleapis": "^144.0.0",
@@ -25,6 +26,7 @@
     "next": "14.2.15",
     "react": "18.3.1",
     "react-dom": "18.3.1",
+    "resend": "^6.14.0",
     "server-only": "^0.0.1",
     "zod": "^3.23.8"
   },

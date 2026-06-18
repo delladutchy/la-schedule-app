@@ -144,6 +144,16 @@ export default function QuickBooksSetupPage() {
     <div className="admin">
       <h1>QuickBooks Setup</h1>
 
+      {/* Solopreneur limitation notice */}
+      <div className="qb-banner qb-banner--warn" style={{ marginBottom: 16 }}>
+        <strong>Note:</strong> QuickBooks draft invoice creation requires a supported QuickBooks Online
+        plan, such as Simple Start or higher.{" "}
+        <strong>QuickBooks Solopreneur is not supported for this API connection.</strong>{" "}
+        Native PDF invoicing is available on the{" "}
+        <a href="/admin/payments" style={{ color: "inherit", textDecoration: "underline" }}>Payments page</a>{" "}
+        and does not require a QuickBooks subscription.
+      </div>
+
       {/* OAuth result banners */}
       {connected && (
         <div className="qb-banner qb-banner--ok">

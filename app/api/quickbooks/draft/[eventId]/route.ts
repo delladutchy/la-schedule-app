@@ -57,7 +57,7 @@ export async function POST(
   if (!data) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
   const body = await request.json().catch(() => ({})) as { gigSummary?: string };
-  const packet = calculateInvoicePacket(data, body.gigSummary);
+  const packet = calculateInvoicePacket(data);
 
   try {
     const result = await createQBDraftInvoice(packet, body.gigSummary ?? "", env);

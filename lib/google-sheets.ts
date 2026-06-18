@@ -25,9 +25,14 @@ const SHEET_NAME = process.env.GOOGLE_SHEET_NAME ?? "LA PAY (2026)";
 // Sheet names with spaces or parens must be single-quoted in A1 notation.
 const QUOTED_SHEET_NAME = `'${SHEET_NAME}'`;
 
+// Columns 1–21: original layout (never change position — existing data depends on it)
 // INV#, DATE, LA#, GIG, TOTAL, LABOR, OT, PER DIEM, MILEAGE, PARKING,
 // HOTEL, TOLLS, BAG FEES, UBER, OTHER, TOTAL MILES, LA PAID MILES,
 // UNREIMBURSED MILES, MILEAGE PAID, STATUS, PAID DATE
+//
+// Columns 22–28: native invoicing / payment metadata (appended to the right)
+// PDF LINK, SENT DATE, AMOUNT PAID, REMAINING BALANCE,
+// PAYMENT METHOD, PAYMENT RECEIVED DATE, PAYMENT BATCH REF
 const COLUMN_ORDER: Array<keyof SheetRow> = [
   "invoiceNumber",
   "date",
@@ -50,6 +55,14 @@ const COLUMN_ORDER: Array<keyof SheetRow> = [
   "mileagePaid",
   "status",
   "paidDate",
+  // Native invoicing columns — appended at right; existing rows leave them blank.
+  "invoicePdfUrl",
+  "invoiceSentDate",
+  "amountPaid",
+  "remainingBalance",
+  "paymentMethod",
+  "paymentReceivedDate",
+  "paymentBatchRef",
 ];
 
 async function getPrivateKey(): Promise<string> {

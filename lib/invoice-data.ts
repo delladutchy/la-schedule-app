@@ -29,6 +29,15 @@ function coerceInvoiceData(row: Record<string, unknown>): InvoiceData {
     sheet_synced_at: row.sheet_synced_at != null ? String(row.sheet_synced_at) : null,
     sheet_sync_error: row.sheet_sync_error != null ? String(row.sheet_sync_error) : null,
     paid_date: row.paid_date != null ? String(row.paid_date) : null,
+    // Native invoicing fields
+    invoice_number: row.invoice_number != null ? String(row.invoice_number) : null,
+    invoice_pdf_url: row.invoice_pdf_url != null ? String(row.invoice_pdf_url) : null,
+    invoice_created_at: row.invoice_created_at != null ? String(row.invoice_created_at) : null,
+    invoice_sent_at: row.invoice_sent_at != null ? String(row.invoice_sent_at) : null,
+    invoice_total: row.invoice_total != null ? Number(row.invoice_total) : null,
+    amount_paid: Number(row.amount_paid ?? 0),
+    remaining_balance: row.remaining_balance != null ? Number(row.remaining_balance) : null,
+    // QuickBooks fields (require scripts/qb-migration.sql)
     quickbooks_invoice_id: row.quickbooks_invoice_id != null ? String(row.quickbooks_invoice_id) : null,
     quickbooks_invoice_link: row.quickbooks_invoice_link != null ? String(row.quickbooks_invoice_link) : null,
     quickbooks_synced_at: row.quickbooks_synced_at != null ? String(row.quickbooks_synced_at) : null,
@@ -73,7 +82,15 @@ export interface InvoiceDataPatch {
   sheet_synced_at?: string | null;
   sheet_sync_error?: string | null;
   paid_date?: string | null;
-  // QB fields — only writable after running scripts/qb-migration.sql
+  // Native invoicing fields
+  invoice_number?: string | null;
+  invoice_pdf_url?: string | null;
+  invoice_created_at?: string | null;
+  invoice_sent_at?: string | null;
+  invoice_total?: number | null;
+  amount_paid?: number;
+  remaining_balance?: number | null;
+  // QB fields (require scripts/qb-migration.sql applied)
   quickbooks_invoice_id?: string | null;
   quickbooks_invoice_link?: string | null;
   quickbooks_synced_at?: string | null;
@@ -140,7 +157,94 @@ export async function markSheetSyncError(
   if (error) throw new Error(`[invoice-data] mark-sync-error failed: ${error.message}`);
 }
 
-// Requires: scripts/qb-migration.sql applied to the Supabase invoice_data table.
+export async function markInvoicePdfCreated(
+  googleEventId: string,
+  opts: {
+    invoiceNumber: string;
+    pdfUrl: string;
+    total: number;
+    createdAt: string;
+  },
+): Promise<void> {
+  const client = getSupabaseServerClient();
+  const { error } = await client
+    .from("invoice_data")
+    .update({
+      invoice_number: opts.invoiceNumber,
+      invoice_pdf_url: opts.pdfUrl,
+      invoice_total: opts.total,
+      invoice_created_at: opts.createdAt,
+      amount_paid: 0,
+      remaining_balance: opts.total,
+      // Only advance status if not already in a terminal state
+      invoice_status: "sheet_synced",
+      updated_at: opts.createdAt,
+    })
+    .eq("google_event_id", googleEventId)
+    .in("invoice_status", ["none", "ready", "sheet_synced"]);
+
+  if (error) throw new Error(`[invoice-data] mark-pdf-created failed: ${error.message}`);
+}
+
+export async function markInvoiceSent(
+  googleEventId: string,
+  sentAt: string,
+): Promise<void> {
+  const client = getSupabaseServerClient();
+  const { error } = await client
+    .from("invoice_data")
+    .update({
+      invoice_sent_at: sentAt,
+      invoice_status: "sent",
+      updated_at: sentAt,
+    })
+    .eq("google_event_id", googleEventId)
+    .in("invoice_status", ["sheet_synced", "draft_created", "sent"]);
+
+  if (error) throw new Error(`[invoice-data] mark-sent failed: ${error.message}`);
+}
+
+/**
+ * Recalculate and persist payment fields after allocations change.
+ * Called by payment allocation API after any create/delete.
+ */
+export async function updateInvoicePaymentTotals(
+  googleEventId: string,
+  opts: {
+    amountPaid: number;
+    invoiceTotal: number;
+  },
+): Promise<void> {
+  const client = getSupabaseServerClient();
+  const now = new Date().toISOString();
+  const remainingBalance = Math.max(0, opts.invoiceTotal - opts.amountPaid);
+  const amountPaid = Math.min(opts.amountPaid, opts.invoiceTotal);
+
+  let newStatus: InvoiceStatus;
+  if (amountPaid <= 0) {
+    newStatus = "sent"; // no payment → revert to sent
+  } else if (remainingBalance <= 0.005) {
+    newStatus = "paid";
+  } else {
+    newStatus = "partially_paid";
+  }
+
+  const { error } = await client
+    .from("invoice_data")
+    .update({
+      amount_paid: amountPaid,
+      remaining_balance: remainingBalance,
+      invoice_status: newStatus,
+      paid_date: newStatus === "paid" ? now.slice(0, 10) : null,
+      updated_at: now,
+    })
+    .eq("google_event_id", googleEventId);
+
+  if (error) throw new Error(`[invoice-data] update-payment-totals failed: ${error.message}`);
+}
+
+// ── QuickBooks helpers (require scripts/qb-migration.sql) ────────────────────
+
 export async function markQBDraftCreated(
   googleEventId: string,
   invoiceId: string,

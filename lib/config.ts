@@ -134,6 +134,11 @@ const EnvSchema = z.object({
   NOTIFY_EMAIL_TO: z.string().optional(),
   NOTIFY_EMAIL_FROM: z.string().optional(),
 
+  /** Invoice email: default recipient address when emailing invoices to the client. */
+  INVOICE_CLIENT_EMAIL: z.string().optional(),
+  /** Invoice email: override sender name shown in From field (defaults to "Jeff Ulsh"). */
+  INVOICE_FROM_NAME: z.string().default("Jeff Ulsh"),
+
   /** Optional shared secret for Google Calendar webhook receiver endpoint. */
   GOOGLE_WEBHOOK_TOKEN: z.string().optional(),
 

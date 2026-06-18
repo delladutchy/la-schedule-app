@@ -148,7 +148,7 @@ export function calculateWorkdays(entries: WorkdayEntry[]): WorkdayCalculated[] 
 }
 
 /** Derive a complete InvoicePacket from stored InvoiceData. */
-export function calculateInvoicePacket(data: InvoiceData, gigSummary?: string): InvoicePacket {
+export function calculateInvoicePacket(data: InvoiceData): InvoicePacket {
   const workdays = calculateWorkdays(data.workday_entries);
   const dayRateQty = workdays.length;
   const dayRate = data.day_rate;
@@ -231,6 +231,14 @@ export function calculateInvoicePacket(data: InvoiceData, gigSummary?: string): 
     otherExpenses,
     expenseNotes: data.expense_notes ?? null,
     estimatedTotal,
+    // Native invoicing fields passed through from storage
+    invoiceNumber:     data.invoice_number    ?? null,
+    invoicePdfUrl:     data.invoice_pdf_url   ?? null,
+    invoiceCreatedAt:  data.invoice_created_at ?? null,
+    invoiceSentAt:     data.invoice_sent_at   ?? null,
+    invoiceTotal:      data.invoice_total     ?? null,
+    amountPaid:        data.amount_paid       ?? 0,
+    remainingBalance:  data.remaining_balance ?? null,
   };
 }
 
@@ -239,10 +247,16 @@ export function generateSheetRow(
   packet: InvoicePacket,
   gigSummary: string,
   invoiceNumber?: string,
+  paymentMeta?: {
+    paymentMethod?: string;
+    paymentReceivedDate?: string;
+    paymentBatchRef?: string;
+  },
 ): SheetRow {
   const m = packet.mileage;
+  const pm = paymentMeta ?? {};
   return {
-    invoiceNumber: invoiceNumber ?? packet.laNumber ?? "",
+    invoiceNumber: invoiceNumber ?? packet.invoiceNumber ?? packet.laNumber ?? "",
     date: new Date().toISOString().slice(0, 10),
     laJobNumber: packet.laNumber ?? "",
     gigEvent: gigSummary,
@@ -263,5 +277,13 @@ export function generateSheetRow(
     mileagePaid: m?.mileageAmount ?? 0,
     status: packet.invoiceStatus,
     paidDate: "",
+    // Native invoicing columns (appended to preserve existing positions)
+    invoicePdfUrl:        packet.invoicePdfUrl       ?? "",
+    invoiceSentDate:      packet.invoiceSentAt        ? packet.invoiceSentAt.slice(0, 10)  : "",
+    amountPaid:           packet.amountPaid           ?? 0,
+    remainingBalance:     packet.remainingBalance     ?? packet.estimatedTotal,
+    paymentMethod:        pm.paymentMethod            ?? "",
+    paymentReceivedDate:  pm.paymentReceivedDate      ?? "",
+    paymentBatchRef:      pm.paymentBatchRef          ?? "",
   };
 }

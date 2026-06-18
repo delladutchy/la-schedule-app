@@ -6,10 +6,27 @@
 export type InvoiceStatus =
   | "none"
   | "ready"
-  | "sheet_synced"
-  | "draft_created"
+  | "sheet_synced"   // PDF created + synced to Google Sheets
+  | "draft_created"  // QuickBooks draft (QB-specific)
   | "sent"
-  | "paid";
+  | "partially_paid"
+  | "paid"
+  | "void";
+
+export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
+  none:           "No Invoice",
+  ready:          "Ready",
+  sheet_synced:   "Draft / Synced",
+  draft_created:  "QB Draft",
+  sent:           "Sent",
+  partially_paid: "Partially Paid",
+  paid:           "Paid",
+  void:           "Void",
+};
+
+/** Statuses that represent a finalized/completed payment — do not regress these. */
+export const TERMINAL_STATUSES: ReadonlySet<InvoiceStatus> =
+  new Set(["sent", "partially_paid", "paid", "void"]);
 
 /** How mileage was driven for one workday. */
 export type MileageMode =
@@ -85,6 +102,16 @@ export interface InvoiceData {
   sheet_sync_error: string | null;
   paid_date: string | null;
 
+  // Native invoicing (added in 20260618_invoice_pdf_fields.sql)
+  invoice_number: string | null;
+  invoice_pdf_url: string | null;
+  invoice_created_at: string | null;
+  invoice_sent_at: string | null;
+  invoice_total: number | null;
+  amount_paid: number;
+  remaining_balance: number | null;
+
+  // QuickBooks (added in scripts/qb-migration.sql)
   quickbooks_invoice_id: string | null;
   quickbooks_invoice_link: string | null;
   quickbooks_synced_at: string | null;
@@ -125,6 +152,15 @@ export interface InvoicePacket {
   expenseNotes: string | null;
 
   estimatedTotal: number;
+
+  // Pulled through from InvoiceData for PDF/status UI
+  invoiceNumber: string | null;
+  invoicePdfUrl: string | null;
+  invoiceCreatedAt: string | null;
+  invoiceSentAt: string | null;
+  invoiceTotal: number | null;
+  amountPaid: number;
+  remainingBalance: number | null;
 }
 
 /** One row exported to Google Sheets. */
@@ -150,4 +186,12 @@ export interface SheetRow {
   mileagePaid: number;
   status: InvoiceStatus;
   paidDate: string;
+  // Native invoicing columns (appended at end to preserve existing column positions)
+  invoicePdfUrl: string;
+  invoiceSentDate: string;
+  amountPaid: number;
+  remainingBalance: number;
+  paymentMethod: string;
+  paymentReceivedDate: string;
+  paymentBatchRef: string;
 }
