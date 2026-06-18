@@ -4945,53 +4945,46 @@ html.modal-open body {
   box-sizing: border-box;
 }
 
-/* Per-day mileage */
-.invoice-workday-mileage {
-  margin-top: 8px;
-}
-
-.invoice-mileage-add-btn {
-  font-size: 0.78rem;
-  font-family: inherit;
-  color: var(--text-muted);
-  background: transparent;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  padding: 4px 10px;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-
-.invoice-mileage-add-btn:hover {
-  color: var(--accent, #2563eb);
-  border-color: var(--accent, #2563eb);
-}
-
-.invoice-mileage-summary-btn {
-  font-size: 0.78rem;
-  font-family: inherit;
-  color: var(--text);
-  background: var(--surface-dim, rgba(0,0,0,0.04));
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 4px 10px;
-  cursor: pointer;
+/* Truck icon button — lives in the times row, right of OT */
+.invoice-mileage-truck {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0.45;
+  transition: opacity 0.15s, color 0.15s;
+  align-self: flex-end; /* align with the calc values */
+  margin-bottom: 2px;
+  /* ensure comfortable tap target */
+  min-width: 32px;
+  min-height: 32px;
 }
 
-.invoice-mileage-summary-edit {
-  font-size: 0.72rem;
-  color: var(--accent, #2563eb);
-  font-weight: 500;
+.invoice-mileage-truck:hover {
+  opacity: 0.75;
 }
+
+.invoice-mileage-truck--complete {
+  color: #16a34a;
+  opacity: 1;
+}
+
+.invoice-mileage-truck--complete:hover {
+  opacity: 0.8;
+}
+
+/* Per-day mileage editor */
 
 .invoice-mileage-editor {
   background: var(--surface-dim, rgba(0,0,0,0.03));
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 8px;
+  margin-top: 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;

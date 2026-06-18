@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Truck } from "lucide-react";
 import type { InvoiceData, InvoicePacket, MileageMode, WorkdayEntry } from "@/lib/invoice-types";
 import {
   calculateWorkdayMileage,
@@ -192,7 +193,9 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
     });
   }
 
-  const hasMileageData = mode !== "none" && milesDriven > 0;
+  // Truck is green when mileage mode is set and miles are entered.
+  const mileageComplete = mode !== "none" && milesDriven > 0;
+  const mileageValid = mileageComplete && effectiveDeduction >= 0;
 
   return (
     <div className="invoice-workday-row">
@@ -236,131 +239,112 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
             {otH} h
           </span>
         </div>
+        {/* Truck icon — tap to open/close mileage editor */}
+        <button
+          type="button"
+          className={`invoice-mileage-truck${mileageComplete ? " invoice-mileage-truck--complete" : ""}`}
+          aria-label={mileageComplete ? "Edit mileage" : "Add mileage"}
+          onClick={() => setMileageOpen((prev) => !prev)}
+        >
+          <Truck size={17} strokeWidth={1.75} />
+        </button>
       </div>
 
-      {/* ── Per-day mileage ────────────────────────────────────── */}
-      <div className="invoice-workday-mileage">
-        {/* Collapsed state */}
-        {!mileageOpen ? (
-          hasMileageData ? (
-            <button
-              type="button"
-              className="invoice-mileage-summary-btn"
-              onClick={() => setMileageOpen(true)}
-            >
-              {MODE_LABELS[mode]} — {milesDriven} mi
-              <span className="invoice-mileage-summary-edit">edit</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="invoice-mileage-add-btn"
-              onClick={() => setMileageOpen(true)}
-            >
-              + Add Mileage
-            </button>
-          )
-        ) : (
-          /* Expanded state */
-          (() => {
-            const mileageValid = mode !== "none" && milesDriven > 0 && effectiveDeduction >= 0;
-            return (
-          <div className="invoice-mileage-editor">
-            {/* Top row: mode buttons (left) + remove/confirm controls (right) */}
-            <div className="invoice-mileage-top-row">
-              <div className="invoice-mileage-modes">
-                {ACTIVE_MODES.map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    className={`invoice-mileage-mode-btn${mode === m ? " invoice-mileage-mode-btn--active" : ""}`}
-                    onClick={() => setMode(m)}
-                  >
-                    {MODE_LABELS[m]}
-                  </button>
-                ))}
-              </div>
-              <div className="invoice-mileage-controls">
+      {/* ── Mileage editor (expanded when mileageOpen) ─────────── */}
+      {mileageOpen ? (
+        <div className="invoice-mileage-editor">
+          {/* Top row: mode buttons (left) + remove/confirm controls (right) */}
+          <div className="invoice-mileage-top-row">
+            <div className="invoice-mileage-modes">
+              {ACTIVE_MODES.map((m) => (
                 <button
+                  key={m}
                   type="button"
-                  className="invoice-mileage-remove-btn"
-                  onClick={() => setMode("none")}
-                  aria-label="Remove mileage"
+                  className={`invoice-mileage-mode-btn${mode === m ? " invoice-mileage-mode-btn--active" : ""}`}
+                  onClick={() => setMode(m)}
                 >
-                  ✕
+                  {MODE_LABELS[m]}
                 </button>
-                <button
-                  type="button"
-                  className={`invoice-mileage-confirm-btn${mileageValid ? " invoice-mileage-confirm-btn--valid" : ""}`}
-                  aria-label="Confirm mileage entry"
-                  onClick={() => { if (mileageValid) setMileageOpen(false); }}
-                >
-                  ✓
-                </button>
-              </div>
+              ))}
             </div>
-
-            {/* Auto-mileage hint — shown when miles can't be auto-filled */}
-            {autoMileageNote && mode !== "none" ? (
-              <p className="invoice-mileage-manual-note">
-                {autoMileageNote === "no_location"
-                  ? "No job location — enter miles manually."
-                  : autoMileageNote === "implausible"
-                    ? "Location may be ambiguous — enter miles manually."
-                    : "Could not auto-calculate — enter miles manually."}
-              </p>
-            ) : null}
-
-            {mode !== "none" ? (
-              <div className="invoice-mileage-fields">
-                <div className="invoice-mileage-field-row">
-                  <label className="invoice-label-sm" htmlFor={`inv-miles-${index}`}>Miles</label>
-                  <input
-                    id={`inv-miles-${index}`}
-                    type="number"
-                    min="0"
-                    step="1"
-                    className="invoice-input-sm invoice-input-miles"
-                    value={milesDriven || ""}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      onChange(index, { milesDriven: isNaN(val) ? null : val });
-                    }}
-                    placeholder="enter miles"
-                  />
-                </div>
-                <div className="invoice-mileage-field-row">
-                  <label className="invoice-label-sm" htmlFor={`inv-deduction-${index}`}>
-                    Deduction
-                  </label>
-                  <input
-                    id={`inv-deduction-${index}`}
-                    type="number"
-                    min="0"
-                    step="1"
-                    className="invoice-input-sm invoice-input-miles"
-                    value={effectiveDeduction}
-                    readOnly={mode !== "custom"}
-                    onChange={(e) => {
-                      if (mode !== "custom") return;
-                      const val = parseFloat(e.target.value);
-                      onChange(index, { mileageDeduction: isNaN(val) ? null : val });
-                    }}
-                  />
-                </div>
-                {mileCalc && mileCalc.milesDriven > 0 ? (
-                  <div className="invoice-mileage-day-preview">
-                    <span>Billable: {mileCalc.billableMiles} mi</span>
-                    <span>Net: {fmtCurrency(round2(mileCalc.billableMiles * mileageRate))}</span>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+            <div className="invoice-mileage-controls">
+              <button
+                type="button"
+                className="invoice-mileage-remove-btn"
+                onClick={() => setMode("none")}
+                aria-label="Remove mileage"
+              >
+                ✕
+              </button>
+              <button
+                type="button"
+                className={`invoice-mileage-confirm-btn${mileageValid ? " invoice-mileage-confirm-btn--valid" : ""}`}
+                aria-label="Confirm mileage entry"
+                onClick={() => { if (mileageValid) setMileageOpen(false); }}
+              >
+                ✓
+              </button>
+            </div>
           </div>
-            );
-          })()
-        )}
-      </div>
+
+          {/* Auto-mileage hint — shown when miles can't be auto-filled */}
+          {autoMileageNote && mode !== "none" ? (
+            <p className="invoice-mileage-manual-note">
+              {autoMileageNote === "no_location"
+                ? "No job location — enter miles manually."
+                : autoMileageNote === "implausible"
+                  ? "Location may be ambiguous — enter miles manually."
+                  : "Could not auto-calculate — enter miles manually."}
+            </p>
+          ) : null}
+
+          {mode !== "none" ? (
+            <div className="invoice-mileage-fields">
+              <div className="invoice-mileage-field-row">
+                <label className="invoice-label-sm" htmlFor={`inv-miles-${index}`}>Miles</label>
+                <input
+                  id={`inv-miles-${index}`}
+                  type="number"
+                  min="0"
+                  step="1"
+                  className="invoice-input-sm invoice-input-miles"
+                  value={milesDriven || ""}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    onChange(index, { milesDriven: isNaN(val) ? null : val });
+                  }}
+                  placeholder="enter miles"
+                />
+              </div>
+              <div className="invoice-mileage-field-row">
+                <label className="invoice-label-sm" htmlFor={`inv-deduction-${index}`}>
+                  Deduction
+                </label>
+                <input
+                  id={`inv-deduction-${index}`}
+                  type="number"
+                  min="0"
+                  step="1"
+                  className="invoice-input-sm invoice-input-miles"
+                  value={effectiveDeduction}
+                  readOnly={mode !== "custom"}
+                  onChange={(e) => {
+                    if (mode !== "custom") return;
+                    const val = parseFloat(e.target.value);
+                    onChange(index, { mileageDeduction: isNaN(val) ? null : val });
+                  }}
+                />
+              </div>
+              {mileCalc && mileCalc.milesDriven > 0 ? (
+                <div className="invoice-mileage-day-preview">
+                  <span>Billable: {mileCalc.billableMiles} mi</span>
+                  <span>Net: {fmtCurrency(round2(mileCalc.billableMiles * mileageRate))}</span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
