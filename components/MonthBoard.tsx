@@ -27,7 +27,7 @@ import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import { JobTimeSection } from "@/components/JobTimeSection";
-import { InvoiceSection } from "@/components/InvoiceSection";
+import { InvoiceSection, snapUtcToTimeOption } from "@/components/InvoiceSection";
 
 interface Props {
   month: MonthBoardData;
@@ -1538,6 +1538,9 @@ export function MonthBoard({
                     workDates={jobTimeWorkDates}
                     gigSummary={activeJobTimeDetail.summary}
                     editorToken={editorToken}
+                    defaultStartTime={activeJobTimeDetail.startUtc ? snapUtcToTimeOption(activeJobTimeDetail.startUtc) : undefined}
+                    defaultEndTime={activeJobTimeDetail.endUtc ? snapUtcToTimeOption(activeJobTimeDetail.endUtc) : undefined}
+                    jobLocation={activeDetailLocation ?? undefined}
                   />
                 ) : null}
               </div>

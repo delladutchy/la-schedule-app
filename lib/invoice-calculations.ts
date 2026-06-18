@@ -55,8 +55,9 @@ export function calculateHours(startTime: string, endTime: string): {
   const startMin = parseTimeToMinutes(startTime);
   const endMin = parseTimeToMinutes(endTime);
   if (startMin == null || endMin == null) return { totalHours: 0, overtimeHours: 0 };
-  const diffMin = endMin - startMin;
-  if (diffMin <= 0) return { totalHours: 0, overtimeHours: 0 };
+  let diffMin = endMin - startMin;
+  if (diffMin < 0) diffMin += 24 * 60; // overnight shift: end is next calendar day
+  if (diffMin === 0) return { totalHours: 0, overtimeHours: 0 };
   const totalHours = diffMin / 60;
   const overtimeHours = Math.max(0, totalHours - 10);
   return { totalHours, overtimeHours };

@@ -44,6 +44,18 @@ function fmtDate(isoDate: string): string {
   });
 }
 
+// Snap a UTC ISO string to the nearest 30-min TIME_OPTIONS value.
+export function snapUtcToTimeOption(utcIso: string): string {
+  const d = new Date(utcIso);
+  const totalMins = d.getHours() * 60 + d.getMinutes();
+  const snapped = Math.round(totalMins / 30) * 30;
+  const hSnapped = Math.floor(snapped / 60) % 24;
+  const mSnapped = snapped % 60;
+  const period = hSnapped >= 12 ? "PM" : "AM";
+  const h12 = hSnapped % 12 || 12;
+  return `${h12}:${String(mSnapped).padStart(2, "0")} ${period}`;
+}
+
 // ---------------------------------------------------------------------------
 // Types for local state
 // ---------------------------------------------------------------------------
@@ -81,6 +93,9 @@ interface Props {
   workDates: string[];
   gigSummary: string;
   editorToken: string | null;
+  defaultStartTime?: string; // snapped 12h time from job startUtc, e.g. "8:00 AM"
+  defaultEndTime?: string;   // snapped 12h time from job endUtc, e.g. "6:00 PM"
+  jobLocation?: string;      // Google Calendar location field
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +175,15 @@ function WorkdayRow({ entry, workdays, index, onChange }: WorkdayRowProps) {
 // InvoiceSection
 // ---------------------------------------------------------------------------
 
-export function InvoiceSection({ eventId, workDates, gigSummary, editorToken }: Props) {
+export function InvoiceSection({
+  eventId,
+  workDates,
+  gigSummary,
+  editorToken,
+  defaultStartTime,
+  defaultEndTime,
+  jobLocation,
+}: Props) {
   const [fetchState, setFetchState] = useState<FetchState>({ status: "loading" });
   const [invoiceData, setInvoiceData] = useState<InvoiceData | null>(null);
   const [packet, setPacket] = useState<InvoicePacket | null>(null);
@@ -174,10 +197,12 @@ export function InvoiceSection({ eventId, workDates, gigSummary, editorToken }: 
     other_expenses: "",
     expense_notes: "",
   });
+  const [expensesExpanded, setExpensesExpanded] = useState(false);
   const [mileage, setMileage] = useState<MileageFields>({ total_miles: "" });
   const [syncState, setSyncState] = useState<SyncState>({ status: "idle", message: null, syncedAt: null });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isMarkingComplete, setIsMarkingComplete] = useState(false);
 
   // Debounce save timer
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -210,9 +235,9 @@ export function InvoiceSection({ eventId, workDates, gigSummary, editorToken }: 
         if (data) {
           setInvoiceData(data);
           setPacket(json.packet);
-          const entries = initWorkdayEntries(data.workday_entries, workDates);
+          const entries = initWorkdayEntries(data.workday_entries, workDates, defaultStartTime, defaultEndTime);
           setWorkdayEntries(entries);
-          setExpenses({
+          const exp: ExpenseFields = {
             bag_fees: data.bag_fees != null ? String(data.bag_fees) : "",
             hotel: data.hotel != null ? String(data.hotel) : "",
             parking: data.parking != null ? String(data.parking) : "",
@@ -220,19 +245,32 @@ export function InvoiceSection({ eventId, workDates, gigSummary, editorToken }: 
             uber: data.uber != null ? String(data.uber) : "",
             other_expenses: data.other_expenses != null ? String(data.other_expenses) : "",
             expense_notes: data.expense_notes ?? "",
-          });
+          };
+          setExpenses(exp);
+          setExpensesExpanded(
+            data.bag_fees != null || data.hotel != null || data.parking != null ||
+            data.tolls != null || data.uber != null || data.other_expenses != null ||
+            (data.expense_notes != null && data.expense_notes.trim() !== ""),
+          );
           setMileage({ total_miles: data.total_miles != null ? String(data.total_miles) : "" });
           if (data.sheet_synced_at) {
             setSyncState({ status: "success", message: null, syncedAt: data.sheet_synced_at });
           } else if (data.sheet_sync_error) {
             setSyncState({ status: "error", message: "Sheet sync failed — retry", syncedAt: null });
           }
+          // Auto-fetch mileage if none saved and job location is known
+          if (data.total_miles == null && jobLocation) {
+            fetchAutoMileage(jobLocation, editorToken);
+          }
         } else {
-          // No existing data — initialize from work dates
-          const entries = initWorkdayEntries([], workDates);
+          // No existing data — initialize from work dates with auto-fill defaults
+          const entries = initWorkdayEntries([], workDates, defaultStartTime, defaultEndTime);
           setWorkdayEntries(entries);
           setInvoiceData(null);
           setPacket(null);
+          if (jobLocation) {
+            fetchAutoMileage(jobLocation, editorToken);
+          }
         }
         setFetchState({ status: "ready" });
       })
@@ -243,9 +281,36 @@ export function InvoiceSection({ eventId, workDates, gigSummary, editorToken }: 
     return () => { cancelled = true; };
   }, [requestKey]);
 
-  function initWorkdayEntries(existing: WorkdayEntry[], dates: string[]): WorkdayEntry[] {
+  function fetchAutoMileage(location: string, token: string | null) {
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    fetch(`/api/invoice/mileage?location=${encodeURIComponent(location)}`, {
+      headers,
+      credentials: "same-origin",
+    })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const json = await res.json() as { miles?: number };
+        if (typeof json.miles === "number" && json.miles > 0) {
+          setMileage({ total_miles: String(json.miles) });
+          void save({ total_miles: json.miles });
+        }
+      })
+      .catch(() => { /* silently ignore — user can enter manually */ });
+  }
+
+  function initWorkdayEntries(
+    existing: WorkdayEntry[],
+    dates: string[],
+    defaultStart?: string,
+    defaultEnd?: string,
+  ): WorkdayEntry[] {
     const map = new Map(existing.map((e) => [e.date, e]));
-    return dates.map((date) => map.get(date) ?? { date, startTime: "", endTime: "" });
+    return dates.map((date) => {
+      const saved = map.get(date);
+      if (saved) return saved; // always use saved data, even if empty
+      return { date, startTime: defaultStart ?? "", endTime: defaultEnd ?? "" };
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -322,7 +387,8 @@ export function InvoiceSection({ eventId, workDates, gigSummary, editorToken }: 
 
   async function handleSyncSheet() {
     if (syncState.status === "syncing") return;
-    setSyncState({ status: "syncing", message: null, syncedAt: null });
+    const prevSyncedAt = syncState.syncedAt;
+    setSyncState((prev) => ({ ...prev, status: "syncing", message: null }));
     try {
       const res = await fetch("/api/invoice/sync-sheet", {
         method: "POST",
@@ -338,12 +404,29 @@ export function InvoiceSection({ eventId, workDates, gigSummary, editorToken }: 
         setSyncState({
           status: "error",
           message: json.message ?? "Sheet sync failed — retry",
-          syncedAt: null,
+          syncedAt: prevSyncedAt, // preserve prior sync timestamp so button stays "Update"
         });
       }
     } catch {
-      setSyncState({ status: "error", message: "Sheet sync failed — retry", syncedAt: null });
+      setSyncState({ status: "error", message: "Sheet sync failed — retry", syncedAt: prevSyncedAt });
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mark as Complete (sets invoice_status="ready" + auto-syncs)
+  // ---------------------------------------------------------------------------
+
+  async function handleMarkComplete() {
+    if (isMarkingComplete) return;
+    setIsMarkingComplete(true);
+    try {
+      await save({ invoice_status: "ready" });
+    } catch {
+      // status save failure is non-fatal; still try to sync
+    } finally {
+      setIsMarkingComplete(false);
+    }
+    void handleSyncSheet(); // fire non-blocking — failure must not block the status change
   }
 
   // ---------------------------------------------------------------------------
@@ -405,6 +488,15 @@ export function InvoiceSection({ eventId, workDates, gigSummary, editorToken }: 
       })()
     : null;
 
+  const hasPreviouslySynced = syncState.syncedAt != null;
+  const isComplete = (
+    invoiceData?.invoice_status === "ready" ||
+    invoiceData?.invoice_status === "sheet_synced" ||
+    invoiceData?.invoice_status === "draft_created" ||
+    invoiceData?.invoice_status === "sent" ||
+    invoiceData?.invoice_status === "paid"
+  );
+
   return (
     <div className="invoice-section">
       <p className="board-day-modal-event-label">Invoice / Tracking</p>
@@ -425,49 +517,61 @@ export function InvoiceSection({ eventId, workDates, gigSummary, editorToken }: 
         ))}
       </div>
 
-      {/* ── Expenses ───────────────────────────────────────────── */}
+      {/* ── Additional Expenses (collapsible) ──────────────────── */}
       <div className="invoice-block">
-        <p className="invoice-block-label">Expenses</p>
-        <div className="invoice-expense-grid">
-          {(
-            [
-              ["bag_fees", "Bag Fees"],
-              ["hotel", "Hotel"],
-              ["parking", "Parking"],
-              ["tolls", "Tolls"],
-              ["uber", "Uber"],
-              ["other_expenses", "Other"],
-            ] as const
-          ).map(([field, label]) => (
-            <div key={field} className="invoice-expense-row">
-              <label className="invoice-label-sm" htmlFor={`inv-${field}`}>{label}</label>
-              <div className="invoice-currency-field">
-                <span className="invoice-currency-prefix">$</span>
-                <input
-                  id={`inv-${field}`}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  className="invoice-input-sm"
-                  value={expenses[field as keyof ExpenseFields]}
-                  onChange={(e) => handleExpenseChange(field, e.target.value)}
-                  placeholder="0"
-                />
-              </div>
+        <button
+          type="button"
+          className="invoice-collapsible-toggle"
+          onClick={() => setExpensesExpanded((prev) => !prev)}
+          aria-expanded={expensesExpanded}
+        >
+          <span className="invoice-block-label">Additional Expenses</span>
+          <span className="invoice-collapsible-chevron">{expensesExpanded ? "▲" : "▼"}</span>
+        </button>
+        {expensesExpanded ? (
+          <div className="invoice-collapsible-content">
+            <div className="invoice-expense-grid">
+              {(
+                [
+                  ["bag_fees", "Bag Fees"],
+                  ["hotel", "Hotel"],
+                  ["parking", "Parking"],
+                  ["tolls", "Tolls"],
+                  ["uber", "Uber"],
+                  ["other_expenses", "Other"],
+                ] as const
+              ).map(([field, label]) => (
+                <div key={field} className="invoice-expense-row">
+                  <label className="invoice-label-sm" htmlFor={`inv-${field}`}>{label}</label>
+                  <div className="invoice-currency-field">
+                    <span className="invoice-currency-prefix">$</span>
+                    <input
+                      id={`inv-${field}`}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="invoice-input-sm"
+                      value={expenses[field as keyof ExpenseFields]}
+                      onChange={(e) => handleExpenseChange(field, e.target.value)}
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className="invoice-notes-row">
-          <label className="invoice-label-sm" htmlFor="inv-expense-notes">Notes</label>
-          <textarea
-            id="inv-expense-notes"
-            className="invoice-textarea"
-            value={expenses.expense_notes}
-            onChange={(e) => handleExpenseChange("expense_notes", e.target.value)}
-            placeholder="Receipt details, etc."
-            rows={2}
-          />
-        </div>
+            <div className="invoice-notes-row">
+              <label className="invoice-label-sm" htmlFor="inv-expense-notes">Notes</label>
+              <textarea
+                id="inv-expense-notes"
+                className="invoice-textarea"
+                value={expenses.expense_notes}
+                onChange={(e) => handleExpenseChange("expense_notes", e.target.value)}
+                placeholder="Receipt details, etc."
+                rows={2}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* ── Mileage ────────────────────────────────────────────── */}
@@ -598,18 +702,30 @@ export function InvoiceSection({ eventId, workDates, gigSummary, editorToken }: 
         ) : syncState.status === "error" ? (
           <p className="invoice-error" role="alert">{syncState.message ?? "Sheet sync failed — retry"}</p>
         ) : null}
-        <button
-          type="button"
-          className="invoice-sync-button"
-          onClick={() => { void handleSyncSheet(); }}
-          disabled={syncState.status === "syncing" || isSaving}
-        >
-          {syncState.status === "syncing"
-            ? "Syncing…"
-            : syncState.status === "success"
-              ? "Retry Sheet Sync"
-              : "Sync to Google Sheet"}
-        </button>
+        <div className="invoice-sync-buttons">
+          {!isComplete ? (
+            <button
+              type="button"
+              className="invoice-complete-button"
+              onClick={() => { void handleMarkComplete(); }}
+              disabled={isMarkingComplete || isSaving}
+            >
+              {isMarkingComplete ? "Marking…" : "Mark as Complete & Sync"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="invoice-sync-button"
+            onClick={() => { void handleSyncSheet(); }}
+            disabled={syncState.status === "syncing" || isSaving}
+          >
+            {syncState.status === "syncing"
+              ? "Syncing…"
+              : hasPreviouslySynced
+                ? "Update Google Sheet"
+                : "Sync to Google Sheet"}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -13,7 +13,7 @@ import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-sess
 import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { JobTimeSection } from "@/components/JobTimeSection";
-import { InvoiceSection } from "@/components/InvoiceSection";
+import { InvoiceSection, snapUtcToTimeOption } from "@/components/InvoiceSection";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import {
   buildGigDayDetailsForRange,
@@ -1595,6 +1595,9 @@ export function DayBoard({
                     workDates={jobTimeWorkDates}
                     gigSummary={activePrimaryDetail.summary}
                     editorToken={editorToken}
+                    defaultStartTime={activePrimaryDetail.startUtc ? snapUtcToTimeOption(activePrimaryDetail.startUtc) : undefined}
+                    defaultEndTime={activePrimaryDetail.endUtc ? snapUtcToTimeOption(activePrimaryDetail.endUtc) : undefined}
+                    jobLocation={activeDetailLocation ?? undefined}
                   />
                 ) : null}
                 {activeDetailPanel.details.length > 1 ? (

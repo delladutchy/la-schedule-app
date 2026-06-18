@@ -23,21 +23,39 @@ describe("calculateHours", () => {
     expect(result.overtimeHours).toBe(0);
   });
 
+  it("8:00 AM to 7:00 PM = 11 h total, 1 OT", () => {
+    const result = calculateHours("8:00 AM", "7:00 PM");
+    expect(result.totalHours).toBeCloseTo(11);
+    expect(result.overtimeHours).toBeCloseTo(1);
+  });
+
   it("8:00 AM to 8:30 PM = 12.5 h total, 2.5 OT", () => {
     const result = calculateHours("8:00 AM", "8:30 PM");
     expect(result.totalHours).toBeCloseTo(12.5);
     expect(result.overtimeHours).toBeCloseTo(2.5);
   });
 
-  it("returns 0 when end is before start", () => {
-    const result = calculateHours("6:00 PM", "8:00 AM");
-    expect(result.totalHours).toBe(0);
+  it("overnight: 8:00 PM to 2:00 AM = 6 h total, 0 OT", () => {
+    const result = calculateHours("8:00 PM", "2:00 AM");
+    expect(result.totalHours).toBeCloseTo(6);
     expect(result.overtimeHours).toBe(0);
+  });
+
+  it("overnight: 8:00 PM to 7:00 AM = 11 h total, 1 OT", () => {
+    const result = calculateHours("8:00 PM", "7:00 AM");
+    expect(result.totalHours).toBeCloseTo(11);
+    expect(result.overtimeHours).toBeCloseTo(1);
   });
 
   it("exact 10 hours = 0 OT", () => {
     const result = calculateHours("7:00 AM", "5:00 PM");
     expect(result.totalHours).toBeCloseTo(10);
+    expect(result.overtimeHours).toBe(0);
+  });
+
+  it("same start and end = 0 h (not 24 h)", () => {
+    const result = calculateHours("8:00 AM", "8:00 AM");
+    expect(result.totalHours).toBe(0);
     expect(result.overtimeHours).toBe(0);
   });
 });
@@ -64,6 +82,13 @@ describe("calculateMileage", () => {
     expect(result.reimbursedMiles).toBe(0);
     expect(result.unreimbursedMiles).toBe(60);
     expect(result.mileageAmount).toBe(0);
+  });
+
+  it("manual mileage: calculates correctly for given input (no auto-override)", () => {
+    const result = calculateMileage(120, 60, 0.52);
+    expect(result.totalMiles).toBe(120);
+    expect(result.reimbursedMiles).toBe(60);
+    expect(result.mileageAmount).toBeCloseTo(31.2);
   });
 });
 
