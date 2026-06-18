@@ -5,23 +5,26 @@
  *
  * Jeff-only. Create payment batches (Light Action direct deposits),
  * allocate each deposit across one or more invoices, track balance.
+ *
+ * Smart match: when a batch has unallocated funds, the page automatically
+ * suggests which invoices match the deposit amount. The user must click
+ * "Apply Suggested Match" — nothing is auto-applied.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { BatchSummary, PaymentAllocation } from "@/lib/payment-batches";
+import {
+  findPaymentMatches,
+  getInvoiceRemainingBalance,
+  type InvoiceForMatching,
+  type MatchSuggestion,
+} from "@/lib/payment-matching";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface InvoiceOption {
-  google_event_id: string;
-  invoice_number: string | null;
-  la_number: string | null;
-  invoice_total: number | null;
-  amount_paid: number;
-  remaining_balance: number | null;
-  invoice_status: string;
+interface InvoiceOption extends InvoiceForMatching {
   gig_summary?: string | null;
 }
 
@@ -53,19 +56,25 @@ function authHeaders(): Record<string, string> {
   return base;
 }
 
+function invoiceLabel(inv: Pick<InvoiceOption, "invoice_number" | "la_number" | "google_event_id">): string {
+  if (inv.invoice_number) return `Invoice #${inv.invoice_number}`;
+  if (inv.la_number)      return `LA# ${inv.la_number}`;
+  return inv.google_event_id.slice(0, 8);
+}
+
 // ---------------------------------------------------------------------------
-// Sub-components
+// AllocationRow
 // ---------------------------------------------------------------------------
 
 interface AllocationRowProps {
   allocation: PaymentAllocation;
-  onRemove: (id: string) => void;
+  onRemove:   (id: string) => void;
 }
 
 function AllocationRow({ allocation, onRemove }: AllocationRowProps) {
   const [removing, setRemoving] = useState(false);
 
-  async function handleRemove() {
+  function handleRemove() {
     setRemoving(true);
     onRemove(allocation.id);
   }
@@ -94,34 +103,130 @@ function AllocationRow({ allocation, onRemove }: AllocationRowProps) {
 }
 
 // ---------------------------------------------------------------------------
-// BatchDetail — expanded view for one batch
+// SmartMatchPanel
+// ---------------------------------------------------------------------------
+
+interface SmartMatchPanelProps {
+  suggestion:    MatchSuggestion;
+  paymentAmount: number;
+  applying:      boolean;
+  applyError:    string | null;
+  onApply:       () => void;
+  onDismiss:     () => void;
+}
+
+function SmartMatchPanel({ suggestion, paymentAmount, applying, applyError, onApply, onDismiss }: SmartMatchPanelProps) {
+  const diffLabel =
+    suggestion.matchType === "exact"
+      ? "✓ Exact match"
+      : suggestion.matchType === "close"
+        ? `≈ Close match (${fmt(Math.abs(suggestion.difference))} off)`
+        : `Partial — difference: ${fmt(suggestion.difference)}`;
+
+  const isActionable = suggestion.invoices.length > 0 && suggestion.matchType !== "none";
+
+  return (
+    <div className={`payment-smart-match payment-smart-match--${suggestion.matchType}`} role="region" aria-label="Suggested match">
+      <p className="payment-smart-match-title">
+        {suggestion.matchType === "exact" || suggestion.matchType === "close"
+          ? "Suggested Match"
+          : "No Exact Match Found"}
+      </p>
+
+      {suggestion.invoices.length === 0 ? (
+        <p className="invoice-status-muted">No unpaid invoices found.</p>
+      ) : (
+        <>
+          <ul className="payment-smart-match-list">
+            {suggestion.invoices.map((inv) => (
+              <li key={inv.google_event_id} className="payment-smart-match-item">
+                <span className="payment-smart-match-label">
+                  {invoiceLabel(inv)}
+                  {inv.la_number ? ` — LA Job #${inv.la_number}` : ""}
+                </span>
+                <span className="payment-smart-match-amount">{fmt(getInvoiceRemainingBalance(inv))}</span>
+              </li>
+            ))}
+          </ul>
+
+          <div className="payment-smart-match-summary">
+            <div className="payment-smart-match-row">
+              <span>Total selected</span>
+              <span>{fmt(suggestion.totalBalance)}</span>
+            </div>
+            <div className="payment-smart-match-row">
+              <span>Deposit amount</span>
+              <span>{fmt(paymentAmount)}</span>
+            </div>
+            <div className={`payment-smart-match-row payment-smart-match-diff payment-smart-match-diff--${suggestion.matchType}`}>
+              <span>Difference</span>
+              <span>{fmt(suggestion.difference)}  {diffLabel}</span>
+            </div>
+          </div>
+
+          {applyError ? <p className="invoice-error" role="alert">{applyError}</p> : null}
+
+          {isActionable ? (
+            <div className="payment-smart-match-actions">
+              <button
+                type="button"
+                className="invoice-complete-button"
+                onClick={onApply}
+                disabled={applying}
+              >
+                {applying ? "Applying…" : "Apply Suggested Match"}
+              </button>
+              <button
+                type="button"
+                className="invoice-sync-button"
+                onClick={onDismiss}
+                disabled={applying}
+              >
+                Manually Select Invoices
+              </button>
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BatchDetail
 // ---------------------------------------------------------------------------
 
 interface BatchDetailProps {
-  batch: BatchSummary;
+  batch:     BatchSummary;
   onUpdated: (b: BatchSummary) => void;
   onDeleted: (id: string) => void;
 }
 
 function BatchDetail({ batch, onUpdated, onDeleted }: BatchDetailProps) {
-  const [allocations, setAllocations] = useState<PaymentAllocation[]>([]);
-  const [invoiceOptions, setInvoiceOptions] = useState<InvoiceOption[]>([]);
-  const [loadingAllocs, setLoadingAllocs] = useState(true);
+  const [allocations,     setAllocations]    = useState<PaymentAllocation[]>([]);
+  const [invoiceOptions,  setInvoiceOptions] = useState<InvoiceOption[]>([]);
+  const [loadingAllocs,   setLoadingAllocs]  = useState(true);
   const [selectedEventId, setSelectedEventId] = useState("");
-  const [allocAmount, setAllocAmount] = useState("");
-  const [allocError, setAllocError] = useState<string | null>(null);
-  const [addingAlloc, setAddingAlloc] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [allocAmount,     setAllocAmount]    = useState("");
+  const [allocError,      setAllocError]     = useState<string | null>(null);
+  const [addingAlloc,     setAddingAlloc]    = useState(false);
+  const [deleting,        setDeleting]       = useState(false);
 
-  const allocated = allocations.reduce((s, a) => s + a.allocated_amount, 0);
+  // Smart match state
+  const [suggestion,    setSuggestion]    = useState<MatchSuggestion | null>(null);
+  const [showMatch,     setShowMatch]     = useState(true);
+  const [applyingMatch, setApplyingMatch] = useState(false);
+  const [matchApplyErr, setMatchApplyErr] = useState<string | null>(null);
+  const manualSectionRef = useRef<HTMLDivElement>(null);
+
+  const allocated   = allocations.reduce((s, a) => s + a.allocated_amount, 0);
   const unallocated = Math.max(0, batch.amount - allocated);
 
   async function loadAllocations() {
     setLoadingAllocs(true);
     try {
       const res = await fetch(`/api/payments/${batch.id}/allocations`, {
-        headers: authHeaders(),
-        credentials: "same-origin",
+        headers: authHeaders(), credentials: "same-origin",
       });
       if (res.ok) {
         const json = await res.json() as { allocations: PaymentAllocation[] };
@@ -133,12 +238,10 @@ function BatchDetail({ batch, onUpdated, onDeleted }: BatchDetailProps) {
   }
 
   async function loadInvoiceOptions() {
-    // Fetch all invoice data from the invoice list endpoint
     try {
       const res = await fetch("/api/invoice/list", { headers: authHeaders(), credentials: "same-origin" });
       if (res.ok) {
         const json = await res.json() as { invoices?: InvoiceOption[] };
-        // Filter to invoices that have a PDF and are not void/paid
         const eligible = (json.invoices ?? []).filter(
           (inv) => inv.invoice_total != null && !["paid", "void"].includes(inv.invoice_status),
         );
@@ -150,7 +253,69 @@ function BatchDetail({ batch, onUpdated, onDeleted }: BatchDetailProps) {
   useEffect(() => {
     void loadAllocations();
     void loadInvoiceOptions();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batch.id]);
+
+  // Run smart match whenever invoice options or allocations change.
+  useEffect(() => {
+    if (invoiceOptions.length === 0) return;
+    if (unallocated < 0.005) { setSuggestion(null); return; }
+
+    // Exclude invoices already allocated to this batch
+    const allocatedEventIds = new Set(allocations.map((a) => a.google_event_id));
+    const candidates = invoiceOptions.filter((inv) => !allocatedEventIds.has(inv.google_event_id));
+
+    const results = findPaymentMatches(unallocated, candidates);
+    setSuggestion(results[0] ?? null);
+    setShowMatch(true);
+    setMatchApplyErr(null);
+  }, [invoiceOptions, allocations, unallocated]);
+
+  async function handleApplyMatch() {
+    if (!suggestion || suggestion.invoices.length === 0) return;
+    setApplyingMatch(true);
+    setMatchApplyErr(null);
+
+    try {
+      for (const inv of suggestion.invoices) {
+        const allocAmt = getInvoiceRemainingBalance(inv);
+        if (allocAmt <= 0 || !inv.invoice_total) continue;
+
+        const res = await fetch(`/api/payments/${batch.id}/allocations`, {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "same-origin",
+          body: JSON.stringify({
+            google_event_id:  inv.google_event_id,
+            allocated_amount: allocAmt,
+            invoice_total:    inv.invoice_total,
+          }),
+        });
+
+        if (!res.ok) {
+          const json = await res.json() as { error?: string; detail?: string };
+          throw new Error(json.detail ?? json.error ?? `Failed to allocate ${invoiceLabel(inv)}`);
+        }
+      }
+
+      // Reload allocations to reflect server-confirmed state
+      await loadAllocations();
+      const newAllocatedTotal = suggestion.invoices.reduce(
+        (s, inv) => s + getInvoiceRemainingBalance(inv),
+        allocated,
+      );
+      onUpdated({
+        ...batch,
+        allocatedTotal:   Math.min(batch.amount, newAllocatedTotal),
+        unallocatedTotal: Math.max(0, batch.amount - newAllocatedTotal),
+      });
+      setSuggestion(null);
+    } catch (err) {
+      setMatchApplyErr(err instanceof Error ? err.message : "Failed to apply match");
+    } finally {
+      setApplyingMatch(false);
+    }
+  }
 
   async function handleAddAllocation() {
     setAllocError(null);
@@ -178,7 +343,6 @@ function BatchDetail({ batch, onUpdated, onDeleted }: BatchDetailProps) {
       if (json.allocation) setAllocations((prev) => [...prev, json.allocation!]);
       setAllocAmount("");
       setSelectedEventId("");
-      // Update parent batch summary
       const newAllocated = allocations.reduce((s, a) => s + a.allocated_amount, 0) + amount;
       onUpdated({ ...batch, allocatedTotal: newAllocated, unallocatedTotal: Math.max(0, batch.amount - newAllocated) });
     } catch {
@@ -216,9 +380,7 @@ function BatchDetail({ batch, onUpdated, onDeleted }: BatchDetailProps) {
     setDeleting(true);
     try {
       const res = await fetch(`/api/payments/${batch.id}`, {
-        method: "DELETE",
-        headers: authHeaders(),
-        credentials: "same-origin",
+        method: "DELETE", headers: authHeaders(), credentials: "same-origin",
       });
       if (res.ok) onDeleted(batch.id);
     } catch { /* non-fatal */ } finally {
@@ -227,7 +389,7 @@ function BatchDetail({ batch, onUpdated, onDeleted }: BatchDetailProps) {
   }
 
   const selectedOption = invoiceOptions.find((o) => o.google_event_id === selectedEventId);
-  const balanceStatus = unallocated < 0.005 ? "balanced" : unallocated < batch.amount ? "partial" : "unallocated";
+  const balanceStatus  = unallocated < 0.005 ? "balanced" : unallocated < batch.amount ? "partial" : "unallocated";
 
   return (
     <div className="payment-batch-detail">
@@ -259,8 +421,23 @@ function BatchDetail({ batch, onUpdated, onDeleted }: BatchDetailProps) {
         <p className="invoice-status-muted">No allocations yet.</p>
       )}
 
-      {/* Add allocation form */}
-      <div className="payment-add-allocation">
+      {/* Smart match panel */}
+      {showMatch && suggestion && unallocated > 0.005 ? (
+        <SmartMatchPanel
+          suggestion={suggestion}
+          paymentAmount={unallocated}
+          applying={applyingMatch}
+          applyError={matchApplyErr}
+          onApply={() => { void handleApplyMatch(); }}
+          onDismiss={() => {
+            setShowMatch(false);
+            setTimeout(() => manualSectionRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+          }}
+        />
+      ) : null}
+
+      {/* Manual allocation form */}
+      <div className="payment-add-allocation" ref={manualSectionRef}>
         <p className="invoice-block-label">Apply to Invoice</p>
         {allocError ? <p className="invoice-error" role="alert">{allocError}</p> : null}
         <div className="payment-add-alloc-fields">
@@ -269,25 +446,19 @@ function BatchDetail({ batch, onUpdated, onDeleted }: BatchDetailProps) {
             value={selectedEventId}
             onChange={(e) => {
               setSelectedEventId(e.target.value);
-              // Pre-fill amount from invoice remaining balance
               const opt = invoiceOptions.find((o) => o.google_event_id === e.target.value);
               if (opt) {
-                const suggested = opt.remaining_balance ?? opt.invoice_total ?? 0;
+                const suggested = getInvoiceRemainingBalance(opt);
                 setAllocAmount(suggested > 0 ? String(suggested) : "");
               }
             }}
           >
             <option value="">— Select invoice —</option>
             {invoiceOptions.map((opt) => {
-              const label = opt.invoice_number
-                ? `#${opt.invoice_number}`
-                : opt.la_number
-                  ? `LA# ${opt.la_number}`
-                  : opt.google_event_id.slice(0, 8);
-              const balance = opt.remaining_balance ?? opt.invoice_total ?? 0;
+              const balance = getInvoiceRemainingBalance(opt);
               return (
                 <option key={opt.google_event_id} value={opt.google_event_id}>
-                  {label} — {fmt(balance)} remaining
+                  {invoiceLabel(opt)}{opt.la_number ? ` — LA Job #${opt.la_number}` : ""} — {fmt(balance)} remaining
                 </option>
               );
             })}
@@ -301,9 +472,7 @@ function BatchDetail({ batch, onUpdated, onDeleted }: BatchDetailProps) {
               className="invoice-input-sm"
               value={allocAmount}
               onChange={(e) => setAllocAmount(e.target.value)}
-              placeholder={selectedOption
-                ? String(selectedOption.remaining_balance ?? selectedOption.invoice_total ?? "")
-                : "amount"}
+              placeholder={selectedOption ? String(getInvoiceRemainingBalance(selectedOption)) : "amount"}
             />
           </div>
           <button
@@ -334,20 +503,19 @@ function BatchDetail({ batch, onUpdated, onDeleted }: BatchDetailProps) {
 // ---------------------------------------------------------------------------
 
 export default function PaymentsPage() {
-  const [batches, setBatches] = useState<BatchSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [batches,    setBatches]    = useState<BatchSummary[]>([]);
+  const [loading,    setLoading]    = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Create batch form
   const [formReceivedDate, setFormReceivedDate] = useState("");
-  const [formAmount, setFormAmount] = useState("");
-  const [formMethod, setFormMethod] = useState("Direct Deposit");
-  const [formReference, setFormReference] = useState("");
-  const [formNotes, setFormNotes] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [showForm, setShowForm] = useState(false);
+  const [formAmount,       setFormAmount]       = useState("");
+  const [formMethod,       setFormMethod]       = useState("Direct Deposit");
+  const [formReference,    setFormReference]    = useState("");
+  const [formNotes,        setFormNotes]        = useState("");
+  const [formError,        setFormError]        = useState<string | null>(null);
+  const [creating,         setCreating]         = useState(false);
+  const [showForm,         setShowForm]         = useState(false);
 
   const loadBatches = useCallback(async () => {
     setLoading(true);
@@ -389,14 +557,13 @@ export default function PaymentsPage() {
       const json = await res.json() as { batch?: BatchSummary; error?: string; detail?: string };
       if (!res.ok) { setFormError(json.detail ?? json.error ?? "Failed to create"); return; }
       if (json.batch) {
-        const newBatch: BatchSummary = { ...json.batch, allocatedTotal: 0, unallocatedTotal: json.batch.amount, allocationCount: 0 };
+        const newBatch: BatchSummary = {
+          ...json.batch, allocatedTotal: 0, unallocatedTotal: json.batch.amount, allocationCount: 0,
+        };
         setBatches((prev) => [newBatch, ...prev]);
         setExpandedId(newBatch.id);
       }
-      setFormReceivedDate("");
-      setFormAmount("");
-      setFormReference("");
-      setFormNotes("");
+      setFormReceivedDate(""); setFormAmount(""); setFormReference(""); setFormNotes("");
       setShowForm(false);
     } catch {
       setFormError("Network error");
@@ -405,7 +572,7 @@ export default function PaymentsPage() {
     }
   }
 
-  const totalReceived = batches.reduce((s, b) => s + b.amount, 0);
+  const totalReceived  = batches.reduce((s, b) => s + b.amount, 0);
   const totalAllocated = batches.reduce((s, b) => s + b.allocatedTotal, 0);
 
   return (
@@ -415,7 +582,6 @@ export default function PaymentsPage() {
         <p className="admin-page-subtitle">Reconcile Light Action direct deposits across invoices</p>
       </div>
 
-      {/* Summary row */}
       {batches.length > 0 ? (
         <div className="payment-summary-row">
           <span>Total received: <strong>{fmt(totalReceived)}</strong></span>
@@ -428,14 +594,9 @@ export default function PaymentsPage() {
         </div>
       ) : null}
 
-      {/* Create batch form */}
       <div className="payment-create-section">
         {!showForm ? (
-          <button
-            type="button"
-            className="invoice-complete-button"
-            onClick={() => setShowForm(true)}
-          >
+          <button type="button" className="invoice-complete-button" onClick={() => setShowForm(true)}>
             + Record New Deposit
           </button>
         ) : (
@@ -445,40 +606,21 @@ export default function PaymentsPage() {
             <div className="payment-form-grid">
               <div className="payment-form-field">
                 <label className="invoice-label-sm" htmlFor="pm-date">Date Received</label>
-                <input
-                  id="pm-date"
-                  type="date"
-                  className="invoice-input-sm"
-                  value={formReceivedDate}
-                  onChange={(e) => setFormReceivedDate(e.target.value)}
-                  required
-                />
+                <input id="pm-date" type="date" className="invoice-input-sm" value={formReceivedDate}
+                  onChange={(e) => setFormReceivedDate(e.target.value)} required />
               </div>
               <div className="payment-form-field">
                 <label className="invoice-label-sm" htmlFor="pm-amount">Amount</label>
                 <div className="invoice-currency-field">
                   <span className="invoice-currency-prefix">$</span>
-                  <input
-                    id="pm-amount"
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    className="invoice-input-sm"
-                    value={formAmount}
-                    onChange={(e) => setFormAmount(e.target.value)}
-                    placeholder="0.00"
-                    required
-                  />
+                  <input id="pm-amount" type="number" min="0.01" step="0.01" className="invoice-input-sm"
+                    value={formAmount} onChange={(e) => setFormAmount(e.target.value)} placeholder="0.00" required />
                 </div>
               </div>
               <div className="payment-form-field">
                 <label className="invoice-label-sm" htmlFor="pm-method">Method</label>
-                <select
-                  id="pm-method"
-                  className="invoice-select"
-                  value={formMethod}
-                  onChange={(e) => setFormMethod(e.target.value)}
-                >
+                <select id="pm-method" className="invoice-select" value={formMethod}
+                  onChange={(e) => setFormMethod(e.target.value)}>
                   <option>Direct Deposit</option>
                   <option>Check</option>
                   <option>ACH</option>
@@ -488,40 +630,20 @@ export default function PaymentsPage() {
               </div>
               <div className="payment-form-field">
                 <label className="invoice-label-sm" htmlFor="pm-ref">Reference</label>
-                <input
-                  id="pm-ref"
-                  type="text"
-                  className="invoice-input-sm"
-                  value={formReference}
-                  onChange={(e) => setFormReference(e.target.value)}
-                  placeholder="bank ref, memo, etc."
-                />
+                <input id="pm-ref" type="text" className="invoice-input-sm" value={formReference}
+                  onChange={(e) => setFormReference(e.target.value)} placeholder="bank ref, memo, etc." />
               </div>
               <div className="payment-form-field payment-form-field--full">
                 <label className="invoice-label-sm" htmlFor="pm-notes">Notes</label>
-                <input
-                  id="pm-notes"
-                  type="text"
-                  className="invoice-input-sm"
-                  value={formNotes}
-                  onChange={(e) => setFormNotes(e.target.value)}
-                  placeholder="optional notes"
-                />
+                <input id="pm-notes" type="text" className="invoice-input-sm" value={formNotes}
+                  onChange={(e) => setFormNotes(e.target.value)} placeholder="optional notes" />
               </div>
             </div>
             <div className="invoice-sync-buttons">
-              <button
-                type="submit"
-                className="invoice-complete-button"
-                disabled={creating}
-              >
+              <button type="submit" className="invoice-complete-button" disabled={creating}>
                 {creating ? "Saving…" : "Save Batch"}
               </button>
-              <button
-                type="button"
-                className="invoice-sync-button"
-                onClick={() => setShowForm(false)}
-              >
+              <button type="button" className="invoice-sync-button" onClick={() => setShowForm(false)}>
                 Cancel
               </button>
             </div>
@@ -529,7 +651,6 @@ export default function PaymentsPage() {
         )}
       </div>
 
-      {/* Batch list */}
       {loading ? (
         <p className="invoice-status-muted">Loading…</p>
       ) : fetchError ? (
@@ -539,10 +660,8 @@ export default function PaymentsPage() {
       ) : (
         <div className="payment-batch-list">
           {batches.map((b) => {
-            const isExpanded = expandedId === b.id;
-            const balanceStatus =
-              b.unallocatedTotal < 0.005 ? "balanced" : b.allocatedTotal > 0 ? "partial" : "none";
-
+            const isExpanded    = expandedId === b.id;
+            const balanceStatus = b.unallocatedTotal < 0.005 ? "balanced" : b.allocatedTotal > 0 ? "partial" : "none";
             return (
               <div key={b.id} className={`payment-batch-card payment-batch-card--${balanceStatus}`}>
                 <button
@@ -566,10 +685,7 @@ export default function PaymentsPage() {
                   <BatchDetail
                     batch={b}
                     onUpdated={(updated) => setBatches((prev) => prev.map((x) => x.id === updated.id ? updated : x))}
-                    onDeleted={(id) => {
-                      setBatches((prev) => prev.filter((x) => x.id !== id));
-                      setExpandedId(null);
-                    }}
+                    onDeleted={(id) => { setBatches((prev) => prev.filter((x) => x.id !== id)); setExpandedId(null); }}
                   />
                 ) : null}
               </div>
