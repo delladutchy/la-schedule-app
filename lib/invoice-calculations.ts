@@ -12,9 +12,11 @@ import type {
   InvoiceData,
   InvoicePacket,
   MileageCalc,
+  MileageMode,
   SheetRow,
   WorkdayCalculated,
   WorkdayEntry,
+  WorkdayMileageCalc,
 } from "./invoice-types";
 
 const TIME_12_RE = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i;
@@ -68,6 +70,28 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** Deduction miles that apply per mode under the Light Action agreement. */
+export function getDefaultDeductionForMode(mode: MileageMode): number {
+  switch (mode) {
+    case "from_dewey":       return 30;
+    case "to_dewey":         return 30;
+    case "round_trip_dewey": return 60;
+    case "custom":           return 60; // user-editable; defaults to round-trip amount
+    default:                 return 0;
+  }
+}
+
+/** Calculate mileage for one workday. Returns null when no mileage is set or miles ≤ 0. */
+export function calculateWorkdayMileage(entry: WorkdayEntry): WorkdayMileageCalc | null {
+  const mode = entry.mileageMode;
+  if (!mode || mode === "none") return null;
+  const miles = entry.milesDriven;
+  if (!miles || miles <= 0) return null;
+  const deduction = entry.mileageDeduction ?? getDefaultDeductionForMode(mode);
+  const billableMiles = Math.max(0, miles - deduction);
+  return { date: entry.date, mode, milesDriven: miles, deduction, billableMiles };
+}
+
 /** Calculate mileage reimbursement. */
 export function calculateMileage(
   totalMiles: number,
@@ -112,9 +136,30 @@ export function calculateInvoicePacket(data: InvoiceData, gigSummary?: string): 
   const perDiemRate = data.per_diem_rate;
   const perDiemTotal = round2(perDiemQty * perDiemRate);
 
-  const mileage = data.total_miles != null && data.total_miles > 0
-    ? calculateMileage(data.total_miles, data.mileage_deduction_miles, data.mileage_rate)
-    : null;
+  // Per-day mileage takes precedence; fall back to legacy job-level total_miles.
+  const perDayMileage = data.workday_entries
+    .map(calculateWorkdayMileage)
+    .filter((m): m is WorkdayMileageCalc => m !== null);
+
+  let mileage: MileageCalc | null = null;
+  if (perDayMileage.length > 0) {
+    const totalMiles = perDayMileage.reduce((s, m) => s + m.milesDriven, 0);
+    const totalDeduction = perDayMileage.reduce((s, m) => s + m.deduction, 0);
+    const reimbursedMiles = perDayMileage.reduce((s, m) => s + m.billableMiles, 0);
+    const unreimbursedMiles = totalMiles - reimbursedMiles;
+    const rate = data.mileage_rate;
+    mileage = {
+      totalMiles,
+      deductionMiles: totalDeduction,
+      reimbursedMiles,
+      unreimbursedMiles,
+      mileageAmount: round2(reimbursedMiles * rate),
+      mileageAdjustmentAmount: totalDeduction > 0 ? round2(-totalDeduction * rate) : 0,
+      mileageRate: rate,
+    };
+  } else if (data.total_miles != null && data.total_miles > 0) {
+    mileage = calculateMileage(data.total_miles, data.mileage_deduction_miles, data.mileage_rate);
+  }
 
   const bagFees = data.bag_fees ?? 0;
   const hotel = data.hotel ?? 0;

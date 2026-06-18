@@ -11,11 +11,31 @@ export type InvoiceStatus =
   | "sent"
   | "paid";
 
-/** One worked day: manual start/end times entered by Jeff. */
+/** How mileage was driven for one workday. */
+export type MileageMode =
+  | "none"
+  | "from_dewey"       // one-way Dewey Beach → job; deduct 30 mi
+  | "to_dewey"         // one-way job → Dewey Beach; deduct 30 mi
+  | "round_trip_dewey" // both ways; deduct 60 mi
+  | "custom";          // user-entered miles + editable deduction
+
+/** One worked day: manual start/end times entered by Jeff, optional per-day mileage. */
 export interface WorkdayEntry {
-  date: string;       // YYYY-MM-DD
-  startTime: string;  // e.g. "8:00 AM"
-  endTime: string;    // e.g. "6:30 PM"
+  date: string;                        // YYYY-MM-DD
+  startTime: string;                   // e.g. "8:00 AM"
+  endTime: string;                     // e.g. "6:30 PM"
+  mileageMode?: MileageMode;           // undefined = none
+  milesDriven?: number | null;         // actual miles for this day
+  mileageDeduction?: number | null;    // override; null = use mode default
+}
+
+/** Per-day mileage calculation result. */
+export interface WorkdayMileageCalc {
+  date: string;
+  mode: MileageMode;
+  milesDriven: number;
+  deduction: number;
+  billableMiles: number;
 }
 
 /** Calculated result for a single workday. */

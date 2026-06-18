@@ -3,8 +3,13 @@ import {
   parseTimeToMinutes,
   calculateHours,
   calculateMileage,
+  calculateWorkdayMileage,
+  getDefaultDeductionForMode,
+  calculateInvoicePacket,
+  generateSheetRow,
   round2,
 } from "@/lib/invoice-calculations";
+import type { InvoiceData, WorkdayEntry } from "@/lib/invoice-types";
 
 describe("parseTimeToMinutes", () => {
   it("parses 8:00 AM", () => expect(parseTimeToMinutes("8:00 AM")).toBe(480));
@@ -96,5 +101,237 @@ describe("round2", () => {
   it("rounds to 2 decimal places", () => {
     expect(round2(187.200000001)).toBe(187.2);
     expect(round2(0.005)).toBe(0.01);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getDefaultDeductionForMode
+// ---------------------------------------------------------------------------
+
+describe("getDefaultDeductionForMode", () => {
+  it("from_dewey → 30 mi deduction", () => {
+    expect(getDefaultDeductionForMode("from_dewey")).toBe(30);
+  });
+  it("to_dewey → 30 mi deduction", () => {
+    expect(getDefaultDeductionForMode("to_dewey")).toBe(30);
+  });
+  it("round_trip_dewey → 60 mi deduction", () => {
+    expect(getDefaultDeductionForMode("round_trip_dewey")).toBe(60);
+  });
+  it("custom → 60 mi deduction (default)", () => {
+    expect(getDefaultDeductionForMode("custom")).toBe(60);
+  });
+  it("none → 0 mi deduction", () => {
+    expect(getDefaultDeductionForMode("none")).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// calculateWorkdayMileage
+// ---------------------------------------------------------------------------
+
+describe("calculateWorkdayMileage", () => {
+  it("returns null when mileageMode is none", () => {
+    const entry: WorkdayEntry = { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "none" };
+    expect(calculateWorkdayMileage(entry)).toBeNull();
+  });
+
+  it("returns null when mileageMode is undefined", () => {
+    const entry: WorkdayEntry = { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" };
+    expect(calculateWorkdayMileage(entry)).toBeNull();
+  });
+
+  it("returns null when milesDriven is 0", () => {
+    const entry: WorkdayEntry = { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "round_trip_dewey", milesDriven: 0 };
+    expect(calculateWorkdayMileage(entry)).toBeNull();
+  });
+
+  it("from_dewey: 80 mi driven → 50 billable (deduct 30)", () => {
+    const entry: WorkdayEntry = { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "from_dewey", milesDriven: 80 };
+    const result = calculateWorkdayMileage(entry);
+    expect(result).not.toBeNull();
+    expect(result!.deduction).toBe(30);
+    expect(result!.billableMiles).toBe(50);
+  });
+
+  it("to_dewey: 80 mi driven → 50 billable (deduct 30)", () => {
+    const entry: WorkdayEntry = { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "to_dewey", milesDriven: 80 };
+    const result = calculateWorkdayMileage(entry);
+    expect(result).not.toBeNull();
+    expect(result!.deduction).toBe(30);
+    expect(result!.billableMiles).toBe(50);
+  });
+
+  it("round_trip_dewey: 120 mi driven → 60 billable (deduct 60)", () => {
+    const entry: WorkdayEntry = { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "round_trip_dewey", milesDriven: 120 };
+    const result = calculateWorkdayMileage(entry);
+    expect(result).not.toBeNull();
+    expect(result!.deduction).toBe(60);
+    expect(result!.billableMiles).toBe(60);
+  });
+
+  it("custom: uses explicit mileageDeduction override", () => {
+    const entry: WorkdayEntry = { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "custom", milesDriven: 100, mileageDeduction: 20 };
+    const result = calculateWorkdayMileage(entry);
+    expect(result).not.toBeNull();
+    expect(result!.deduction).toBe(20);
+    expect(result!.billableMiles).toBe(80);
+  });
+
+  it("billable miles never goes below 0 (deduction > miles driven)", () => {
+    const entry: WorkdayEntry = { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "round_trip_dewey", milesDriven: 40 };
+    const result = calculateWorkdayMileage(entry);
+    expect(result).not.toBeNull();
+    expect(result!.billableMiles).toBe(0);
+  });
+
+  it("custom with null mileageDeduction falls back to mode default (60)", () => {
+    const entry: WorkdayEntry = { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "custom", milesDriven: 100, mileageDeduction: null };
+    const result = calculateWorkdayMileage(entry);
+    expect(result).not.toBeNull();
+    expect(result!.deduction).toBe(60);
+    expect(result!.billableMiles).toBe(40);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// calculateInvoicePacket — per-day mileage aggregation and legacy fallback
+// ---------------------------------------------------------------------------
+
+function makeInvoiceData(overrides: Partial<InvoiceData> = {}): InvoiceData {
+  return {
+    id: "test-id",
+    google_event_id: "evt-1",
+    la_number: "LA-2026-001",
+    invoice_status: "none",
+    client: "Test Client",
+    day_rate: 800,
+    per_diem_rate: 0,
+    overtime_rate: 100,
+    bag_fees: null,
+    hotel: null,
+    parking: null,
+    tolls: null,
+    uber: null,
+    other_expenses: null,
+    expense_notes: null,
+    job_address: null,
+    total_miles: null,
+    mileage_rate: 0.52,
+    mileage_deduction_miles: 60,
+    sheet_synced_at: null,
+    sheet_sync_error: null,
+    paid_date: null,
+    created_at: "2026-06-01T00:00:00Z",
+    updated_at: "2026-06-01T00:00:00Z",
+    workday_entries: [],
+    ...overrides,
+  };
+}
+
+describe("calculateInvoicePacket — per-day mileage aggregation", () => {
+  it("single day round_trip_dewey: sums correctly", () => {
+    const data = makeInvoiceData({
+      workday_entries: [
+        { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "round_trip_dewey", milesDriven: 120 },
+      ],
+    });
+    const p = calculateInvoicePacket(data);
+    expect(p.mileage).not.toBeNull();
+    expect(p.mileage!.totalMiles).toBe(120);
+    expect(p.mileage!.deductionMiles).toBe(60);
+    expect(p.mileage!.reimbursedMiles).toBe(60);
+    expect(p.mileage!.mileageAmount).toBeCloseTo(31.2);
+  });
+
+  it("multi-day mileage aggregates across all days", () => {
+    const data = makeInvoiceData({
+      workday_entries: [
+        { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "from_dewey", milesDriven: 80 },
+        { date: "2026-06-02", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "to_dewey", milesDriven: 80 },
+      ],
+    });
+    const p = calculateInvoicePacket(data);
+    expect(p.mileage).not.toBeNull();
+    expect(p.mileage!.totalMiles).toBe(160);
+    expect(p.mileage!.deductionMiles).toBe(60); // 30 + 30
+    expect(p.mileage!.reimbursedMiles).toBe(100); // 50 + 50
+    expect(p.mileage!.unreimbursedMiles).toBe(60);
+  });
+
+  it("billable miles sum never below 0 across multiple days", () => {
+    const data = makeInvoiceData({
+      workday_entries: [
+        { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "round_trip_dewey", milesDriven: 20 }, // 0 billable
+        { date: "2026-06-02", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "round_trip_dewey", milesDriven: 20 }, // 0 billable
+      ],
+    });
+    const p = calculateInvoicePacket(data);
+    expect(p.mileage!.reimbursedMiles).toBe(0);
+    expect(p.mileage!.mileageAmount).toBe(0);
+  });
+
+  it("no per-day mileage + no total_miles → mileage is null", () => {
+    const data = makeInvoiceData({
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    expect(p.mileage).toBeNull();
+  });
+
+  it("legacy fallback: uses total_miles when no per-day mileage set", () => {
+    const data = makeInvoiceData({
+      total_miles: 420,
+      mileage_deduction_miles: 60,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    expect(p.mileage).not.toBeNull();
+    expect(p.mileage!.totalMiles).toBe(420);
+    expect(p.mileage!.reimbursedMiles).toBe(360);
+    expect(p.mileage!.mileageAmount).toBeCloseTo(187.2);
+  });
+
+  it("per-day mileage takes precedence over legacy total_miles", () => {
+    const data = makeInvoiceData({
+      total_miles: 999,
+      workday_entries: [
+        { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "round_trip_dewey", milesDriven: 120 },
+      ],
+    });
+    const p = calculateInvoicePacket(data);
+    expect(p.mileage!.totalMiles).toBe(120); // per-day wins
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateSheetRow — mileage columns
+// ---------------------------------------------------------------------------
+
+describe("generateSheetRow — mileage columns", () => {
+  it("exports totalBusinessMiles, laPaidMiles, unreimbursedMiles, mileagePaid correctly", () => {
+    const data = makeInvoiceData({
+      workday_entries: [
+        { date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM", mileageMode: "round_trip_dewey", milesDriven: 120 },
+      ],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "Test Gig");
+    expect(row.totalBusinessMiles).toBe(120);
+    expect(row.laPaidMiles).toBe(60);
+    expect(row.unreimbursedMiles).toBe(60);
+    expect(row.mileagePaid).toBeCloseTo(31.2);
+  });
+
+  it("all mileage sheet columns are 0 when no mileage set", () => {
+    const data = makeInvoiceData({
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "Test Gig");
+    expect(row.totalBusinessMiles).toBe(0);
+    expect(row.laPaidMiles).toBe(0);
+    expect(row.unreimbursedMiles).toBe(0);
+    expect(row.mileagePaid).toBe(0);
   });
 });

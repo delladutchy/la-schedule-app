@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { InvoiceData, InvoicePacket, WorkdayEntry } from "@/lib/invoice-types";
+import type { InvoiceData, InvoicePacket, MileageMode, WorkdayEntry } from "@/lib/invoice-types";
+import {
+  calculateWorkdayMileage,
+  getDefaultDeductionForMode,
+  round2,
+} from "@/lib/invoice-calculations";
 
 // ---------------------------------------------------------------------------
 // Time dropdown helpers
@@ -57,6 +62,20 @@ export function snapUtcToTimeOption(utcIso: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Mileage mode labels
+// ---------------------------------------------------------------------------
+
+const MODE_LABELS: Record<MileageMode, string> = {
+  none:             "None",
+  from_dewey:       "From Dewey",
+  to_dewey:         "To Dewey",
+  round_trip_dewey: "Round Trip",
+  custom:           "Custom",
+};
+
+const ACTIVE_MODES: MileageMode[] = ["from_dewey", "to_dewey", "round_trip_dewey", "custom"];
+
+// ---------------------------------------------------------------------------
 // Types for local state
 // ---------------------------------------------------------------------------
 
@@ -80,8 +99,9 @@ interface ExpenseFields {
   expense_notes: string;
 }
 
-interface MileageFields {
-  total_miles: string;
+interface AutoMileage {
+  oneWayMiles: number;
+  roundTripMiles: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,8 +113,8 @@ interface Props {
   workDates: string[];
   gigSummary: string;
   editorToken: string | null;
-  defaultStartTime?: string; // snapped 12h time from job startUtc, e.g. "8:00 AM"
-  defaultEndTime?: string;   // snapped 12h time from job endUtc, e.g. "6:00 PM"
+  defaultStartTime?: string; // snapped 12h time from job startUtc
+  defaultEndTime?: string;   // snapped 12h time from job endUtc
   jobLocation?: string;      // Google Calendar location field
 }
 
@@ -117,12 +137,54 @@ interface WorkdayRowProps {
   workdays: InvoicePacket["workdays"];
   index: number;
   onChange: (index: number, patch: Partial<WorkdayEntry>) => void;
+  autoMileage: AutoMileage | null;
+  mileageRate: number;
 }
 
-function WorkdayRow({ entry, workdays, index, onChange }: WorkdayRowProps) {
+function WorkdayRow({ entry, workdays, index, onChange, autoMileage, mileageRate }: WorkdayRowProps) {
   const calc = workdays[index];
   const totalH = calc ? fmtHours(calc.totalHours) : "—";
   const otH = calc && calc.overtimeHours > 0 ? fmtHours(calc.overtimeHours) : "0";
+
+  const mode: MileageMode = entry.mileageMode ?? "none";
+  const milesDriven = entry.milesDriven ?? 0;
+  const effectiveDeduction = entry.mileageDeduction ?? getDefaultDeductionForMode(mode);
+  const mileCalc = calculateWorkdayMileage(entry);
+
+  // Open by default when mode is already set (e.g. loaded from DB).
+  const [mileageOpen, setMileageOpen] = useState(mode !== "none");
+
+  // Sync open state when mode changes externally (e.g. after save round-trip).
+  const prevMode = useRef(mode);
+  if (prevMode.current !== mode) {
+    prevMode.current = mode;
+    // Don't close if user just removed mileage — handled by setMode("none")
+  }
+
+  function setMode(newMode: MileageMode) {
+    if (newMode === "none") {
+      onChange(index, { mileageMode: "none", milesDriven: null, mileageDeduction: null });
+      setMileageOpen(false);
+      return;
+    }
+    // Auto-fill miles from cached API result based on mode
+    let autoMiles: number | null = null;
+    if (autoMileage) {
+      if (newMode === "from_dewey" || newMode === "to_dewey") {
+        autoMiles = autoMileage.oneWayMiles;
+      } else if (newMode === "round_trip_dewey") {
+        autoMiles = autoMileage.roundTripMiles;
+      }
+      // custom: leave blank for manual entry
+    }
+    onChange(index, {
+      mileageMode: newMode,
+      milesDriven: autoMiles ?? (entry.milesDriven ?? null),
+      mileageDeduction: null, // reset to mode default when switching modes
+    });
+  }
+
+  const hasMileageData = mode !== "none" && milesDriven > 0;
 
   return (
     <div className="invoice-workday-row">
@@ -167,6 +229,110 @@ function WorkdayRow({ entry, workdays, index, onChange }: WorkdayRowProps) {
           </span>
         </div>
       </div>
+
+      {/* ── Per-day mileage ────────────────────────────────────── */}
+      <div className="invoice-workday-mileage">
+        {/* Collapsed state */}
+        {!mileageOpen ? (
+          hasMileageData ? (
+            <button
+              type="button"
+              className="invoice-mileage-summary-btn"
+              onClick={() => setMileageOpen(true)}
+            >
+              {MODE_LABELS[mode]} — {milesDriven} mi
+              <span className="invoice-mileage-summary-edit">edit</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="invoice-mileage-add-btn"
+              onClick={() => setMileageOpen(true)}
+            >
+              + Add Mileage
+            </button>
+          )
+        ) : (
+          /* Expanded state */
+          <div className="invoice-mileage-editor">
+            {/* Mode selector buttons */}
+            <div className="invoice-mileage-modes">
+              {ACTIVE_MODES.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`invoice-mileage-mode-btn${mode === m ? " invoice-mileage-mode-btn--active" : ""}`}
+                  onClick={() => setMode(m)}
+                >
+                  {MODE_LABELS[m]}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="invoice-mileage-remove-btn"
+                onClick={() => setMode("none")}
+                aria-label="Remove mileage"
+              >
+                ✕
+              </button>
+            </div>
+
+            {mode !== "none" ? (
+              <div className="invoice-mileage-fields">
+                <div className="invoice-mileage-field-row">
+                  <label className="invoice-label-sm" htmlFor={`inv-miles-${index}`}>Miles</label>
+                  <input
+                    id={`inv-miles-${index}`}
+                    type="number"
+                    min="0"
+                    step="1"
+                    className="invoice-input-sm invoice-input-miles"
+                    value={milesDriven || ""}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      onChange(index, { milesDriven: isNaN(val) ? null : val });
+                    }}
+                    placeholder={autoMileage ? "auto" : "0"}
+                  />
+                </div>
+                <div className="invoice-mileage-field-row">
+                  <label className="invoice-label-sm" htmlFor={`inv-deduction-${index}`}>
+                    Deduction
+                  </label>
+                  <input
+                    id={`inv-deduction-${index}`}
+                    type="number"
+                    min="0"
+                    step="1"
+                    className="invoice-input-sm invoice-input-miles"
+                    value={effectiveDeduction}
+                    readOnly={mode !== "custom"}
+                    onChange={(e) => {
+                      if (mode !== "custom") return;
+                      const val = parseFloat(e.target.value);
+                      onChange(index, { mileageDeduction: isNaN(val) ? null : val });
+                    }}
+                  />
+                </div>
+                {mileCalc && mileCalc.milesDriven > 0 ? (
+                  <div className="invoice-mileage-day-preview">
+                    <span>Billable: {mileCalc.billableMiles} mi</span>
+                    <span>Net: {fmtCurrency(round2(mileCalc.billableMiles * mileageRate))}</span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              className="invoice-mileage-done-btn"
+              onClick={() => setMileageOpen(false)}
+            >
+              Done
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -198,15 +364,13 @@ export function InvoiceSection({
     expense_notes: "",
   });
   const [expensesExpanded, setExpensesExpanded] = useState(false);
-  const [mileage, setMileage] = useState<MileageFields>({ total_miles: "" });
+  const [autoMileage, setAutoMileage] = useState<AutoMileage | null>(null);
   const [syncState, setSyncState] = useState<SyncState>({ status: "idle", message: null, syncedAt: null });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isMarkingComplete, setIsMarkingComplete] = useState(false);
 
-  // Debounce save timer
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const requestKey = `${eventId}::${workDates.join("|")}`;
 
   // Fetch existing invoice data on mount / key change
@@ -235,8 +399,7 @@ export function InvoiceSection({
         if (data) {
           setInvoiceData(data);
           setPacket(json.packet);
-          const entries = initWorkdayEntries(data.workday_entries, workDates, defaultStartTime, defaultEndTime);
-          setWorkdayEntries(entries);
+          setWorkdayEntries(initWorkdayEntries(data.workday_entries, workDates, defaultStartTime, defaultEndTime));
           const exp: ExpenseFields = {
             bag_fees: data.bag_fees != null ? String(data.bag_fees) : "",
             hotel: data.hotel != null ? String(data.hotel) : "",
@@ -252,25 +415,15 @@ export function InvoiceSection({
             data.tolls != null || data.uber != null || data.other_expenses != null ||
             (data.expense_notes != null && data.expense_notes.trim() !== ""),
           );
-          setMileage({ total_miles: data.total_miles != null ? String(data.total_miles) : "" });
           if (data.sheet_synced_at) {
             setSyncState({ status: "success", message: null, syncedAt: data.sheet_synced_at });
           } else if (data.sheet_sync_error) {
             setSyncState({ status: "error", message: "Sheet sync failed — retry", syncedAt: null });
           }
-          // Auto-fetch mileage if none saved and job location is known
-          if (data.total_miles == null && jobLocation) {
-            fetchAutoMileage(jobLocation, editorToken);
-          }
         } else {
-          // No existing data — initialize from work dates with auto-fill defaults
-          const entries = initWorkdayEntries([], workDates, defaultStartTime, defaultEndTime);
-          setWorkdayEntries(entries);
+          setWorkdayEntries(initWorkdayEntries([], workDates, defaultStartTime, defaultEndTime));
           setInvoiceData(null);
           setPacket(null);
-          if (jobLocation) {
-            fetchAutoMileage(jobLocation, editorToken);
-          }
         }
         setFetchState({ status: "ready" });
       })
@@ -281,23 +434,24 @@ export function InvoiceSection({
     return () => { cancelled = true; };
   }, [requestKey]);
 
-  function fetchAutoMileage(location: string, token: string | null) {
+  // Fetch mileage distance once when jobLocation is known
+  useEffect(() => {
+    if (!jobLocation) return;
     const headers: Record<string, string> = {};
-    if (token) headers.Authorization = `Bearer ${token}`;
-    fetch(`/api/invoice/mileage?location=${encodeURIComponent(location)}`, {
+    if (editorToken) headers.Authorization = `Bearer ${editorToken}`;
+    fetch(`/api/invoice/mileage?location=${encodeURIComponent(jobLocation)}`, {
       headers,
       credentials: "same-origin",
     })
       .then(async (res) => {
         if (!res.ok) return;
-        const json = await res.json() as { miles?: number };
-        if (typeof json.miles === "number" && json.miles > 0) {
-          setMileage({ total_miles: String(json.miles) });
-          void save({ total_miles: json.miles });
+        const json = await res.json() as { oneWayMiles?: number; roundTripMiles?: number };
+        if (typeof json.oneWayMiles === "number" && typeof json.roundTripMiles === "number") {
+          setAutoMileage({ oneWayMiles: json.oneWayMiles, roundTripMiles: json.roundTripMiles });
         }
       })
       .catch(() => { /* silently ignore — user can enter manually */ });
-  }
+  }, [jobLocation, editorToken]);
 
   function initWorkdayEntries(
     existing: WorkdayEntry[],
@@ -308,7 +462,7 @@ export function InvoiceSection({
     const map = new Map(existing.map((e) => [e.date, e]));
     return dates.map((date) => {
       const saved = map.get(date);
-      if (saved) return saved; // always use saved data, even if empty
+      if (saved) return saved;
       return { date, startTime: defaultStart ?? "", endTime: defaultEnd ?? "" };
     });
   }
@@ -327,10 +481,7 @@ export function InvoiceSection({
         credentials: "same-origin",
         body: JSON.stringify(patch),
       });
-      if (!res.ok) {
-        setSaveError("Could not save. Try again.");
-        return;
-      }
+      if (!res.ok) { setSaveError("Could not save. Try again."); return; }
       const json = await res.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
       setInvoiceData(json.invoiceData);
       setPacket(json.packet);
@@ -347,7 +498,7 @@ export function InvoiceSection({
   }
 
   // ---------------------------------------------------------------------------
-  // Workday change handlers
+  // Change handlers
   // ---------------------------------------------------------------------------
 
   function handleWorkdayChange(index: number, patch: Partial<WorkdayEntry>) {
@@ -355,10 +506,6 @@ export function InvoiceSection({
     setWorkdayEntries(updated);
     scheduleSave({ workday_entries: updated });
   }
-
-  // ---------------------------------------------------------------------------
-  // Expense handlers
-  // ---------------------------------------------------------------------------
 
   function handleExpenseChange(field: keyof ExpenseFields, value: string) {
     const updated = { ...expenses, [field]: value };
@@ -369,16 +516,6 @@ export function InvoiceSection({
       const num = parseFloat(value);
       scheduleSave({ [field]: value === "" || isNaN(num) ? null : num });
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Mileage handlers
-  // ---------------------------------------------------------------------------
-
-  function handleMileageChange(value: string) {
-    setMileage({ total_miles: value });
-    const num = parseFloat(value);
-    scheduleSave({ total_miles: value === "" || isNaN(num) ? null : num });
   }
 
   // ---------------------------------------------------------------------------
@@ -404,7 +541,7 @@ export function InvoiceSection({
         setSyncState({
           status: "error",
           message: json.message ?? "Sheet sync failed — retry",
-          syncedAt: prevSyncedAt, // preserve prior sync timestamp so button stays "Update"
+          syncedAt: prevSyncedAt,
         });
       }
     } catch {
@@ -412,21 +549,17 @@ export function InvoiceSection({
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Mark as Complete (sets invoice_status="ready" + auto-syncs)
-  // ---------------------------------------------------------------------------
-
   async function handleMarkComplete() {
     if (isMarkingComplete) return;
     setIsMarkingComplete(true);
     try {
       await save({ invoice_status: "ready" });
     } catch {
-      // status save failure is non-fatal; still try to sync
+      // non-fatal
     } finally {
       setIsMarkingComplete(false);
     }
-    void handleSyncSheet(); // fire non-blocking — failure must not block the status change
+    void handleSyncSheet();
   }
 
   // ---------------------------------------------------------------------------
@@ -441,7 +574,6 @@ export function InvoiceSection({
       </div>
     );
   }
-
   if (fetchState.status === "unavailable") {
     return (
       <div className="invoice-section">
@@ -450,7 +582,6 @@ export function InvoiceSection({
       </div>
     );
   }
-
   if (fetchState.status === "error") {
     return (
       <div className="invoice-section">
@@ -459,24 +590,12 @@ export function InvoiceSection({
       </div>
     );
   }
-
   if (workDates.length === 0) return null;
 
   const p = packet;
-  const mileageCalc = p?.mileage ?? null;
-  const totalMilesNum = parseFloat(mileage.total_miles);
-  const mileagePreviewMiles = !isNaN(totalMilesNum) && totalMilesNum > 0 ? totalMilesNum : null;
-  const deduction = invoiceData?.mileage_deduction_miles ?? 60;
+  const m = p?.mileage ?? null;
   const mileageRate = invoiceData?.mileage_rate ?? 0.52;
-
-  const previewMileageReimbursed = mileagePreviewMiles != null
-    ? Math.max(0, mileagePreviewMiles - deduction)
-    : (mileageCalc?.reimbursedMiles ?? 0);
-  const previewMileageAmount = previewMileageReimbursed * mileageRate;
-  const previewMileageAdjAmount = mileagePreviewMiles != null && mileagePreviewMiles > 0
-    ? -(deduction * mileageRate)
-    : 0;
-  const showMileage = mileagePreviewMiles != null && mileagePreviewMiles > 0;
+  const showMileage = m != null && m.totalMiles > 0;
 
   const syncedLabel = syncState.syncedAt
     ? (() => {
@@ -497,15 +616,21 @@ export function InvoiceSection({
     invoiceData?.invoice_status === "paid"
   );
 
+  // Check whether any per-day mileage is set (used for legacy warning)
+  const hasPerDayMileage = workdayEntries.some(
+    (e) => e.mileageMode && e.mileageMode !== "none",
+  );
+  const hasLegacyMileage = !hasPerDayMileage && (invoiceData?.total_miles ?? 0) > 0;
+
   return (
     <div className="invoice-section">
       <p className="board-day-modal-event-label">Invoice / Tracking</p>
 
       {saveError ? <p className="invoice-error" role="alert">{saveError}</p> : null}
 
-      {/* ── Work Dates / Hours ─────────────────────────────────── */}
+      {/* ── Work Dates / Hours + per-day mileage ─────────────────── */}
       <div className="invoice-block">
-        <p className="invoice-block-label">Work Dates / Hours</p>
+        <p className="invoice-block-label">Work Days</p>
         {workdayEntries.map((entry, i) => (
           <WorkdayRow
             key={entry.date}
@@ -513,9 +638,21 @@ export function InvoiceSection({
             workdays={p?.workdays ?? []}
             index={i}
             onChange={handleWorkdayChange}
+            autoMileage={autoMileage}
+            mileageRate={mileageRate}
           />
         ))}
       </div>
+
+      {/* Legacy total_miles notice (backward compat for old records) */}
+      {hasLegacyMileage ? (
+        <div className="invoice-block invoice-block--legacy">
+          <p className="invoice-block-label">Mileage (Legacy)</p>
+          <p className="invoice-legacy-note">
+            {invoiceData!.total_miles} mi from previous entry — use per-day mileage above to replace
+          </p>
+        </div>
+      ) : null}
 
       {/* ── Additional Expenses (collapsible) ──────────────────── */}
       <div className="invoice-block">
@@ -574,40 +711,6 @@ export function InvoiceSection({
         ) : null}
       </div>
 
-      {/* ── Mileage ────────────────────────────────────────────── */}
-      <div className="invoice-block">
-        <p className="invoice-block-label">Mileage</p>
-        <div className="invoice-mileage-row">
-          <label className="invoice-label-sm" htmlFor="inv-total-miles">Total Miles</label>
-          <input
-            id="inv-total-miles"
-            type="number"
-            min="0"
-            step="1"
-            className="invoice-input-sm invoice-input-miles"
-            value={mileage.total_miles}
-            onChange={(e) => handleMileageChange(e.target.value)}
-            placeholder="0"
-          />
-        </div>
-        {showMileage ? (
-          <div className="invoice-mileage-calc">
-            <div className="invoice-calc-row">
-              <span>Reimbursed miles</span>
-              <span>{previewMileageReimbursed.toFixed(0)}</span>
-            </div>
-            <div className="invoice-calc-row invoice-calc-row--note">
-              <span>Less 30 miles each way per agreement</span>
-              <span>{fmtCurrency(previewMileageAdjAmount)}</span>
-            </div>
-            <div className="invoice-calc-row">
-              <span>Mileage amount ({mileageRate}/mi)</span>
-              <span>{fmtCurrency(previewMileageAmount)}</span>
-            </div>
-          </div>
-        ) : null}
-      </div>
-
       {/* ── Invoice Preview ────────────────────────────────────── */}
       {p ? (
         <div className="invoice-block invoice-block--preview">
@@ -634,18 +737,20 @@ export function InvoiceSection({
                 <span className="invoice-preview-amount">{fmtCurrency(p.perDiemTotal)}</span>
               </div>
             ) : null}
-            {showMileage ? (
+            {showMileage && m ? (
               <>
                 <div className="invoice-preview-row">
                   <span>Mileage</span>
-                  <span className="invoice-preview-qty">{previewMileageReimbursed.toFixed(0)} mi × ${mileageRate}</span>
-                  <span className="invoice-preview-amount">{fmtCurrency(previewMileageAmount)}</span>
+                  <span className="invoice-preview-qty">{m.reimbursedMiles} mi × ${mileageRate}</span>
+                  <span className="invoice-preview-amount">{fmtCurrency(m.mileageAmount)}</span>
                 </div>
-                <div className="invoice-preview-row invoice-preview-row--adj">
-                  <span>Mileage Adjustment</span>
-                  <span className="invoice-preview-qty">–{deduction} mi × ${mileageRate}</span>
-                  <span className="invoice-preview-amount">{fmtCurrency(previewMileageAdjAmount)}</span>
-                </div>
+                {m.deductionMiles > 0 ? (
+                  <div className="invoice-preview-row invoice-preview-row--adj">
+                    <span>Mileage Adjustment</span>
+                    <span className="invoice-preview-qty">–{m.deductionMiles} mi × ${mileageRate}</span>
+                    <span className="invoice-preview-amount">{fmtCurrency(m.mileageAdjustmentAmount)}</span>
+                  </div>
+                ) : null}
               </>
             ) : null}
             {p.bagFees > 0 ? (
@@ -694,9 +799,7 @@ export function InvoiceSection({
 
       {/* ── Sheet Sync ─────────────────────────────────────────── */}
       <div className="invoice-sync-row">
-        {isSaving ? (
-          <span className="invoice-saving-indicator">Saving…</span>
-        ) : null}
+        {isSaving ? <span className="invoice-saving-indicator">Saving…</span> : null}
         {syncState.status === "success" && syncedLabel ? (
           <p className="invoice-sync-success">Sheet synced {syncedLabel}</p>
         ) : syncState.status === "error" ? (

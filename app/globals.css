@@ -4945,37 +4945,153 @@ html.modal-open body {
   box-sizing: border-box;
 }
 
-/* Mileage */
-.invoice-mileage-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
+/* Per-day mileage */
+.invoice-workday-mileage {
+  margin-top: 8px;
 }
 
-.invoice-mileage-row .invoice-input-sm {
+.invoice-mileage-add-btn {
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.invoice-mileage-add-btn:hover {
+  color: var(--accent, #2563eb);
+  border-color: var(--accent, #2563eb);
+}
+
+.invoice-mileage-summary-btn {
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface-dim, rgba(0,0,0,0.04));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.invoice-mileage-summary-edit {
+  font-size: 0.72rem;
+  color: var(--accent, #2563eb);
+  font-weight: 500;
+}
+
+.invoice-mileage-editor {
+  background: var(--surface-dim, rgba(0,0,0,0.03));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.invoice-mileage-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.invoice-mileage-mode-btn {
+  font-size: 0.78rem;
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.invoice-mileage-mode-btn--active {
+  background: var(--accent, #2563eb);
+  color: #fff;
+  border-color: var(--accent, #2563eb);
+}
+
+.invoice-mileage-remove-btn {
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+  margin-left: auto;
+  transition: color 0.15s;
+}
+
+.invoice-mileage-remove-btn:hover {
+  color: #c0392b;
+  border-color: #c0392b;
+}
+
+.invoice-mileage-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.invoice-mileage-field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.invoice-mileage-field-row .invoice-input-sm {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
 
-.invoice-mileage-calc {
-  background: var(--surface-dim, rgba(0,0,0,0.04));
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  font-size: 0.8rem;
-}
-
-.invoice-calc-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 2px 0;
+.invoice-mileage-day-preview {
+  font-size: 0.78rem;
   color: var(--text-muted);
+  display: flex;
+  gap: 12px;
+  align-self: flex-end;
+  padding-bottom: 4px;
 }
 
-.invoice-calc-row--note {
-  font-style: italic;
+.invoice-mileage-done-btn {
   font-size: 0.75rem;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline;
+  width: fit-content;
+}
+
+/* Legacy mileage notice */
+.invoice-block--legacy {
+  border-color: var(--border);
+  background: var(--surface-dim, rgba(0,0,0,0.03));
+}
+
+.invoice-legacy-note {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 0;
 }
 
 /* Invoice preview */

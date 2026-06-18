@@ -39,8 +39,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "no_route_found" }, { status: 404 });
     }
 
-    const roundTripMiles = Math.round((element.distance.value / METERS_PER_MILE) * 2);
-    return NextResponse.json({ miles: roundTripMiles });
+    const oneWayMiles = Math.round(element.distance.value / METERS_PER_MILE);
+    const roundTripMiles = oneWayMiles * 2;
+    return NextResponse.json({ oneWayMiles, roundTripMiles });
   } catch {
     return NextResponse.json({ error: "calculation_failed" }, { status: 500 });
   }
