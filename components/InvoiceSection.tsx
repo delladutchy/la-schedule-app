@@ -1104,6 +1104,11 @@ export function InvoiceSection({
   const invoiceTotal = invoiceData?.invoice_total ?? null;
   const amountPaid = invoiceData?.amount_paid ?? 0;
   const remainingBalance = invoiceData?.remaining_balance ?? null;
+  const displayedInvoiceTotal = invoiceTotal ?? p?.estimatedTotal ?? null;
+  const displayedBalanceDue = remainingBalance ?? (
+    displayedInvoiceTotal != null ? Math.max(displayedInvoiceTotal - amountPaid, 0) : null
+  );
+  const invoiceStatusLabel = currentStatus ? INVOICE_STATUS_LABELS[currentStatus] : "Not sent";
 
   // Per-day mileage is the source of truth. Legacy total_miles only matters when
   // no per-day mileage has been entered yet.
@@ -1318,13 +1323,36 @@ export function InvoiceSection({
           {hasPdf ? (
             // PDF exists — show actions
             <div className="invoice-pdf-actions">
-              <div className="invoice-pdf-number-block">
-                {invoiceNumber ? (
-                  <p className="invoice-pdf-number">Invoice #{invoiceNumber}</p>
-                ) : null}
-                {laNumber ? (
-                  <p className="invoice-pdf-la-number">LA Job #{laNumber}</p>
-                ) : null}
+              <div className="invoice-status-card">
+                <div className="invoice-status-card-header">
+                  <div>
+                    <p className="invoice-pdf-number">Invoice #{invoiceNumber ?? "—"}</p>
+                    {laNumber ? (
+                      <p className="invoice-pdf-la-number">LA Job #{laNumber}</p>
+                    ) : null}
+                  </div>
+                  <span className="invoice-status-pill" data-status={currentStatus ?? "draft"}>
+                    {invoiceStatusLabel}
+                  </span>
+                </div>
+                <dl className="invoice-status-grid">
+                  <div className="invoice-status-grid-row">
+                    <dt>Status</dt>
+                    <dd>{invoiceStatusLabel}</dd>
+                  </div>
+                  <div className="invoice-status-grid-row">
+                    <dt>Total</dt>
+                    <dd>{displayedInvoiceTotal != null ? fmtCurrency(displayedInvoiceTotal) : "—"}</dd>
+                  </div>
+                  <div className="invoice-status-grid-row">
+                    <dt>Amount Paid</dt>
+                    <dd>{fmtCurrency(amountPaid)}</dd>
+                  </div>
+                  <div className="invoice-status-grid-row invoice-status-grid-row--balance">
+                    <dt>Balance Due</dt>
+                    <dd>{displayedBalanceDue != null ? fmtCurrency(displayedBalanceDue) : "—"}</dd>
+                  </div>
+                </dl>
               </div>
 
               {/* Convert legacy JU-style number to numeric */}
@@ -1342,28 +1370,6 @@ export function InvoiceSection({
                   </button>
                   {renumberState.error ? (
                     <p className="invoice-error" role="alert">{renumberState.error}</p>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {/* Status + payment summary */}
-              {currentStatus ? (
-                <p className="invoice-status-badge" data-status={currentStatus}>
-                  {INVOICE_STATUS_LABELS[currentStatus]}
-                  {hasPdf && invoiceTotal != null ? (
-                    <span className="invoice-status-total"> · {fmtCurrency(invoiceTotal)}</span>
-                  ) : null}
-                </p>
-              ) : null}
-              {invoiceTotal != null && (currentStatus === "sent" || currentStatus === "partially_paid" || currentStatus === "paid") ? (
-                <div className="invoice-payment-summary">
-                  {(currentStatus === "partially_paid" || currentStatus === "paid") ? (
-                    <span>Amount Paid: {fmtCurrency(amountPaid)}</span>
-                  ) : null}
-                  {currentStatus === "sent" ? (
-                    <span className="invoice-payment-remaining">Balance Due: {fmtCurrency(invoiceTotal)}</span>
-                  ) : currentStatus === "partially_paid" && remainingBalance != null ? (
-                    <span className="invoice-payment-remaining"> · Balance Due: {fmtCurrency(remainingBalance)}</span>
                   ) : null}
                 </div>
               ) : null}
@@ -1394,7 +1400,7 @@ export function InvoiceSection({
                     invoice_updated_at: pdfVersion,
                   })}
                 >
-                  Download
+                  Download PDF
                 </a>
                 {!emailDialog.open ? (
                   <button
@@ -1422,14 +1428,16 @@ export function InvoiceSection({
               ) : null}
 
               {/* Regenerate — secondary action below the PDF buttons */}
-              <button
-                type="button"
-                className="invoice-pdf-regen-btn"
-                onClick={() => { void handleCreatePdf(); }}
-                disabled={pdfState.status === "generating"}
-              >
-                {pdfState.status === "generating" ? "Regenerating…" : "Regenerate PDF"}
-              </button>
+              <div className="invoice-secondary-actions">
+                <button
+                  type="button"
+                  className="invoice-pdf-regen-btn"
+                  onClick={() => { void handleCreatePdf(); }}
+                  disabled={pdfState.status === "generating"}
+                >
+                  {pdfState.status === "generating" ? "Regenerating…" : "Regenerate PDF"}
+                </button>
+              </div>
             </div>
           ) : (
             // No PDF yet — primary CTA

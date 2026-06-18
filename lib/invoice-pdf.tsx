@@ -78,8 +78,8 @@ const styles = StyleSheet.create({
     fontFamily: "Helvetica",
     fontSize: 9,
     color: C.body,
-    paddingTop: 44,
-    paddingBottom: 44,
+    paddingTop: 50,
+    paddingBottom: 46,
     paddingHorizontal: 46,
     backgroundColor: C.white,
   },
@@ -89,52 +89,52 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 24,
+    marginBottom: 30,
   },
-  headerLeft: {
+  headerIdentity: {
     flexDirection: "column",
-    width: "70%",
+    width: 230,
+  },
+  headerContact: {
+    flexDirection: "column",
+    width: 150,
+    paddingTop: 31,
   },
   logo: {
-    width: 88,
+    width: 108,
   },
   invoiceWordmark: {
-    fontSize: 16,
+    fontSize: 17,
     fontFamily: "Helvetica-Bold",
     color: C.teal,
-    letterSpacing: 1.25,
-    marginBottom: 5,
+    letterSpacing: 1.45,
+    marginBottom: 7,
   },
   contractorName: {
     fontSize: 8.5,
     fontFamily: "Helvetica-Bold",
     color: C.black,
-    marginBottom: 1,
+    marginBottom: 1.5,
   },
   contractorTitle: {
     fontSize: 7.8,
     color: C.body,
-    marginBottom: 1,
+    marginBottom: 1.5,
   },
   contractorSub: {
     fontSize: 7.8,
     color: C.muted,
-    marginBottom: 1,
-  },
-  contractorColumns: {
-    flexDirection: "row",
-    marginTop: 2,
-  },
-  contractorColumn: {
-    width: 142,
+    marginBottom: 2,
   },
   headerRight: {
     alignItems: "flex-end",
+    width: 110,
+    marginTop: -8,
   },
   logoFallback: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+    width: 108,
+    height: 108,
+    borderRadius: 54,
     backgroundColor: C.infoBg,
     alignItems: "center",
     justifyContent: "center",
@@ -142,7 +142,7 @@ const styles = StyleSheet.create({
     borderColor: C.teal,
   },
   logoFallbackText: {
-    fontSize: 16,
+    fontSize: 18,
     fontFamily: "Helvetica-Bold",
     color: C.tealDark,
     textAlign: "center",
@@ -152,135 +152,138 @@ const styles = StyleSheet.create({
   infoPanel: {
     backgroundColor: C.infoBg,
     marginHorizontal: -46,
-    marginBottom: 24,
-    paddingTop: 22,
-    paddingBottom: 24,
+    marginBottom: 26,
+    paddingTop: 29,
+    paddingBottom: 32,
     paddingHorizontal: 46,
+    minHeight: 178,
   },
   infoTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "flex-start",
   },
   infoBlock: {
     flexDirection: "column",
-    width: "47.5%",
+    width: "46.8%",
   },
   infoLabel: {
     fontSize: 8,
     fontFamily: "Helvetica-Bold",
     color: C.dark,
-    marginBottom: 7,
+    marginBottom: 9,
   },
   infoPrimary: {
-    fontSize: 9.6,
+    fontSize: 10,
     color: C.black,
-    marginBottom: 3,
+    marginBottom: 4,
   },
   infoLine: {
-    fontSize: 9,
+    fontSize: 9.5,
     color: C.body,
-    marginBottom: 3,
+    marginBottom: 4,
   },
   detailRow: {
     flexDirection: "row",
-    marginBottom: 3.5,
+    marginBottom: 4.6,
   },
   detailLabel: {
-    width: 82,
-    fontSize: 9,
+    width: 78,
+    fontSize: 9.1,
     color: C.body,
   },
   detailValue: {
     flex: 1,
-    fontSize: 9,
+    fontSize: 9.1,
     color: C.body,
   },
 
   // ── Line-item table ──────────────────────────────────────────────────────────
   table: {
-    marginBottom: 17,
+    marginBottom: 20,
   },
   tableHeader: {
     flexDirection: "row",
-    paddingBottom: 8,
+    paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
-  thNumber: { width: "5%",  fontSize: 8.4, color: C.black },
-  thService: { width: "29%", fontSize: 8.4, color: C.black },
-  thDescription: { width: "31%", fontSize: 8.4, color: C.black },
-  thQty: { width: "9%", fontSize: 8.4, color: C.black, textAlign: "right" },
-  thRate: { width: "12%", fontSize: 8.4, color: C.black, textAlign: "right" },
-  thAmount: { width: "14%", fontSize: 8.4, color: C.black, textAlign: "right" },
+  thNumber: { width: "5%",  fontSize: 8.8, color: C.black },
+  thService: { width: "29%", fontSize: 8.8, color: C.black },
+  thDescription: { width: "31%", fontSize: 8.8, color: C.black },
+  thQty: { width: "9%", fontSize: 8.8, color: C.black, textAlign: "right" },
+  thRate: { width: "12%", fontSize: 8.8, color: C.black, textAlign: "right" },
+  thAmount: { width: "14%", fontSize: 8.8, color: C.black, textAlign: "right" },
   tableRow: {
     flexDirection: "row",
-    minHeight: 31,
-    paddingVertical: 7.5,
+    minHeight: 34,
+    paddingVertical: 8.7,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
   tableRowAlt: {
-    backgroundColor: C.row,
+    backgroundColor: C.white,
   },
-  tdNumber: { width: "5%", fontSize: 8.8, color: C.body },
-  tdService: { width: "29%", fontSize: 8.8, fontFamily: "Helvetica-Bold", color: C.black, paddingRight: 8 },
-  tdDescription: { width: "31%", fontSize: 8.8, color: C.body, paddingRight: 8 },
-  tdQty: { width: "9%", fontSize: 8.8, color: C.body, textAlign: "right" },
-  tdRate: { width: "12%", fontSize: 8.8, color: C.body, textAlign: "right" },
-  tdAmount: { width: "14%", fontSize: 8.8, color: C.body, textAlign: "right" },
+  tdNumber: { width: "5%", fontSize: 8.5, color: C.body },
+  tdService: { width: "29%", fontSize: 8.5, fontFamily: "Helvetica-Bold", color: C.dark, paddingRight: 8 },
+  tdDescription: { width: "31%", fontSize: 8.5, color: C.body, paddingRight: 8 },
+  tdQty: { width: "9%", fontSize: 8.5, color: C.body, textAlign: "right" },
+  tdRate: { width: "12%", fontSize: 8.5, color: C.body, textAlign: "right" },
+  tdAmount: { width: "14%", fontSize: 8.5, color: C.body, textAlign: "right" },
 
   // ── Totals ───────────────────────────────────────────────────────────────────
   lowerSection: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginTop: 2,
+    marginTop: 4,
   },
   noteBox: {
-    width: "54%",
-    paddingTop: 4,
+    width: "53%",
+    paddingTop: 5,
+    paddingLeft: 18,
   },
   noteTitle: {
-    fontSize: 12.2,
+    fontSize: 12,
     color: C.dark,
-    marginBottom: 9,
+    marginBottom: 8,
   },
   noteText: {
-    fontSize: 8.8,
+    fontSize: 8.6,
     color: C.body,
     lineHeight: 1.35,
-    marginBottom: 11,
+    marginBottom: 12,
   },
   paymentNote: {
-    fontSize: 8.8,
+    fontSize: 8.5,
     color: C.body,
     marginBottom: 3,
   },
   paymentNoteBold: {
-    fontSize: 8.8,
+    fontSize: 8.5,
     fontFamily: "Helvetica-Bold",
     color: C.black,
     marginBottom: 3,
   },
   expenseNoteText: {
-    fontSize: 8.5,
+    fontSize: 8.2,
     color: C.muted,
     marginTop: 7,
   },
   totalsBox: {
-    width: "36.5%",
+    width: "36%",
   },
   totalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingVertical: 7,
+    paddingVertical: 5.5,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
   totalRowEmphasis: {
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingVertical: 10,
+    paddingVertical: 8.5,
     borderBottomWidth: 1.5,
     borderBottomColor: C.border,
   },
@@ -293,15 +296,26 @@ const styles = StyleSheet.create({
     color: C.black,
     fontFamily: "Helvetica-Bold",
   },
+  paymentValue: {
+    fontSize: 9,
+    color: C.black,
+  },
   balanceLabel: {
     fontSize: 9.5,
     fontFamily: "Helvetica-Bold",
     color: C.black,
   },
   balanceValue: {
-    fontSize: 15,
+    fontSize: 14,
     fontFamily: "Helvetica-Bold",
     color: C.black,
+  },
+  paidInFull: {
+    fontSize: 11,
+    fontFamily: "Helvetica-Bold",
+    color: "#18A118",
+    textAlign: "right",
+    marginTop: 10,
   },
 
   // ── Footer ───────────────────────────────────────────────────────────────────
@@ -311,11 +325,11 @@ const styles = StyleSheet.create({
     left: 46,
     right: 46,
     borderTopWidth: 1,
-    borderTopColor: C.border,
-    paddingTop: 8,
+    borderTopColor: "#EEF2F4",
+    paddingTop: 7,
   },
   footerText: {
-    fontSize: 8,
+    fontSize: 7.4,
     color: C.light,
     textAlign: "right",
   },
@@ -329,6 +343,10 @@ function fmt(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
 }
 
+function fmtPayment(n: number): string {
+  return `-${fmt(n)}`;
+}
+
 function fmtDate(isoDate: string): string {
   const [y, mo, d] = isoDate.split("-").map(Number);
   return new Date(Number(y), Number(mo) - 1, Number(d)).toLocaleDateString("en-US", {
@@ -336,6 +354,16 @@ function fmtDate(isoDate: string): string {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function addDaysIso(isoDate: string, days: number): string {
+  const [y, mo, d] = isoDate.split("-").map(Number);
+  const date = new Date(Number(y), Number(mo) - 1, Number(d));
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function fmtWorkDates(workdays: InvoicePacket["workdays"]): string {
@@ -384,6 +412,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   const workDateStr = fmtWorkDates(packet.workdays);
   const formattedLaJob = formatLaJobNumber(packet.laNumber);
   const billToAddress = CLIENT_INFO_BY_NAME[packet.client]?.addressLines ?? [];
+  const dueDate = addDaysIso(issuedDate, 15);
   const invoiceTotal = packet.estimatedTotal;
   const paidAmount = packet.invoiceStatus === "paid"
     ? invoiceTotal
@@ -395,15 +424,16 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
     : packet.remainingBalance != null
       ? packet.remainingBalance
       : Math.max(Number((invoiceTotal - paidAmount).toFixed(2)), 0);
-  const showPaidRow = paidAmount > 0 || packet.invoiceStatus === "paid" || packet.invoiceStatus === "partially_paid";
+  const showPaymentRow = paidAmount > 0;
+  const showPaidInFull = balanceDue <= 0;
 
   const expenses: Array<{ label: string; amount: number }> = [
     { label: "Bag Fees",           amount: packet.bagFees },
-    { label: "Hotel",              amount: packet.hotel },
     { label: "Parking",            amount: packet.parking },
+    { label: "Hotel",              amount: packet.hotel },
     { label: "Tolls",              amount: packet.tolls },
-    { label: "Uber / Rideshare",   amount: packet.uber },
-    { label: "Other Expenses",     amount: packet.otherExpenses },
+    { label: "Uber",               amount: packet.uber },
+    { label: "Other",              amount: packet.otherExpenses },
   ].filter((e) => e.amount > 0);
 
   const lineItems: PdfLineItem[] = [];
@@ -437,7 +467,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   if (hasMile) {
     lineItems.push({
       service: "Mileage",
-      description: `${m!.reimbursedMiles} billable miles`,
+      description: "Billable mileage after deduction",
       qty: `${m!.reimbursedMiles} mi`,
       rate: fmt(m!.mileageRate),
       amount: m!.mileageAmount,
@@ -459,22 +489,18 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
 
         {/* ── Header ── */}
         <View style={styles.header}>
-          <View style={styles.headerLeft}>
+          <View style={styles.headerIdentity}>
             <Text style={styles.invoiceWordmark}>INVOICE</Text>
             <Text style={styles.contractorName}>{CONTRACTOR_INFO.name}</Text>
             <Text style={styles.contractorTitle}>{CONTRACTOR_INFO.title}</Text>
-            <View style={styles.contractorColumns}>
-              <View style={styles.contractorColumn}>
-                {CONTRACTOR_INFO.addressLines.map((line) => (
-                  <Text key={line} style={styles.contractorSub}>{line}</Text>
-                ))}
-              </View>
-              <View style={styles.contractorColumn}>
-                <Text style={styles.contractorSub}>{CONTRACTOR_INFO.email}</Text>
-                <Text style={styles.contractorSub}>{CONTRACTOR_INFO.phone}</Text>
-                <Text style={styles.contractorSub}>{CONTRACTOR_INFO.website}</Text>
-              </View>
-            </View>
+            {CONTRACTOR_INFO.addressLines.map((line) => (
+              <Text key={line} style={styles.contractorSub}>{line}</Text>
+            ))}
+          </View>
+          <View style={styles.headerContact}>
+            <Text style={styles.contractorSub}>{CONTRACTOR_INFO.email}</Text>
+            <Text style={styles.contractorSub}>{CONTRACTOR_INFO.phone}</Text>
+            <Text style={styles.contractorSub}>{CONTRACTOR_INFO.website}</Text>
           </View>
           <View style={styles.headerRight}>
             {logoSrc
@@ -508,6 +534,10 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
                 <Text style={styles.detailLabel}>LA Job #:</Text>
                 <Text style={styles.detailValue}>{formattedLaJob ?? "—"}</Text>
               </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Terms:</Text>
+                <Text style={styles.detailValue}>Net 15</Text>
+              </View>
               {gigSummary ? (
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Job:</Text>
@@ -517,6 +547,10 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Invoice date:</Text>
                 <Text style={styles.detailValue}>{fmtDate(issuedDate)}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Due date:</Text>
+                <Text style={styles.detailValue}>{fmtDate(dueDate)}</Text>
               </View>
               {workDateStr ? (
                 <View style={styles.detailRow}>
@@ -561,7 +595,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
             <Text style={styles.noteTitle}>Note to customer</Text>
             <Text style={styles.noteText}>Thanks again,{"\n"}Jeff</Text>
             <Text style={styles.paymentNoteBold}>Payment method: Direct Deposit</Text>
-            <Text style={styles.paymentNote}>Please reference {formattedLaJob ?? "the LA Job #"} when depositing.</Text>
+            <Text style={styles.paymentNote}>Please reference Invoice no. or LA Job # when depositing.</Text>
             {packet.expenseNotes ? (
               <Text style={styles.expenseNoteText}>Expense notes: {packet.expenseNotes}</Text>
             ) : null}
@@ -572,16 +606,19 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
               <Text style={styles.totalLabel}>Total</Text>
               <Text style={styles.totalValue}>{fmt(invoiceTotal)}</Text>
             </View>
-            {showPaidRow ? (
+            {showPaymentRow ? (
               <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>{packet.invoiceStatus === "paid" ? "Paid" : "Amount Paid"}</Text>
-                <Text style={styles.totalValue}>{fmt(paidAmount)}</Text>
+                <Text style={styles.totalLabel}>Payment</Text>
+                <Text style={styles.paymentValue}>{fmtPayment(paidAmount)}</Text>
               </View>
             ) : null}
             <View style={styles.totalRowEmphasis}>
-              <Text style={styles.balanceLabel}>Balance Due</Text>
+              <Text style={styles.balanceLabel}>Balance due</Text>
               <Text style={styles.balanceValue}>{fmt(balanceDue)}</Text>
             </View>
+            {showPaidInFull ? (
+              <Text style={styles.paidInFull}>Paid in Full</Text>
+            ) : null}
           </View>
         </View>
 

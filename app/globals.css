@@ -5282,6 +5282,257 @@ html.modal-open body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Invoice PDF status + actions */
+.invoice-pdf-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface, var(--bg));
+  padding: 14px;
+}
+
+.invoice-pdf-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.invoice-status-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface-dim, rgba(0,0,0,0.025));
+  padding: 14px;
+}
+
+.invoice-status-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.invoice-pdf-number {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.25;
+}
+
+.invoice-pdf-la-number {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 3px 0 0;
+}
+
+.invoice-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface, var(--bg));
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.invoice-status-pill[data-status="sent"] {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.invoice-status-pill[data-status="partially_paid"] {
+  color: #a16207;
+  background: #fefce8;
+  border-color: #fde68a;
+}
+
+.invoice-status-pill[data-status="paid"] {
+  color: #15803d;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.invoice-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 18px;
+  margin: 0;
+}
+
+.invoice-status-grid-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.invoice-status-grid-row dt {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.invoice-status-grid-row dd {
+  font-size: 0.86rem;
+  font-weight: 650;
+  color: var(--text);
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.invoice-status-grid-row--balance dd {
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.invoice-renumber-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.invoice-pdf-buttons,
+.invoice-secondary-actions,
+.invoice-email-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.invoice-pdf-link-btn,
+.invoice-pdf-email-btn,
+.invoice-pdf-create-btn,
+.invoice-pdf-regen-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.invoice-pdf-link-btn,
+.invoice-pdf-email-btn,
+.invoice-pdf-create-btn {
+  color: #fff;
+  background: var(--accent, #2563eb);
+  border: 1px solid var(--accent, #2563eb);
+  padding: 10px 16px;
+}
+
+.invoice-pdf-link-btn:hover,
+.invoice-pdf-email-btn:hover:not(:disabled),
+.invoice-pdf-create-btn:hover:not(:disabled) {
+  background: var(--accent-hover, var(--accent, #2563eb));
+  border-color: var(--accent-hover, var(--accent, #2563eb));
+}
+
+.invoice-pdf-link-btn--secondary,
+.invoice-pdf-regen-btn {
+  color: var(--text);
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--border);
+  padding: 10px 14px;
+}
+
+.invoice-pdf-link-btn--secondary:hover,
+.invoice-pdf-regen-btn:hover:not(:disabled) {
+  color: var(--accent, #2563eb);
+  border-color: var(--accent, #2563eb);
+  background: color-mix(in srgb, var(--accent, #2563eb) 7%, transparent);
+}
+
+.invoice-pdf-email-btn,
+.invoice-pdf-create-btn {
+  border: none;
+}
+
+.invoice-pdf-create-btn--loading,
+.invoice-pdf-create-btn:disabled,
+.invoice-pdf-email-btn:disabled,
+.invoice-pdf-regen-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.invoice-secondary-actions {
+  padding-top: 2px;
+}
+
+.invoice-email-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface-dim, rgba(0,0,0,0.025));
+  padding: 14px;
+}
+
+.invoice-email-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+}
+
+.invoice-email-select,
+.invoice-email-full-input {
+  width: 100%;
+  min-height: 42px;
+  box-sizing: border-box;
+}
+
+.invoice-email-full-input {
+  font-size: 16px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.invoice-email-preview {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface, var(--bg));
+  padding: 10px;
+  margin: 0;
+}
+
+.invoice-email-preview .invoice-label-sm {
+  display: block;
+  margin: 0 0 5px;
+}
+
+.invoice-email-preview-addr {
+  font-size: 0.82rem;
+  color: var(--text);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  margin: 2px 0 0;
+}
+
 /* Sync row */
 .invoice-collapsible-toggle {
   display: flex;
@@ -5368,6 +5619,27 @@ html.modal-open body {
   margin: 0;
 }
 
+.invoice-sync-row--secondary {
+  border-top: 1px dashed var(--border);
+  padding-top: 12px;
+  margin-top: 2px;
+}
+
+.invoice-sync-row--secondary .invoice-sync-button {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border-color: var(--border);
+  padding: 6px 10px;
+}
+
+.invoice-sync-row--secondary .invoice-sync-button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-dim, rgba(0,0,0,0.04));
+  border-color: var(--text-muted);
+}
+
 .invoice-saving-indicator {
   font-size: 0.78rem;
   color: var(--text-muted);
@@ -5394,5 +5666,44 @@ html.modal-open body {
   .invoice-sync-button {
     padding: 10px 18px;
     font-size: 16px;
+  }
+
+  .invoice-pdf-block,
+  .invoice-status-card,
+  .invoice-email-dialog {
+    padding: 12px;
+  }
+
+  .invoice-status-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .invoice-status-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .invoice-pdf-buttons,
+  .invoice-secondary-actions,
+  .invoice-email-actions {
+    align-items: stretch;
+  }
+
+  .invoice-pdf-link-btn,
+  .invoice-pdf-email-btn,
+  .invoice-pdf-create-btn,
+  .invoice-pdf-regen-btn {
+    flex: 1 1 150px;
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .invoice-sync-row--secondary .invoice-sync-button {
+    width: auto;
+    min-height: 36px;
+    padding: 7px 11px;
+    font-size: 0.78rem;
   }
 }
