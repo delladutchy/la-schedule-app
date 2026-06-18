@@ -104,6 +104,12 @@ interface AutoMileage {
   roundTripMiles: number;
 }
 
+// Reason why auto-mileage is unavailable (shown inside the per-day mileage editor).
+type AutoMileageNote =
+  | "no_location"       // jobLocation prop missing
+  | "api_error"         // fetch failed
+  | "implausible";      // returned miles > MAX_PLAUSIBLE_ONE_WAY_MILES
+
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
@@ -138,10 +144,11 @@ interface WorkdayRowProps {
   index: number;
   onChange: (index: number, patch: Partial<WorkdayEntry>) => void;
   autoMileage: AutoMileage | null;
+  autoMileageNote: AutoMileageNote | null;
   mileageRate: number;
 }
 
-function WorkdayRow({ entry, workdays, index, onChange, autoMileage, mileageRate }: WorkdayRowProps) {
+function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileageNote, mileageRate }: WorkdayRowProps) {
   const calc = workdays[index];
   const totalH = calc ? fmtHours(calc.totalHours) : "—";
   const otH = calc && calc.overtimeHours > 0 ? fmtHours(calc.overtimeHours) : "0";
@@ -277,6 +284,17 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, mileageRate
               </button>
             </div>
 
+            {/* Auto-mileage hint — shown when miles can't be auto-filled */}
+            {autoMileageNote && mode !== "none" ? (
+              <p className="invoice-mileage-manual-note">
+                {autoMileageNote === "no_location"
+                  ? "No job location — enter miles manually."
+                  : autoMileageNote === "implausible"
+                    ? "Location may be ambiguous — enter miles manually."
+                    : "Could not auto-calculate — enter miles manually."}
+              </p>
+            ) : null}
+
             {mode !== "none" ? (
               <div className="invoice-mileage-fields">
                 <div className="invoice-mileage-field-row">
@@ -292,7 +310,7 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, mileageRate
                       const val = parseFloat(e.target.value);
                       onChange(index, { milesDriven: isNaN(val) ? null : val });
                     }}
-                    placeholder={autoMileage ? "auto" : "0"}
+                    placeholder="enter miles"
                   />
                 </div>
                 <div className="invoice-mileage-field-row">
@@ -365,6 +383,9 @@ export function InvoiceSection({
   });
   const [expensesExpanded, setExpensesExpanded] = useState(false);
   const [autoMileage, setAutoMileage] = useState<AutoMileage | null>(null);
+  const [autoMileageNote, setAutoMileageNote] = useState<AutoMileageNote | null>(
+    jobLocation ? null : "no_location",
+  );
   const [syncState, setSyncState] = useState<SyncState>({ status: "idle", message: null, syncedAt: null });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -434,9 +455,15 @@ export function InvoiceSection({
     return () => { cancelled = true; };
   }, [requestKey]);
 
-  // Fetch mileage distance once when jobLocation is known
+  // Fetch mileage distance once when jobLocation is known.
+  // Origin is always Dewey Beach, DE 19971 — no GPS, no dynamic location.
   useEffect(() => {
-    if (!jobLocation) return;
+    if (!jobLocation) {
+      setAutoMileage(null);
+      setAutoMileageNote("no_location");
+      return;
+    }
+    setAutoMileageNote(null); // reset while loading
     const headers: Record<string, string> = {};
     if (editorToken) headers.Authorization = `Bearer ${editorToken}`;
     fetch(`/api/invoice/mileage?location=${encodeURIComponent(jobLocation)}`, {
@@ -444,13 +471,27 @@ export function InvoiceSection({
       credentials: "same-origin",
     })
       .then(async (res) => {
-        if (!res.ok) return;
-        const json = await res.json() as { oneWayMiles?: number; roundTripMiles?: number };
+        if (!res.ok) { setAutoMileageNote("api_error"); return; }
+        const json = await res.json() as {
+          oneWayMiles?: number;
+          roundTripMiles?: number;
+          plausible?: boolean;
+        };
         if (typeof json.oneWayMiles === "number" && typeof json.roundTripMiles === "number") {
-          setAutoMileage({ oneWayMiles: json.oneWayMiles, roundTripMiles: json.roundTripMiles });
+          if (json.plausible === false) {
+            // Distance is implausibly large — the location string is likely ambiguous
+            // (e.g. "Fenwick Island" resolved to SC instead of DE). Don't auto-fill.
+            setAutoMileage(null);
+            setAutoMileageNote("implausible");
+          } else {
+            setAutoMileage({ oneWayMiles: json.oneWayMiles, roundTripMiles: json.roundTripMiles });
+            setAutoMileageNote(null);
+          }
+        } else {
+          setAutoMileageNote("api_error");
         }
       })
-      .catch(() => { /* silently ignore — user can enter manually */ });
+      .catch(() => { setAutoMileageNote("api_error"); });
   }, [jobLocation, editorToken]);
 
   function initWorkdayEntries(
@@ -655,6 +696,7 @@ export function InvoiceSection({
             index={i}
             onChange={handleWorkdayChange}
             autoMileage={autoMileage}
+            autoMileageNote={autoMileageNote}
             mileageRate={mileageRate}
           />
         ))}

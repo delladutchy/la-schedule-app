@@ -5081,6 +5081,13 @@ html.modal-open body {
   width: fit-content;
 }
 
+.invoice-mileage-manual-note {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 0;
+}
+
 /* Legacy mileage migration banner */
 .invoice-legacy-banner {
   display: flex;
