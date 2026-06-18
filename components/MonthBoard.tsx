@@ -1523,16 +1523,15 @@ export function MonthBoard({
                     </a>
                   </>
                 ) : null}
-                {/* JobTimeSection hidden: InvoiceSection is now the source of truth for billing hours */}
-                {/* {isJeffEditor && activeJobTimeDetail?.eventId && jobTimeWorkDates.length > 0 ? (
-                  <JobTimeSection
-                    eventId={activeJobTimeDetail.eventId}
-                    workDates={jobTimeWorkDates}
-                    editorToken={editorToken}
-                    scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
-                    eventIdsByWorkDate={jobTimeEventIdByWorkDate}
-                  />
-                ) : null} */}
+                {/* Legacy Hours / Clock-In panel hidden — InvoiceSection is the source of truth.
+                    Restore by re-enabling JobTimeSection below.
+                isJeffEditor && activeJobTimeDetail?.eventId && jobTimeWorkDates.length > 0
+                  ? <JobTimeSection eventId={activeJobTimeDetail.eventId} workDates={jobTimeWorkDates}
+                      editorToken={editorToken}
+                      scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
+                      eventIdsByWorkDate={jobTimeEventIdByWorkDate} />
+                  : null
+                */}
                 {isJeffEditor && activeJobTimeDetail?.eventId && jobTimeWorkDates.length > 0 ? (
                   <InvoiceSection
                     eventId={activeJobTimeDetail.eventId}

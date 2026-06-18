@@ -1580,16 +1580,15 @@ export function DayBoard({
                     </a>
                   </>
                 ) : null}
-                {/* JobTimeSection hidden: InvoiceSection is now the source of truth for billing hours */}
-                {/* {isJeffEditor && activePrimaryDetail?.eventId && jobTimeWorkDates.length > 0 ? (
-                  <JobTimeSection
-                    eventId={activePrimaryDetail.eventId}
-                    workDates={jobTimeWorkDates}
-                    editorToken={editorToken}
-                    scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
-                    eventIdsByWorkDate={jobTimeEventIdByWorkDate}
-                  />
-                ) : null} */}
+                {/* Legacy Hours / Clock-In panel hidden — InvoiceSection is the source of truth.
+                    Restore by re-enabling JobTimeSection below.
+                isJeffEditor && activePrimaryDetail?.eventId && jobTimeWorkDates.length > 0
+                  ? <JobTimeSection eventId={activePrimaryDetail.eventId} workDates={jobTimeWorkDates}
+                      editorToken={editorToken}
+                      scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
+                      eventIdsByWorkDate={jobTimeEventIdByWorkDate} />
+                  : null
+                */}
                 {isJeffEditor && activePrimaryDetail?.eventId && jobTimeWorkDates.length > 0 ? (
                   <InvoiceSection
                     eventId={activePrimaryDetail.eventId}
