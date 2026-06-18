@@ -16,6 +16,7 @@ import {
   initWorkdayEntries,
   round2,
 } from "@/lib/invoice-calculations";
+import { isNumericInvoiceNumber } from "@/lib/invoice-number";
 
 // ---------------------------------------------------------------------------
 // Time dropdown helpers
@@ -106,6 +107,11 @@ interface SyncState {
 
 interface PdfState {
   status: "idle" | "generating" | "done" | "error";
+  error: string | null;
+}
+
+interface RenumberState {
+  status: "idle" | "renumbering" | "error";
   error: string | null;
 }
 
@@ -566,6 +572,7 @@ export function InvoiceSection({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [pdfState, setPdfState] = useState<PdfState>({ status: "idle", error: null });
+  const [renumberState, setRenumberState] = useState<RenumberState>({ status: "idle", error: null });
   const [emailDialog, setEmailDialog] = useState<EmailDialogState>(EMAIL_DIALOG_RESET);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -750,6 +757,33 @@ export function InvoiceSection({
       }
     } catch {
       setSyncState({ status: "error", message: "Sheet sync failed — retry", syncedAt: prevSyncedAt });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Renumber — assign next numeric invoice number to a legacy JU-style number,
+  // then immediately regenerate the PDF (which also re-syncs Google Sheets).
+  // ---------------------------------------------------------------------------
+
+  async function handleRenumber() {
+    if (renumberState.status === "renumbering" || pdfState.status === "generating") return;
+    setRenumberState({ status: "renumbering", error: null });
+    try {
+      const res = await fetch(`/api/invoice/renumber/${encodeURIComponent(eventId)}`, {
+        method: "POST",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+      });
+      const json = await res.json() as { ok?: boolean; newNumber?: string; error?: string; detail?: string };
+      if (!res.ok || !json.ok) {
+        setRenumberState({ status: "error", error: json.detail ?? json.error ?? "Could not assign new number" });
+        return;
+      }
+      // Invoice number updated in DB. Regenerate PDF (which also syncs Google Sheets).
+      setRenumberState({ status: "idle", error: null });
+      await handleCreatePdf();
+    } catch {
+      setRenumberState({ status: "error", error: "Network error — try again" });
     }
   }
 
@@ -1171,6 +1205,25 @@ export function InvoiceSection({
                   <p className="invoice-pdf-la-number">LA Job #{laNumber}</p>
                 ) : null}
               </div>
+
+              {/* Convert legacy JU-style number to numeric */}
+              {invoiceNumber && !isNumericInvoiceNumber(invoiceNumber) ? (
+                <div className="invoice-renumber-block">
+                  <button
+                    type="button"
+                    className="invoice-pdf-regen-btn"
+                    onClick={() => { void handleRenumber(); }}
+                    disabled={renumberState.status === "renumbering" || pdfState.status === "generating"}
+                  >
+                    {renumberState.status === "renumbering" || pdfState.status === "generating"
+                      ? "Converting…"
+                      : "Convert to Numeric Invoice #"}
+                  </button>
+                  {renumberState.error ? (
+                    <p className="invoice-error" role="alert">{renumberState.error}</p>
+                  ) : null}
+                </div>
+              ) : null}
 
               {/* Status + payment summary */}
               {currentStatus ? (

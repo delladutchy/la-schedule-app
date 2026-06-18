@@ -169,11 +169,12 @@ export async function POST(
     );
   }
 
-  const invoiceNumber = invoiceData.invoice_number ?? "";
-  const laNumber      = invoiceData.la_number ?? "";
-  const invoiceTotal  = invoiceData.invoice_total;
-  const workDates     = (invoiceData.workday_entries ?? []).map((e) => e.date);
-  const dateRange     = formatWorkDateRange(workDates);
+  const invoiceNumber    = invoiceData.invoice_number ?? "";
+  const laNumber         = invoiceData.la_number ?? "";
+  const invoiceTotal     = invoiceData.invoice_total;
+  const remainingBalance = invoiceData.remaining_balance ?? invoiceTotal;
+  const workDates        = (invoiceData.workday_entries ?? []).map((e) => e.date);
+  const dateRange        = formatWorkDateRange(workDates);
 
   // Step 1: Fetch the PDF from Supabase Storage.
   // Fail early with a clear error — don't send the email without the attachment.
@@ -206,8 +207,9 @@ export async function POST(
     invoiceNumber,
     laNumber,
     gigSummary,
-    pdfUrl: invoiceData.invoice_pdf_url,
-    invoiceTotal: invoiceTotal ?? null,
+    pdfUrl:            invoiceData.invoice_pdf_url,
+    invoiceTotal:      invoiceTotal      ?? null,
+    remainingBalance:  remainingBalance  ?? null,
     dateRange,
     attachmentFilename,
   };
@@ -266,74 +268,158 @@ function buildSubject(invoiceNumber: string, laNumber: string, gigSummary: strin
 // Email templates
 // ---------------------------------------------------------------------------
 
+// Brand colors — coordinated with the Jeff Ulsh orange used in the PDF.
+const BRAND_ORANGE = "#E87722";
+const BRAND_ORANGE_DARK = "#C05A10";
+
+// Logo hosted via Netlify public directory. Used in email header.
+// Falls back gracefully via alt text when email clients block images.
+const LOGO_URL = "https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png";
+
 interface EmailParams {
-  invoiceNumber: string;
-  laNumber: string;
-  gigSummary: string;
-  pdfUrl: string;
-  invoiceTotal: number | null;
-  dateRange: string;
+  invoiceNumber:   string;
+  laNumber:        string;
+  gigSummary:      string;
+  pdfUrl:          string;
+  invoiceTotal:    number | null;
+  remainingBalance: number | null;
+  dateRange:        string;
   attachmentFilename: string;
 }
 
-function buildEmailHtml(p: EmailParams): string {
-  const jobRef  = [p.laNumber && `LA Job #: ${p.laNumber}`, p.gigSummary].filter(Boolean).join(" — ");
-  const jobLine = jobRef ? ` for <strong>${p.gigSummary || `LA Job ${p.laNumber}`}</strong>` : "";
+function row(label: string, value: string, bold = false): string {
+  const valStyle = bold
+    ? `font-size:14px;font-weight:700;text-align:right;color:#111;padding:9px 0;border-bottom:1px solid #F3F4F6`
+    : `font-size:13px;text-align:right;color:#374151;padding:9px 0;border-bottom:1px solid #F3F4F6`;
+  return `<tr>
+    <td style="font-size:13px;color:#6B7280;padding:9px 0;border-bottom:1px solid #F3F4F6">${label}</td>
+    <td style="${valStyle}">${value}</td>
+  </tr>`;
+}
 
-  const invoiceLine = `<tr><td style="padding:4px 0;color:#555">Invoice #</td><td style="padding:4px 0 4px 24px;font-weight:600">${p.invoiceNumber}</td></tr>`;
-  const laLine     = p.laNumber
-    ? `<tr><td style="padding:4px 0;color:#555">LA Job #</td><td style="padding:4px 0 4px 24px">${p.laNumber}</td></tr>`
+function buildEmailHtml(p: EmailParams): string {
+  const balanceDue = p.remainingBalance ?? p.invoiceTotal;
+  const jobLabel   = p.gigSummary || (p.laNumber ? `LA Job #${p.laNumber}` : "");
+
+  // Balance Due callout — shown prominently above the detail table.
+  const balanceCallout = balanceDue != null
+    ? `<div style="background:#FFF7ED;border:1.5px solid ${BRAND_ORANGE};border-radius:6px;padding:20px 24px;margin:0 0 28px;display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;color:${BRAND_ORANGE};text-transform:uppercase;margin-bottom:4px">Balance Due</div>
+          <div style="font-size:34px;font-weight:800;color:#111;line-height:1">${fmtCurrency(balanceDue)}</div>
+        </div>
+      </div>`
     : "";
-  const totalLine  = p.invoiceTotal != null
-    ? `<tr><td style="padding:4px 0;color:#555">Total</td><td style="padding:4px 0 4px 24px;font-weight:600">${fmtCurrency(p.invoiceTotal)}</td></tr>`
-    : "";
-  const dateLine   = p.dateRange
-    ? `<tr><td style="padding:4px 0;color:#555">Work dates</td><td style="padding:4px 0 4px 24px">${p.dateRange}</td></tr>`
-    : "";
-  const methodLine = `<tr><td style="padding:4px 0;color:#555">Payment method</td><td style="padding:4px 0 4px 24px">Direct deposit</td></tr>`;
+
+  // Detail rows
+  const rows = [
+    row("Invoice #",      `<strong>${p.invoiceNumber}</strong>`, false),
+    p.laNumber ? row("LA Job #", p.laNumber) : "",
+    jobLabel   ? row("Job",      jobLabel)   : "",
+    p.dateRange ? row("Work Dates", p.dateRange) : "",
+    p.invoiceTotal != null ? row("Invoice Total", fmtCurrency(p.invoiceTotal), true) : "",
+    row("Payment Method", "Direct Deposit"),
+  ].filter(Boolean).join("\n");
 
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Invoice ${p.invoiceNumber}</title></head>
-<body style="font-family:sans-serif;color:#333;max-width:600px;margin:0 auto;padding:24px">
-  <p style="margin-top:0">Hi,</p>
-  <p>Attached is my invoice${jobLine}.</p>
-  <table style="border-collapse:collapse;margin:16px 0">
-    <tbody>
-      ${invoiceLine}
-      ${laLine}
-      ${totalLine}
-      ${dateLine}
-      ${methodLine}
-    </tbody>
-  </table>
-  <p style="margin-top:20px">
-    <a href="${p.pdfUrl}" style="display:inline-block;padding:10px 20px;background:#1a56a0;color:#fff;text-decoration:none;border-radius:4px;font-size:14px">
-      View / Download ${p.attachmentFilename}
-    </a>
-  </p>
-  <p style="margin-top:32px;margin-bottom:0">Thanks again,<br/>Jeff</p>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Invoice #${p.invoiceNumber} from Jeff Ulsh</title>
+</head>
+<body style="margin:0;padding:0;background:#F9FAFB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#F9FAFB;padding:32px 16px">
+  <tr><td align="center">
+    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:580px">
+
+      <!-- Header bar -->
+      <tr><td style="background:${BRAND_ORANGE};border-radius:8px 8px 0 0;padding:20px 32px">
+        <table cellpadding="0" cellspacing="0"><tr>
+          <td style="vertical-align:middle;padding-right:14px">
+            <img src="${LOGO_URL}"
+                 alt="Jeff Ulsh"
+                 width="68" height="68"
+                 style="display:block;border-radius:50%;border:2px solid rgba(255,255,255,0.35)">
+          </td>
+          <td style="vertical-align:middle">
+            <div style="color:#fff;font-size:20px;font-weight:800;letter-spacing:-0.3px;margin-bottom:2px">Jeff Ulsh</div>
+            <div style="color:rgba(255,255,255,0.85);font-size:12px">Freelance Audio Engineer &middot; Dewey Beach, DE</div>
+          </td>
+        </tr></table>
+      </td></tr>
+
+      <!-- Body -->
+      <tr><td style="background:#fff;padding:36px 32px 28px;border-left:1px solid #E5E7EB;border-right:1px solid #E5E7EB">
+
+        <!-- Headline -->
+        <p style="margin:0 0 6px;font-size:24px;font-weight:700;color:#111">Invoice Ready</p>
+        <p style="margin:0 0 28px;font-size:14px;color:#6B7280">
+          Invoice <strong style="color:#111">#${p.invoiceNumber}</strong> from Jeff Ulsh for Light Action${jobLabel ? ` &mdash; <strong style="color:#111">${jobLabel}</strong>` : ""}
+        </p>
+
+        <!-- Balance Due callout -->
+        ${balanceCallout}
+
+        <!-- Detail table -->
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:32px">
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+
+        <!-- CTA button -->
+        <table cellpadding="0" cellspacing="0" style="margin-bottom:32px">
+          <tr><td>
+            <a href="${p.pdfUrl}"
+               style="display:inline-block;background:${BRAND_ORANGE};color:#fff;font-size:14px;font-weight:600;text-decoration:none;padding:13px 28px;border-radius:5px;letter-spacing:0.01em">
+              View / Download Invoice
+            </a>
+          </td></tr>
+        </table>
+
+        <!-- Note -->
+        <p style="margin:0;font-size:13px;color:#9CA3AF">
+          The invoice PDF is attached directly to this email. The button above links to the same file in Supabase Storage as a backup.
+        </p>
+
+      </td></tr>
+
+      <!-- Footer -->
+      <tr><td style="background:#F9FAFB;border:1px solid #E5E7EB;border-top:none;border-radius:0 0 8px 8px;padding:20px 32px">
+        <p style="margin:0;font-size:13px;color:#374151">Thanks again,<br><strong>Jeff</strong></p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
 </body>
 </html>`;
 }
 
 function buildEmailText(p: EmailParams): string {
-  const jobDesc = p.gigSummary || (p.laNumber ? `LA Job ${p.laNumber}` : "");
+  const balanceDue = p.remainingBalance ?? p.invoiceTotal;
+  const jobDesc    = p.gigSummary || (p.laNumber ? `LA Job #${p.laNumber}` : "");
   const lines: string[] = [
-    "Hi,",
+    `Invoice #${p.invoiceNumber} from Jeff Ulsh`,
+    "─".repeat(40),
     "",
-    `Attached is my invoice${jobDesc ? " for " + jobDesc : ""}.`,
-    "",
-    `Invoice #: ${p.invoiceNumber}`,
   ];
-  if (p.laNumber)             lines.push(`LA Job #: ${p.laNumber}`);
-  if (p.invoiceTotal != null) lines.push(`Total: ${fmtCurrency(p.invoiceTotal)}`);
-  if (p.dateRange)            lines.push(`Work dates: ${p.dateRange}`);
-  lines.push("Payment method: Direct deposit");
+  if (balanceDue != null) {
+    lines.push(`Balance Due: ${fmtCurrency(balanceDue)}`);
+    lines.push("");
+  }
+  lines.push(`Invoice #: ${p.invoiceNumber}`);
+  if (p.laNumber)        lines.push(`LA Job #: ${p.laNumber}`);
+  if (jobDesc)           lines.push(`Job: ${jobDesc}`);
+  if (p.dateRange)       lines.push(`Work Dates: ${p.dateRange}`);
+  if (p.invoiceTotal != null) lines.push(`Invoice Total: ${fmtCurrency(p.invoiceTotal)}`);
+  lines.push("Payment Method: Direct Deposit");
   lines.push("");
-  lines.push(`View / Download: ${p.pdfUrl}`);
+  lines.push(`View / Download Invoice: ${p.pdfUrl}`);
+  lines.push("(PDF also attached directly to this email)");
   lines.push("");
   lines.push("Thanks again,");
-  lines.push("Jeff");
+  lines.push("Jeff Ulsh");
   return lines.join("\n");
 }
