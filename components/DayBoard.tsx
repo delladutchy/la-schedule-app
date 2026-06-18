@@ -1580,7 +1580,8 @@ export function DayBoard({
                     </a>
                   </>
                 ) : null}
-                {isJeffEditor && activePrimaryDetail?.eventId && jobTimeWorkDates.length > 0 ? (
+                {/* JobTimeSection hidden: InvoiceSection is now the source of truth for billing hours */}
+                {/* {isJeffEditor && activePrimaryDetail?.eventId && jobTimeWorkDates.length > 0 ? (
                   <JobTimeSection
                     eventId={activePrimaryDetail.eventId}
                     workDates={jobTimeWorkDates}
@@ -1588,7 +1589,7 @@ export function DayBoard({
                     scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
                     eventIdsByWorkDate={jobTimeEventIdByWorkDate}
                   />
-                ) : null}
+                ) : null} */}
                 {isJeffEditor && activePrimaryDetail?.eventId && jobTimeWorkDates.length > 0 ? (
                   <InvoiceSection
                     eventId={activePrimaryDetail.eventId}

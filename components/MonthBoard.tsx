@@ -1523,7 +1523,8 @@ export function MonthBoard({
                     </a>
                   </>
                 ) : null}
-                {isJeffEditor && activeJobTimeDetail?.eventId && jobTimeWorkDates.length > 0 ? (
+                {/* JobTimeSection hidden: InvoiceSection is now the source of truth for billing hours */}
+                {/* {isJeffEditor && activeJobTimeDetail?.eventId && jobTimeWorkDates.length > 0 ? (
                   <JobTimeSection
                     eventId={activeJobTimeDetail.eventId}
                     workDates={jobTimeWorkDates}
@@ -1531,7 +1532,7 @@ export function MonthBoard({
                     scheduledStartTimesByWorkDate={jobTimeScheduledStartByWorkDate}
                     eventIdsByWorkDate={jobTimeEventIdByWorkDate}
                   />
-                ) : null}
+                ) : null} */}
                 {isJeffEditor && activeJobTimeDetail?.eventId && jobTimeWorkDates.length > 0 ? (
                   <InvoiceSection
                     eventId={activeJobTimeDetail.eventId}
