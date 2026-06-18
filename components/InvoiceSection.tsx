@@ -280,7 +280,12 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
                 type="button"
                 className={`invoice-mileage-confirm-btn${mileageValid ? " invoice-mileage-confirm-btn--valid" : ""}`}
                 aria-label="Confirm mileage entry"
-                onClick={() => { if (mileageValid) setMileageOpen(false); }}
+                onClick={() => {
+                  if (mileageValid) {
+                    (document.activeElement as HTMLElement | null)?.blur();
+                    setMileageOpen(false);
+                  }
+                }}
               >
                 ✓
               </button>
