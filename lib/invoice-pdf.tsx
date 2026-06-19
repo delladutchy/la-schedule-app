@@ -366,6 +366,13 @@ function fmtHours(n: number): string {
   return n % 1 === 0 ? `${n}` : n.toFixed(2);
 }
 
+// Parse an LA number out of a raw calendar event summary.
+// "LA#5555 — test job" → "LA#5555"   "test job" → null
+function parseLaNumberFromSummary(summary: string): string | null {
+  const match = summary.trim().match(/^\s*LA\s*#?\s*(\d{3,})\s*/i);
+  return match?.[1] ? `LA#${match[1]}` : null;
+}
+
 function formatLaJobNumber(laNumber: string | null): string | null {
   if (!laNumber) return null;
   const clean = laNumber.replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
@@ -439,11 +446,14 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   const hasPD   = packet.perDiemTotal > 0;
   const workDateStr = fmtWorkDates(packet.workdays);
   const workedDateTimes = fmtWorkedDateTimes(packet.workdays);
-  const formattedLaJob = formatLaJobNumber(packet.laNumber);
+  // Use stored laNumber first; fall back to parsing from gigSummary so the
+  // LA number shows correctly even when la_number is not saved in invoice_data.
+  const effectiveLaNumber = packet.laNumber ?? parseLaNumberFromSummary(gigSummary);
+  const formattedLaJob = formatLaJobNumber(effectiveLaNumber);
   const clientInvoiceNumber = formattedLaJob
     ? `${invoiceNumber} - ${formattedLaJob}`
     : invoiceNumber;
-  const jobTitle = formatJobTitle(gigSummary, packet.laNumber);
+  const jobTitle = formatJobTitle(gigSummary, effectiveLaNumber);
   const billToAddress = CLIENT_INFO_BY_NAME[packet.client]?.addressLines ?? [];
   const dueDate = addDaysIso(issuedDate, 15);
   const invoiceTotal = packet.estimatedTotal;
@@ -558,6 +568,10 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Invoice no.:</Text>
                 <Text style={styles.detailValue}>{clientInvoiceNumber}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Terms:</Text>
+                <Text style={styles.detailValue}>Net 15</Text>
               </View>
               {jobTitle ? (
                 <View style={styles.detailRow}>
