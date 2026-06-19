@@ -228,6 +228,7 @@ function makeInvoiceData(overrides: Partial<InvoiceData> = {}): InvoiceData {
     invoice_pdf_url: null,
     invoice_created_at: null,
     invoice_sent_at: null,
+    invoice_sent_to: null,
     invoice_total: null,
     amount_paid: 0,
     remaining_balance: null,

@@ -26,7 +26,6 @@ export const dynamic = "force-dynamic";
 
 const PDF_BUCKET = "invoice-pdfs";
 const PDF_TEMPLATE = "orange-2026";
-const LOGO_URL = "https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png";
 
 // ---------------------------------------------------------------------------
 // Address helpers
@@ -64,11 +63,6 @@ function formatClientInvoiceNumber(laNumber: string | null, invoiceNumber: strin
   return cleanLa ? `${invoiceNumber} - LA #${cleanLa}` : invoiceNumber;
 }
 
-function buildAttachmentFilename(clientInvoiceNumber: string): string {
-  const safeNumber = clientInvoiceNumber.replace(/[^a-zA-Z0-9-]/g, "");
-  return `Invoice-${safeNumber || "invoice"}.pdf`;
-}
-
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -87,12 +81,31 @@ function formatJobTitle(gigSummary: string, laNumber: string | null): string {
   return title.replace(/^[\s\-–—:|]+/, "").trim();
 }
 
-function buildSubject(clientInvoiceNumber: string, jobTitle: string): string {
-  return ["Jeff Ulsh", `Invoice ${clientInvoiceNumber}`, jobTitle].filter(Boolean).join(" - ");
+function fmtWorkDateRange(workdays: { date: string }[]): string {
+  if (workdays.length === 0) return "";
+  const dates = workdays.map((w) => w.date).sort();
+  const fmtShort = (iso: string) => {
+    const [, mo, d] = iso.split("-").map(Number);
+    return `${mo}/${d}`;
+  };
+  if (dates.length === 1) return fmtShort(dates[0]!);
+  return `${fmtShort(dates[0]!)} - ${fmtShort(dates[dates.length - 1]!)}`;
 }
 
-function fmtCurrency(n: number): string {
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+// Subject: LA-centric. No internal invoice number. Job name only when no LA number.
+function buildSubject(cleanLa: string, jobTitle: string): string {
+  if (cleanLa) return `Jeff Ulsh - Invoice LA #${cleanLa}`;
+  return `Jeff Ulsh - Invoice${jobTitle ? ` ${jobTitle}` : ""}`;
+}
+
+// Attachment filename: client-facing. Invoice-LA71852-Wilm-U-Grad.pdf
+function buildAttachmentFilename(cleanLa: string, jobTitle: string, invoiceNumber: string): string {
+  const nameSlug = jobTitle
+    ? "-" + jobTitle.replace(/[^a-zA-Z0-9]/g, " ").trim().replace(/\s+/g, "-").slice(0, 30).replace(/-+$/, "")
+    : "";
+  if (cleanLa) return `Invoice-LA${cleanLa}${nameSlug}.pdf`;
+  const numSlug = invoiceNumber.replace(/[^a-zA-Z0-9]/g, "");
+  return `Invoice-${numSlug}${nameSlug}.pdf`;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,56 +143,37 @@ async function uploadPdf(path: string, buffer: Buffer): Promise<string> {
 // ---------------------------------------------------------------------------
 
 interface EmailParams {
-  clientInvoiceNumber: string;
-  jobTitle: string;
-  balanceDue: number;
+  cleanLa: string;     // "71852"
+  jobTitle: string;    // "Wilm U Grad"
+  workDateStr: string; // "5/31 - 6/1"
 }
 
-function invoiceSentence(p: EmailParams): string {
-  return `Invoice ${p.clientInvoiceNumber}${p.jobTitle ? ` for ${p.jobTitle}` : ""} is attached.`;
+function buildInvoiceLine(p: EmailParams): string {
+  let line = "Invoice for";
+  if (p.cleanLa) line += ` LA#${p.cleanLa}`;
+  if (p.jobTitle) line += ` ${p.jobTitle}`;
+  if (p.workDateStr) line += ` - ${p.workDateStr}`;
+  return line + ".";
 }
 
 function buildEmailHtml(p: EmailParams): string {
+  const invoiceLine = buildInvoiceLine(p);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>${invoiceSentence(p)}</title>
 </head>
-<body style="margin:0;padding:0;background:#F6F7F8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#222">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F6F7F8;padding:28px 14px">
-    <tr>
-      <td align="center">
-        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E7EB;border-radius:8px">
-          <tr>
-            <td style="padding:24px 28px 22px">
-              <img src="${LOGO_URL}" alt="Jeff Ulsh" style="display:block;width:64px;max-width:64px;height:auto;margin:0 0 18px">
-              <p style="margin:0 0 16px;font-size:15px;line-height:1.5;color:#333">Hi,</p>
-              <p style="margin:0 0 16px;font-size:15px;line-height:1.5;color:#333">${invoiceSentence(p)}</p>
-              <p style="margin:0 0 22px;font-size:15px;line-height:1.5;color:#333"><strong>Balance due:</strong> ${fmtCurrency(p.balanceDue)}</p>
-              <p style="margin:0;font-size:15px;line-height:1.5;color:#333">Thanks again,<br>Jeff</p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
+<body style="margin:0;padding:32px 20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.65;color:#111;background:#fff">
+<p style="margin:0 0 20px">${invoiceLine}</p>
+<p style="margin:0 0 4px">Thank you guys,</p>
+<p style="margin:0">Jeff Ulsh</p>
 </body>
 </html>`;
 }
 
 function buildEmailText(p: EmailParams): string {
-  return [
-    "Hi,",
-    "",
-    invoiceSentence(p),
-    "",
-    `Balance due: ${fmtCurrency(p.balanceDue)}`,
-    "",
-    "Thanks again,",
-    "Jeff",
-  ].join("\n");
+  return [buildInvoiceLine(p), "", "Thank you guys,", "", "Jeff Ulsh"].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -228,8 +222,10 @@ export async function POST(
   const packet = calculateInvoicePacket(invoiceData);
   const allNums = await getAllInvoiceNumbers();
   const invoiceNumber = resolveInvoiceNumber(invoiceData.invoice_number, allNums);
+  const cleanLa = cleanLaNumber(invoiceData.la_number);
   const clientInvoiceNumber = formatClientInvoiceNumber(invoiceData.la_number, invoiceNumber);
   const jobTitle = formatJobTitle(gigSummary, invoiceData.la_number);
+  const workDateStr = fmtWorkDateRange(packet.workdays);
   const issuedDate = new Date().toISOString().slice(0, 10);
 
   const laSlug = invoiceData.la_number
@@ -282,14 +278,9 @@ export async function POST(
     console.error(`[invoice/email] sheet sync failed after PDF regeneration (non-fatal): ${sheetErr instanceof Error ? sheetErr.message : sheetErr}`);
   }
 
-  const balanceDue = Math.max(0, Number((packet.estimatedTotal - packet.amountPaid).toFixed(2)));
-  const attachmentFilename = buildAttachmentFilename(clientInvoiceNumber);
-  const subject = buildSubject(clientInvoiceNumber, jobTitle);
-  const emailParams: EmailParams = {
-    clientInvoiceNumber,
-    jobTitle,
-    balanceDue,
-  };
+  const attachmentFilename = buildAttachmentFilename(cleanLa, jobTitle, invoiceNumber);
+  const subject = buildSubject(cleanLa, jobTitle);
+  const emailParams: EmailParams = { cleanLa, jobTitle, workDateStr };
 
   const fromName = env.INVOICE_FROM_NAME ?? "Jeff Ulsh";
   const fromEmail = env.NOTIFY_EMAIL_FROM?.trim() ?? "invoices@resend.dev";
@@ -323,13 +314,15 @@ export async function POST(
   }
 
   const sentAt = new Date().toISOString();
-  await markInvoiceSent(params.eventId, sentAt);
+  const sentTo = [...toAddresses, ...ccAddresses].join(", ");
+  await markInvoiceSent(params.eventId, sentAt, sentTo);
 
   return NextResponse.json({
     ok: true,
     to: toAddresses,
     cc: ccAddresses,
     sentAt,
+    sentTo,
     subject,
     attachmentFilename,
     invoice_number: updatedInvoiceData.invoice_number,

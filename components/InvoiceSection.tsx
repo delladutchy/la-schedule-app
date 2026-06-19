@@ -152,8 +152,8 @@ type EmailPresetId = "custom" | string;
 
 interface EmailDialogState {
   open: boolean;
-  presetId: EmailPresetId;   // "" = nothing selected yet
-  customTo: string;           // only used when presetId === "custom"
+  presetId: EmailPresetId;
+  customTo: string;
   status: "idle" | "sending" | "success" | "error";
   error: string | null;
 }
@@ -484,6 +484,61 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
 }
 
 // ---------------------------------------------------------------------------
+// Email preview helpers — mirrors server-side logic in email route
+// ---------------------------------------------------------------------------
+
+function emailCleanLa(laNumber: string | null): string {
+  return (laNumber ?? "").replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
+}
+
+function emailStripLaPrefix(gigSummary: string, laNumber: string | null): string {
+  let title = gigSummary.trim();
+  const cleanLa = emailCleanLa(laNumber);
+  if (cleanLa) {
+    title = title
+      .replace(new RegExp(`^\\s*LA\\s*#?\\s*${cleanLa.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*(?:[-–—:|]+\\s*)?`, "i"), "")
+      .trim();
+  }
+  return title.replace(/^[\s\-–—:|]+/, "").trim();
+}
+
+function emailWorkDateRange(workdays: InvoicePacket["workdays"]): string {
+  if (workdays.length === 0) return "";
+  const dates = workdays.map((w) => w.date).sort();
+  const fmtShort = (iso: string) => {
+    const parts = iso.split("-").map(Number);
+    return `${parts[1]}/${parts[2]}`;
+  };
+  if (dates.length === 1) return fmtShort(dates[0]!);
+  return `${fmtShort(dates[0]!)} - ${fmtShort(dates[dates.length - 1]!)}`;
+}
+
+function buildPreviewSubject(laNumber: string | null, jobTitle: string): string {
+  const cleanLa = emailCleanLa(laNumber);
+  if (cleanLa) return `Jeff Ulsh - Invoice LA #${cleanLa}`;
+  return `Jeff Ulsh - Invoice${jobTitle ? ` ${jobTitle}` : ""}`;
+}
+
+function buildPreviewBody(laNumber: string | null, jobTitle: string, workDateStr: string): string {
+  const cleanLa = emailCleanLa(laNumber);
+  let line = "Invoice for";
+  if (cleanLa) line += ` LA#${cleanLa}`;
+  if (jobTitle) line += ` ${jobTitle}`;
+  if (workDateStr) line += ` - ${workDateStr}`;
+  return [line + ".", "", "Thank you guys,", "", "Jeff Ulsh"].join("\n");
+}
+
+function buildPreviewFilename(laNumber: string | null, jobTitle: string, invoiceNumber: string | null): string {
+  const cleanLa = emailCleanLa(laNumber);
+  const nameSlug = jobTitle
+    ? "-" + jobTitle.replace(/[^a-zA-Z0-9]/g, " ").trim().replace(/\s+/g, "-").slice(0, 30).replace(/-+$/, "")
+    : "";
+  if (cleanLa) return `Invoice-LA${cleanLa}${nameSlug}.pdf`;
+  const numSlug = (invoiceNumber ?? "invoice").replace(/[^a-zA-Z0-9]/g, "");
+  return `Invoice-${numSlug}${nameSlug}.pdf`;
+}
+
+// ---------------------------------------------------------------------------
 // EmailDialog sub-component
 // ---------------------------------------------------------------------------
 
@@ -492,13 +547,15 @@ interface EmailDialogProps {
   onChange: React.Dispatch<React.SetStateAction<EmailDialogState>>;
   onSend: () => void;
   onClose: () => void;
+  subject: string;
+  body: string;
+  filename: string;
 }
 
-function EmailDialog({ dialog, onChange, onSend, onClose }: EmailDialogProps) {
-  const isBusy    = dialog.status === "sending";
-  const isDone    = dialog.status === "success";
+function EmailDialog({ dialog, onChange, onSend, onClose, subject, body, filename }: EmailDialogProps) {
+  const isBusy = dialog.status === "sending";
+  const isDone = dialog.status === "success";
 
-  // Derive the resolved addresses for the confirmation preview.
   let previewTo: string[] = [];
   let previewCc: string[] = [];
   let previewUnconfigured = false;
@@ -518,91 +575,92 @@ function EmailDialog({ dialog, onChange, onSend, onClose }: EmailDialogProps) {
   }
 
   const canSend = !isBusy && !isDone && !previewUnconfigured && previewTo.length > 0;
+  const toDisplay = previewTo.length > 0
+    ? previewTo.join(", ") + (previewCc.length > 0 ? ` — CC: ${previewCc.join(", ")}` : "")
+    : "—";
 
   return (
-    <div className="invoice-email-dialog" role="dialog" aria-label="Email Invoice">
+    <div className="invoice-email-dialog" role="dialog" aria-label="Send Invoice">
       <p className="invoice-block-label">Send Invoice</p>
 
-      {/* Preset selector */}
       {!isDone ? (
-        <div className="invoice-email-field">
-          <label className="invoice-label-sm" htmlFor="inv-email-preset">Recipient</label>
-          <select
-            id="inv-email-preset"
-            className="invoice-select invoice-email-select"
-            value={dialog.presetId}
-            disabled={isBusy}
-            onChange={(e) => onChange((prev) => ({
-              ...prev,
-              presetId: e.target.value,
-              customTo: "",
-              error: null,
-            }))}
-          >
-            <option value="">Choose recipient…</option>
-            {RECIPIENT_PRESETS.map((preset) => {
-              const configured = isPresetConfigured(preset);
-              return (
-                <option
-                  key={preset.id}
-                  value={preset.id}
-                  disabled={!configured}
-                >
-                  {preset.label}{!configured ? " (not configured)" : ""}
-                </option>
-              );
-            })}
-            <option value="custom">Custom…</option>
-          </select>
-        </div>
-      ) : null}
+        <>
+          {/* Recipient selector */}
+          <div className="invoice-email-field">
+            <label className="invoice-label-sm" htmlFor="inv-email-preset">Recipient</label>
+            <select
+              id="inv-email-preset"
+              className="invoice-select invoice-email-select"
+              value={dialog.presetId}
+              disabled={isBusy}
+              onChange={(e) => onChange((prev) => ({ ...prev, presetId: e.target.value, customTo: "", error: null }))}
+            >
+              <option value="">Choose recipient…</option>
+              {RECIPIENT_PRESETS.map((preset) => {
+                const configured = isPresetConfigured(preset);
+                return (
+                  <option key={preset.id} value={preset.id} disabled={!configured}>
+                    {preset.label}{!configured ? " (not configured)" : ""}
+                  </option>
+                );
+              })}
+              <option value="custom">Custom…</option>
+            </select>
+          </div>
 
-      {/* Custom address input — only shown when "Custom" is selected */}
-      {dialog.presetId === "custom" && !isDone ? (
-        <div className="invoice-email-field">
-          <label className="invoice-label-sm" htmlFor="inv-email-custom">Email address</label>
-          <input
-            id="inv-email-custom"
-            type="email"
-            className="invoice-email-full-input"
-            value={dialog.customTo}
-            onChange={(e) => onChange((prev) => ({ ...prev, customTo: e.target.value, error: null }))}
-            placeholder="client@example.com"
-            disabled={isBusy}
-            autoFocus
-          />
-        </div>
-      ) : null}
-
-      {/* Address preview — shown once a valid preset or custom address is entered */}
-      {previewUnconfigured && !isDone ? (
-        <p className="invoice-status-muted invoice-email-preview">
-          This preset is not configured yet. Edit <code>lib/invoice-recipients.ts</code> to add the address.
-        </p>
-      ) : previewTo.length > 0 && !isDone ? (
-        <div className="invoice-email-preview">
-          <p className="invoice-label-sm">Will send to:</p>
-          <p className="invoice-email-preview-addr">To: {previewTo.join(", ")}</p>
-          {previewCc.length > 0 ? (
-            <p className="invoice-email-preview-addr">CC: {previewCc.join(", ")}</p>
+          {dialog.presetId === "custom" ? (
+            <div className="invoice-email-field">
+              <label className="invoice-label-sm" htmlFor="inv-email-custom">Email address</label>
+              <input
+                id="inv-email-custom"
+                type="email"
+                className="invoice-email-full-input"
+                value={dialog.customTo}
+                onChange={(e) => onChange((prev) => ({ ...prev, customTo: e.target.value, error: null }))}
+                placeholder="client@example.com"
+                disabled={isBusy}
+                autoFocus
+              />
+            </div>
           ) : null}
-        </div>
-      ) : null}
 
-      {/* Success */}
-      {isDone ? (
+          {previewUnconfigured ? (
+            <p className="invoice-status-muted invoice-email-preview">
+              This preset is not configured yet. Edit <code>lib/invoice-recipients.ts</code> to add the address.
+            </p>
+          ) : null}
+
+          {/* Review preview */}
+          <div className="invoice-email-review">
+            <div className="invoice-email-review-row">
+              <span className="invoice-label-sm">To</span>
+              <span>{toDisplay}</span>
+            </div>
+            <div className="invoice-email-review-row">
+              <span className="invoice-label-sm">Subject</span>
+              <span>{subject}</span>
+            </div>
+            <div className="invoice-email-review-row invoice-email-review-row--body">
+              <span className="invoice-label-sm">Message</span>
+              <pre className="invoice-email-review-body">{body}</pre>
+            </div>
+            <div className="invoice-email-review-row">
+              <span className="invoice-label-sm">Attachment</span>
+              <span>{filename}</span>
+            </div>
+          </div>
+        </>
+      ) : (
         <p className="invoice-sync-success">
           Invoice sent to {previewTo.join(", ")}.
           {previewCc.length > 0 ? ` CC: ${previewCc.join(", ")}` : ""}
         </p>
-      ) : null}
+      )}
 
-      {/* Error */}
       {dialog.error ? (
         <p className="invoice-error" role="alert">{dialog.error}</p>
       ) : null}
 
-      {/* Actions */}
       <div className="invoice-email-actions">
         {!isDone ? (
           <button
@@ -663,6 +721,7 @@ export function InvoiceSection({
   const [pdfState, setPdfState] = useState<PdfState>({ status: "idle", error: null });
   const [renumberState, setRenumberState] = useState<RenumberState>({ status: "idle", error: null });
   const [emailDialog, setEmailDialog] = useState<EmailDialogState>(EMAIL_DIALOG_RESET);
+  const [sentDetailsOpen, setSentDetailsOpen] = useState(false);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestKey = `${eventId}::${workDates.join("|")}`;
@@ -1151,6 +1210,15 @@ export function InvoiceSection({
     displayedInvoiceTotal != null ? Math.max(displayedInvoiceTotal - amountPaid, 0) : null
   );
   const invoiceStatusLabel = currentStatus ? INVOICE_STATUS_LABELS[currentStatus] : "Not sent";
+  const invoiceSentAt = invoiceData?.invoice_sent_at ?? null;
+  const invoiceSentTo = invoiceData?.invoice_sent_to ?? null;
+
+  // Email preview — computed client-side to match what the server will send
+  const previewJobTitle = emailStripLaPrefix(gigSummary, laNumber);
+  const previewWorkDates = p ? emailWorkDateRange(p.workdays) : "";
+  const emailSubject = buildPreviewSubject(laNumber, previewJobTitle);
+  const emailBody = buildPreviewBody(laNumber, previewJobTitle, previewWorkDates);
+  const emailFilename = buildPreviewFilename(laNumber, previewJobTitle, invoiceNumber);
 
   // Per-day mileage is the source of truth. Legacy total_miles only matters when
   // no per-day mileage has been entered yet.
@@ -1382,6 +1450,12 @@ export function InvoiceSection({
                     <dt>Status</dt>
                     <dd>{invoiceStatusLabel}</dd>
                   </div>
+                  {invoiceSentAt ? (
+                    <div className="invoice-status-grid-row">
+                      <dt>Sent</dt>
+                      <dd>{(() => { try { return new Date(invoiceSentAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return invoiceSentAt; } })()}</dd>
+                    </div>
+                  ) : null}
                   <div className="invoice-status-grid-row">
                     <dt>Total</dt>
                     <dd>{displayedInvoiceTotal != null ? fmtCurrency(displayedInvoiceTotal) : "—"}</dd>
@@ -1395,6 +1469,46 @@ export function InvoiceSection({
                     <dd>{displayedBalanceDue != null ? fmtCurrency(displayedBalanceDue) : "—"}</dd>
                   </div>
                 </dl>
+                {(invoiceSentAt || invoiceSentTo) ? (
+                  <div className="invoice-sent-summary">
+                    <button
+                      type="button"
+                      className="invoice-sent-toggle"
+                      onClick={() => setSentDetailsOpen((v) => !v)}
+                      aria-expanded={sentDetailsOpen}
+                    >
+                      Sent details {sentDetailsOpen ? "▾" : "▸"}
+                    </button>
+                    {sentDetailsOpen ? (
+                      <div className="invoice-sent-details">
+                        {invoiceSentTo ? (
+                          <div className="invoice-sent-detail-row">
+                            <span className="invoice-label-sm">Sent to</span>
+                            <span>{invoiceSentTo}</span>
+                          </div>
+                        ) : null}
+                        {invoiceSentAt ? (
+                          <div className="invoice-sent-detail-row">
+                            <span className="invoice-label-sm">Sent at</span>
+                            <span>{(() => {
+                              try {
+                                const d = new Date(invoiceSentAt);
+                                const m = d.getMonth() + 1;
+                                const dy = d.getDate();
+                                const yr = String(d.getFullYear()).slice(-2);
+                                const h = d.getHours();
+                                const min = String(d.getMinutes()).padStart(2, "0");
+                                const ampm = h >= 12 ? "PM" : "AM";
+                                const h12 = h % 12 || 12;
+                                return `${m}/${dy}/${yr} ${h12}:${min} ${ampm}`;
+                              } catch { return invoiceSentAt; }
+                            })()}</span>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
 
               {/* Convert legacy JU-style number to numeric */}
@@ -1450,7 +1564,7 @@ export function InvoiceSection({
                     className="invoice-pdf-email-btn"
                     onClick={() => setEmailDialog({ ...EMAIL_DIALOG_RESET, open: true })}
                   >
-                    Email Invoice
+                    Review
                   </button>
                 ) : null}
               </div>
@@ -1462,6 +1576,9 @@ export function InvoiceSection({
                   onChange={setEmailDialog}
                   onSend={() => { void handleSendEmail(); }}
                   onClose={() => setEmailDialog(EMAIL_DIALOG_RESET)}
+                  subject={emailSubject}
+                  body={emailBody}
+                  filename={emailFilename}
                 />
               ) : null}
 

@@ -34,6 +34,7 @@ function coerceInvoiceData(row: Record<string, unknown>): InvoiceData {
     invoice_pdf_url: row.invoice_pdf_url != null ? String(row.invoice_pdf_url) : null,
     invoice_created_at: row.invoice_created_at != null ? String(row.invoice_created_at) : null,
     invoice_sent_at: row.invoice_sent_at != null ? String(row.invoice_sent_at) : null,
+    invoice_sent_to: row.invoice_sent_to != null ? String(row.invoice_sent_to) : null,
     invoice_total: row.invoice_total != null ? Number(row.invoice_total) : null,
     amount_paid: Number(row.amount_paid ?? 0),
     remaining_balance: row.remaining_balance != null ? Number(row.remaining_balance) : null,
@@ -145,6 +146,7 @@ export interface InvoiceDataPatch {
   invoice_pdf_url?: string | null;
   invoice_created_at?: string | null;
   invoice_sent_at?: string | null;
+  invoice_sent_to?: string | null;
   invoice_total?: number | null;
   amount_paid?: number;
   remaining_balance?: number | null;
@@ -270,15 +272,19 @@ export async function markInvoicePdfCreated(
 export async function markInvoiceSent(
   googleEventId: string,
   sentAt: string,
+  sentTo?: string | null,
 ): Promise<void> {
   const client = getSupabaseServerClient();
+  const patch: Record<string, unknown> = {
+    invoice_sent_at: sentAt,
+    invoice_status: "sent",
+    updated_at: sentAt,
+  };
+  if (sentTo != null) patch.invoice_sent_to = sentTo;
+
   const { error } = await client
     .from("invoice_data")
-    .update({
-      invoice_sent_at: sentAt,
-      invoice_status: "sent",
-      updated_at: sentAt,
-    })
+    .update(patch)
     .eq("google_event_id", googleEventId)
     .in("invoice_status", ["sheet_synced", "draft_created", "sent"]);
 

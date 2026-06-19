@@ -5619,6 +5619,47 @@ html.modal-open body {
   margin: 0;
 }
 
+/* Collapsed sent-details section inside the invoice status card */
+.invoice-sent-summary {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.invoice-sent-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: inherit;
+  letter-spacing: 0.01em;
+}
+
+.invoice-sent-toggle:hover {
+  color: var(--text);
+}
+
+.invoice-sent-details {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.invoice-sent-detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.invoice-sent-detail-row span:last-child {
+  font-size: 0.82rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
 .invoice-sync-row--secondary {
   border-top: 1px dashed var(--border);
   padding-top: 12px;
