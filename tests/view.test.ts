@@ -515,6 +515,49 @@ describe("trimWeekRowsForScheduleList", () => {
     expect(out[1]?.days).toHaveLength(7);
   });
 
+  it("keeps original multi-day event bounds on visible continuation rows after past rows are trimmed", () => {
+    const weeks = buildDayBoard({
+      ...baseOpts,
+      snapshot: makeSnapshot({
+        generatedAtUtc: "2026-06-19T16:00:00.000Z",
+        windowStartUtc: "2026-06-15T04:00:00.000Z",
+        windowEndUtc: "2026-06-29T04:00:00.000Z",
+        busy: [
+          { startUtc: "2026-06-18T04:00:00.000Z", endUtc: "2026-06-21T04:00:00.000Z" },
+        ],
+        namedEvents: [
+          {
+            startUtc: "2026-06-18T04:00:00.000Z",
+            endUtc: "2026-06-21T04:00:00.000Z",
+            summary: "LA#5555 Test Job",
+            eventId: "evt-la5555",
+            calendarId: "jobs",
+            displayMode: "details",
+          },
+        ],
+      }),
+      startDate: "2026-06-15",
+      todayKey: "2026-06-19",
+    });
+
+    const out = trimWeekRowsForScheduleList({
+      weeks,
+      selectedWeekStart: "2026-06-15",
+      currentWeekStart: "2026-06-15",
+      todayKey: "2026-06-19",
+    });
+
+    expect(out[0]?.days.map((d) => d.date)).toEqual([
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+    ]);
+    const visibleContinuation = out[0]?.days.find((day) => day.date === "2026-06-19");
+    const detail = visibleContinuation?.eventDetails?.[0];
+    expect(detail?.startDate).toBe("2026-06-18");
+    expect(detail?.endDateInclusive).toBe("2026-06-20");
+  });
+
   it("keeps all 7 days for a selected future week", () => {
     const weeks = buildDayBoard({
       ...baseOpts,

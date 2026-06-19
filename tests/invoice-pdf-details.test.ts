@@ -69,6 +69,28 @@ function fmtWorkDates(workdays: Array<{ date: string }>): string {
   return `${fmtShortDate(start, includeYear)} - ${fmtShortDate(end, includeYear)}`;
 }
 
+function fmtCompactTime(raw: string): string {
+  const trimmed = raw.trim();
+  const match = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i.exec(trimmed);
+  if (!match) return trimmed.replace(/\s+/g, "").toLowerCase();
+  const hour = Number(match[1]);
+  const minute = match[2] ?? "00";
+  const meridiem = (match[3] ?? "").toLowerCase();
+  return `${hour}:${minute}${meridiem}`;
+}
+
+function fmtWorkedDateTimes(workdays: Array<{ date: string; startTime: string; endTime: string }>): string {
+  return workdays
+    .map((workday) => {
+      const date = fmtShortDate(workday.date);
+      const start = fmtCompactTime(workday.startTime);
+      const end = fmtCompactTime(workday.endTime);
+      if (!start || !end) return date;
+      return `${date} - ${start}-${end}`;
+    })
+    .join("\n");
+}
+
 function addDaysIso(isoDate: string, days: number): string {
   const [y, mo, d] = isoDate.split("-").map(Number);
   const date = new Date(Number(y), Number(mo) - 1, Number(d));
@@ -376,6 +398,24 @@ describe("date formatting", () => {
       workdays: [],
     });
     expect(workDateStr).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PDF line-item description — all worked dates/times
+// ---------------------------------------------------------------------------
+
+describe("worked date/time description", () => {
+  it("includes all saved workdays, including past and overnight rows", () => {
+    expect(fmtWorkedDateTimes([
+      { date: "2026-06-18", startTime: "6:00 AM", endTime: "11:30 PM" },
+      { date: "2026-06-19", startTime: "9:00 AM", endTime: "7:00 PM" },
+      { date: "2026-06-20", startTime: "3:00 PM", endTime: "4:30 AM" },
+    ])).toBe([
+      "6/18 - 6:00am-11:30pm",
+      "6/19 - 9:00am-7:00pm",
+      "6/20 - 3:00pm-4:30am",
+    ].join("\n"));
   });
 });
 

@@ -11,6 +11,7 @@ import {
 } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
 import { isJeffLikeProfile, resolveEditorProfile } from "@/lib/editor-profiles";
+import { buildInvoiceWorkDates } from "@/lib/invoice-calculations";
 import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { JobTimeSection } from "@/components/JobTimeSection";
@@ -333,11 +334,47 @@ export function buildWeekBookedBadgeDisplay(opts: {
   };
 }
 
-function detailIncludesDate(detail: BookedLabel["details"][number], date: string): boolean {
+function resolveDetailRangeBounds(detail: BookedLabel["details"][number]): { startDate: string; endDateInclusive: string } | null {
   const startDate = detail.startDate ?? detail.startUtc?.slice(0, 10);
-  const endDate = detail.endDateInclusive ?? detail.endUtc?.slice(0, 10) ?? startDate;
-  if (!startDate || !endDate) return false;
-  return date >= startDate && date <= endDate;
+  const endDateInclusive = detail.endDateInclusive ?? detail.endUtc?.slice(0, 10) ?? startDate;
+  if (!startDate || !endDateInclusive || endDateInclusive < startDate) return null;
+  return { startDate, endDateInclusive };
+}
+
+function mergeRangeBounds(
+  current: { startDate: string; endDateInclusive: string } | null,
+  next: { startDate: string; endDateInclusive: string } | null,
+): { startDate: string; endDateInclusive: string } | null {
+  if (!next) return current;
+  if (!current) return next;
+  return {
+    startDate: next.startDate < current.startDate ? next.startDate : current.startDate,
+    endDateInclusive: next.endDateInclusive > current.endDateInclusive
+      ? next.endDateInclusive
+      : current.endDateInclusive,
+  };
+}
+
+function resolveInvoiceRangeBounds(
+  primaryDetail: BookedLabel["details"][number] | null,
+  details: BookedLabel["details"],
+): { startDate: string; endDateInclusive: string } | null {
+  if (!primaryDetail) return null;
+  const primaryEventId = primaryDetail.eventId?.trim();
+  const candidateDetails = primaryEventId
+    ? details.filter((detail) => detail.eventId?.trim() === primaryEventId)
+    : [primaryDetail];
+  const merged = candidateDetails.reduce<{ startDate: string; endDateInclusive: string } | null>(
+    (acc, detail) => mergeRangeBounds(acc, resolveDetailRangeBounds(detail)),
+    null,
+  );
+  return merged ?? resolveDetailRangeBounds(primaryDetail);
+}
+
+function detailIncludesDate(detail: BookedLabel["details"][number], date: string): boolean {
+  const bounds = resolveDetailRangeBounds(detail);
+  if (!bounds) return false;
+  return date >= bounds.startDate && date <= bounds.endDateInclusive;
 }
 
 export function resolveSelectedDayPopupMeta(
@@ -1093,31 +1130,21 @@ export function DayBoard({
   const activeSelectedDayMeta = activePrimaryDetail && activeSelectedDate
     ? resolveSelectedDayPopupMeta(activePrimaryDetail, activeSelectedDate)
     : null;
-  const jobTimeWorkDates = activePrimaryDetail?.startDate
-    ? enumerateIsoDatesInRange(
-        activePrimaryDetail.startDate,
-        activePrimaryDetail.endDateInclusive ?? activePrimaryDetail.startDate,
-      )
-    : [];
   const activeDetailRangeBounds = activeDetailPanel
     ? activeDetailPanel.details
-      .map((detail) => {
-        const startDate = detail.startDate ?? detail.startUtc?.slice(0, 10);
-        const endDateInclusive = detail.endDateInclusive ?? detail.endUtc?.slice(0, 10) ?? startDate;
-        if (!startDate || !endDateInclusive || endDateInclusive < startDate) return null;
-        return { startDate, endDateInclusive };
-      })
+      .map(resolveDetailRangeBounds)
       .filter((value): value is { startDate: string; endDateInclusive: string } => value != null)
       .reduce<{ startDate: string; endDateInclusive: string } | null>((acc, current) => {
-        if (!acc) return current;
-        return {
-          startDate: current.startDate < acc.startDate ? current.startDate : acc.startDate,
-          endDateInclusive: current.endDateInclusive > acc.endDateInclusive
-            ? current.endDateInclusive
-            : acc.endDateInclusive,
-        };
+        return mergeRangeBounds(acc, current);
       }, null)
     : null;
+  const activeInvoiceRangeBounds = resolveInvoiceRangeBounds(
+    activePrimaryDetail,
+    activeDetailPanel?.details ?? [],
+  );
+  const jobTimeWorkDates = activeInvoiceRangeBounds
+    ? buildInvoiceWorkDates(activeInvoiceRangeBounds.startDate, activeInvoiceRangeBounds.endDateInclusive)
+    : [];
   const activeDetailIsMultiDay = !!(
     activeDetailRangeBounds
     && activeDetailRangeBounds.startDate !== activeDetailRangeBounds.endDateInclusive

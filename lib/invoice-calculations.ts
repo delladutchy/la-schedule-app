@@ -21,6 +21,7 @@ import type {
 
 const TIME_12_RE = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i;
 const TIME_24_RE = /^(\d{1,2}):(\d{2})$/;
+const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /** Convert a human time string to minutes-since-midnight. Returns null on parse failure. */
 export function parseTimeToMinutes(raw: string): number | null {
@@ -68,6 +69,76 @@ export function calculateHours(startTime: string, endTime: string): {
 /** Round to 2 decimal places (for display/sheet). */
 export function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function normalizeIsoDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  const match = ISO_DATE_RE.exec(trimmed);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year
+    || parsed.getUTCMonth() + 1 !== month
+    || parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function enumerateInvoiceDateRange(startDate: string, endDateInclusive: string): string[] {
+  const start = normalizeIsoDate(startDate);
+  const end = normalizeIsoDate(endDateInclusive);
+  if (!start || !end || end < start) return [];
+
+  const [startYear, startMonth, startDay] = start.split("-").map(Number);
+  const [endYear, endMonth, endDay] = end.split("-").map(Number);
+  const cursor = new Date(Date.UTC(startYear!, startMonth! - 1, startDay!));
+  const last = Date.UTC(endYear!, endMonth! - 1, endDay!);
+  const dates: string[] = [];
+
+  while (cursor.getTime() <= last) {
+    const year = cursor.getUTCFullYear();
+    const month = String(cursor.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(cursor.getUTCDate()).padStart(2, "0");
+    dates.push(`${year}-${month}-${day}`);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return dates;
+}
+
+export function mergeInvoiceWorkDates(
+  expectedDates: string[],
+  existing: WorkdayEntry[] = [],
+): string[] {
+  const dates = new Set<string>();
+  for (const date of expectedDates) {
+    const normalized = normalizeIsoDate(date);
+    if (normalized) dates.add(normalized);
+  }
+  for (const entry of existing) {
+    const normalized = normalizeIsoDate(entry.date);
+    if (normalized) dates.add(normalized);
+  }
+  return [...dates].sort();
+}
+
+export function buildInvoiceWorkDates(
+  startDate: string | null | undefined,
+  endDateInclusive: string | null | undefined,
+  existing: WorkdayEntry[] = [],
+): string[] {
+  const rangeDates = startDate
+    ? enumerateInvoiceDateRange(startDate, endDateInclusive ?? startDate)
+    : [];
+  return mergeInvoiceWorkDates(rangeDates, existing);
 }
 
 /** Deduction miles that apply per mode under the Light Action agreement. */
@@ -121,7 +192,10 @@ export function calculateMileage(
  *     with scheduled defaults, even if the calendar event later changes.
  *  2. If no saved entry exists for a date (brand-new job), create one seeded
  *     with the scheduled event start/end times as defaults.
- *  3. If no defaults are provided, create an empty entry.
+ *  3. Preserve saved rows even when the caller's expected dates are clipped to
+ *     a current/visible day slice. Invoice editing is after-the-fact and must
+ *     not drop past workdays.
+ *  4. If no defaults are provided, create an empty entry.
  *
  * This function is pure — it never mutates existing entries.
  */
@@ -132,7 +206,7 @@ export function initWorkdayEntries(
   defaultEnd?: string,
 ): WorkdayEntry[] {
   const savedByDate = new Map(existing.map((e) => [e.date, e]));
-  return dates.map((date) => {
+  return mergeInvoiceWorkDates(dates, existing).map((date) => {
     const saved = savedByDate.get(date);
     if (saved) return saved; // always trust saved data over calendar defaults
     return { date, startTime: defaultStart ?? "", endTime: defaultEnd ?? "" };

@@ -7,6 +7,7 @@ import { DateTime } from "luxon";
 import { summarizeBookedDayLabel, type MonthBoardData } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
 import { isJeffLikeProfile, resolveEditorProfile } from "@/lib/editor-profiles";
+import { buildInvoiceWorkDates } from "@/lib/invoice-calculations";
 import {
   buildGigDayDetailsForRange,
   buildGigDescription,
@@ -197,6 +198,36 @@ function resolveDetailRangeBounds(detail: BookedLabel["details"][number]): { sta
   const endDateInclusive = detail.endDateInclusive ?? detail.endUtc?.slice(0, 10) ?? startDate;
   if (!startDate || !endDateInclusive || endDateInclusive < startDate) return null;
   return { startDate, endDateInclusive };
+}
+
+function mergeRangeBounds(
+  current: { startDate: string; endDateInclusive: string } | null,
+  next: { startDate: string; endDateInclusive: string } | null,
+): { startDate: string; endDateInclusive: string } | null {
+  if (!next) return current;
+  if (!current) return next;
+  return {
+    startDate: next.startDate < current.startDate ? next.startDate : current.startDate,
+    endDateInclusive: next.endDateInclusive > current.endDateInclusive
+      ? next.endDateInclusive
+      : current.endDateInclusive,
+  };
+}
+
+function resolveInvoiceRangeBounds(
+  primaryDetail: BookedLabel["details"][number] | null,
+  details: BookedLabel["details"],
+): { startDate: string; endDateInclusive: string } | null {
+  if (!primaryDetail) return null;
+  const primaryEventId = primaryDetail.eventId?.trim();
+  const candidateDetails = primaryEventId
+    ? details.filter((detail) => detail.eventId?.trim() === primaryEventId)
+    : [primaryDetail];
+  const merged = candidateDetails.reduce<{ startDate: string; endDateInclusive: string } | null>(
+    (acc, detail) => mergeRangeBounds(acc, resolveDetailRangeBounds(detail)),
+    null,
+  );
+  return merged ?? resolveDetailRangeBounds(primaryDetail);
 }
 
 function detailIncludesDate(detail: BookedLabel["details"][number], date: string): boolean {
@@ -1006,13 +1037,7 @@ export function MonthBoard({
       .map(resolveDetailRangeBounds)
       .filter((value): value is { startDate: string; endDateInclusive: string } => value != null)
       .reduce<{ startDate: string; endDateInclusive: string } | null>((acc, current) => {
-        if (!acc) return current;
-        return {
-          startDate: current.startDate < acc.startDate ? current.startDate : acc.startDate,
-          endDateInclusive: current.endDateInclusive > acc.endDateInclusive
-            ? current.endDateInclusive
-            : acc.endDateInclusive,
-        };
+        return mergeRangeBounds(acc, current);
       }, null)
     : null;
   const activeDetailRangeLabel = activeDetailRangeBounds
@@ -1024,9 +1049,12 @@ export function MonthBoard({
     return activeDetailPanel.details[0] ?? null;
   })();
   const jobTimeWorkDates = (() => {
-    const d = activeJobTimeDetail;
-    if (!d?.startDate) return [];
-    return enumerateIsoDatesInRange(d.startDate, d.endDateInclusive ?? d.startDate);
+    const bounds = resolveInvoiceRangeBounds(
+      activeJobTimeDetail,
+      activeDetailPanel?.details ?? [],
+    );
+    if (!bounds) return [];
+    return buildInvoiceWorkDates(bounds.startDate, bounds.endDateInclusive);
   })();
   const activeDetailIsMultiDay = !!(
     activeDetailRangeBounds

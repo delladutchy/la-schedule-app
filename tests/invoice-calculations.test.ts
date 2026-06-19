@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildInvoiceWorkDates,
   parseTimeToMinutes,
   calculateHours,
   calculateMileage,
   calculateWorkdayMileage,
   getDefaultDeductionForMode,
   initWorkdayEntries,
+  mergeInvoiceWorkDates,
   calculateInvoicePacket,
   generateSheetRow,
   round2,
@@ -51,6 +53,12 @@ describe("calculateHours", () => {
     const result = calculateHours("8:00 PM", "7:00 AM");
     expect(result.totalHours).toBeCloseTo(11);
     expect(result.overtimeHours).toBeCloseTo(1);
+  });
+
+  it("overnight: 3:00 PM to 4:30 AM = 13.5 h total, 3.5 OT", () => {
+    const result = calculateHours("3:00 PM", "4:30 AM");
+    expect(result.totalHours).toBeCloseTo(13.5);
+    expect(result.overtimeHours).toBeCloseTo(3.5);
   });
 
   it("exact 10 hours = 0 OT", () => {
@@ -463,6 +471,22 @@ describe("initWorkdayEntries — default time behavior", () => {
   const DEFAULT_START = "6:00 AM";
   const DEFAULT_END = "5:00 PM";
 
+  it("builds the full event range for 6/18 - 6/20, independent of today/current day", () => {
+    const afterEventToday = "2026-07-15";
+    expect(afterEventToday > "2026-06-20").toBe(true);
+    expect(buildInvoiceWorkDates("2026-06-18", "2026-06-20")).toEqual(DATES);
+  });
+
+  it("merges visible/current-day dates with saved past rows without dropping 6/18", () => {
+    const visibleDates = ["2026-06-19", "2026-06-20"];
+    const saved: WorkdayEntry[] = [
+      { date: "2026-06-18", startTime: "7:30 AM", endTime: "8:00 PM" },
+    ];
+
+    expect(mergeInvoiceWorkDates(visibleDates, saved)).toEqual(DATES);
+    expect(initWorkdayEntries(saved, visibleDates, DEFAULT_START, DEFAULT_END).map((e) => e.date)).toEqual(DATES);
+  });
+
   it("new job (no saved data): seeds all dates with scheduled event times", () => {
     const entries = initWorkdayEntries([], DATES, DEFAULT_START, DEFAULT_END);
     expect(entries).toHaveLength(3);
@@ -493,6 +517,20 @@ describe("initWorkdayEntries — default time behavior", () => {
     const second = entries.find((e) => e.date === "2026-06-19")!;
     expect(second.startTime).toBe(DEFAULT_START);
     expect(second.endTime).toBe(DEFAULT_END);
+  });
+
+  it("editing 6/18 after the fact persists after closing/reopening the job", () => {
+    const saved: WorkdayEntry[] = [
+      { date: "2026-06-18", startTime: "7:30 AM", endTime: "8:00 PM" },
+      { date: "2026-06-19", startTime: "9:00 AM", endTime: "7:00 PM" },
+      { date: "2026-06-20", startTime: "9:00 AM", endTime: "6:00 PM" },
+    ];
+
+    const reopened = initWorkdayEntries(saved, DATES, DEFAULT_START, DEFAULT_END);
+    expect(reopened.find((e) => e.date === "2026-06-18")).toMatchObject({
+      startTime: "7:30 AM",
+      endTime: "8:00 PM",
+    });
   });
 
   it("saved values are never overwritten by defaults: even empty strings are preserved", () => {
@@ -527,6 +565,54 @@ describe("initWorkdayEntries — default time behavior", () => {
     const original = JSON.stringify(saved);
     initWorkdayEntries(saved, DATES, DEFAULT_START, DEFAULT_END);
     expect(JSON.stringify(saved)).toBe(original);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Complete workday pipeline — preview/PDF/sheet source data
+// ---------------------------------------------------------------------------
+
+describe("complete multi-day invoice workdays", () => {
+  const COMPLETE_WORKDAYS: WorkdayEntry[] = [
+    { date: "2026-06-18", startTime: "6:00 AM", endTime: "11:30 PM" },
+    { date: "2026-06-19", startTime: "9:00 AM", endTime: "7:00 PM" },
+    { date: "2026-06-20", startTime: "3:00 PM", endTime: "4:30 AM" },
+  ];
+
+  it("invoice preview calculations include all saved days and overnight OT", () => {
+    const data = makeInvoiceData({
+      day_rate: 800,
+      overtime_rate: 100,
+      per_diem_rate: 40,
+      workday_entries: COMPLETE_WORKDAYS,
+    });
+    const p = calculateInvoicePacket(data);
+
+    expect(p.workdays.map((w) => w.date)).toEqual(["2026-06-18", "2026-06-19", "2026-06-20"]);
+    expect(p.dayRateQty).toBe(3);
+    expect(p.dayRateTotal).toBe(2400);
+    expect(p.totalOvertimeHours).toBe(11);
+    expect(p.overtimeTotal).toBe(1100);
+    expect(p.perDiemQty).toBe(3);
+    expect(p.perDiemTotal).toBe(120);
+    expect(p.estimatedTotal).toBe(3620);
+  });
+
+  it("Google Sheet row uses the complete saved workday packet", () => {
+    const data = makeInvoiceData({
+      day_rate: 800,
+      overtime_rate: 100,
+      per_diem_rate: 40,
+      workday_entries: COMPLETE_WORKDAYS,
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "LA#5555 — Test Job");
+
+    expect(row.labor).toBe(2400);
+    expect(row.ot).toBe(1100);
+    expect(row.perDiem).toBe(120);
+    expect(row.totalPay).toBe(3620);
+    expect(row.remainingBalance).toBe(3620);
   });
 });
 

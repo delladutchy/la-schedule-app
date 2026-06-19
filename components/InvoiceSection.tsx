@@ -11,6 +11,7 @@ import {
   type RecipientPreset,
 } from "@/lib/invoice-recipients";
 import {
+  calculateInvoicePacket,
   calculateWorkdayMileage,
   getDefaultDeductionForMode,
   initWorkdayEntries,
@@ -795,9 +796,11 @@ export function InvoiceSection({
 
         const data = json.invoiceData;
         if (data) {
-          setInvoiceData(data);
-          setPacket(json.packet);
-          setWorkdayEntries(initWorkdayEntries(data.workday_entries, workDates, defaultStartTime, defaultEndTime));
+          const mergedWorkdays = initWorkdayEntries(data.workday_entries, workDates, defaultStartTime, defaultEndTime);
+          const mergedData = { ...data, workday_entries: mergedWorkdays };
+          setInvoiceData(mergedData);
+          setPacket(calculateInvoicePacket(mergedData));
+          setWorkdayEntries(mergedWorkdays);
           const exp: ExpenseFields = {
             bag_fees: data.bag_fees != null ? String(data.bag_fees) : "",
             hotel: data.hotel != null ? String(data.hotel) : "",
@@ -967,7 +970,11 @@ export function InvoiceSection({
   function scheduleSave(patch: Record<string, unknown>) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     // Always include gigSummary so the server-side background sheet sync has the full job title.
-    saveTimer.current = setTimeout(() => { void save({ ...patch, gigSummary }); }, 600);
+    // Always include the current merged workday list so past/missing invoice days cannot be
+    // dropped by an expense/text-only autosave.
+    saveTimer.current = setTimeout(() => {
+      void save({ workday_entries: workdayEntries, ...patch, gigSummary });
+    }, 600);
   }
 
   // ---------------------------------------------------------------------------
@@ -977,6 +984,11 @@ export function InvoiceSection({
   function handleWorkdayChange(index: number, patch: Partial<WorkdayEntry>) {
     const updated = workdayEntries.map((e, i) => i === index ? { ...e, ...patch } : e);
     setWorkdayEntries(updated);
+    if (invoiceData) {
+      const optimisticData = { ...invoiceData, workday_entries: updated };
+      setInvoiceData(optimisticData);
+      setPacket(calculateInvoicePacket(optimisticData));
+    }
     scheduleSave({ workday_entries: updated });
   }
 
@@ -1005,6 +1017,15 @@ export function InvoiceSection({
     const prevSyncedAt = syncState.syncedAt;
     setSyncState((prev) => ({ ...prev, status: "syncing", message: null }));
     try {
+      const saved = await flushCurrentInvoiceInputs();
+      if (!saved) {
+        setSyncState({
+          status: "error",
+          message: "Could not save latest invoice data before sheet sync.",
+          syncedAt: prevSyncedAt,
+        });
+        return;
+      }
       const res = await fetch("/api/invoice/sync-sheet", {
         method: "POST",
         headers: buildAuthHeaders(editorToken),
