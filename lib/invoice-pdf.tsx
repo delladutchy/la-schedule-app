@@ -250,13 +250,17 @@ const styles = StyleSheet.create({
     fontSize: 8.6,
     color: C.body,
     lineHeight: 1.35,
+    marginBottom: 1,
+  },
+  signatureGroup: {
+    marginTop: 0,
     marginBottom: 2,
   },
   signature: {
-    width: 96,
+    width: 50,
     marginTop: 0,
-    marginLeft: -2,
-    marginBottom: 2,
+    marginLeft: -1,
+    marginBottom: 0,
   },
   signatureFallback: {
     fontSize: 9,
@@ -620,11 +624,13 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, si
         <View style={styles.lowerSection}>
           <View style={styles.noteBox}>
             <Text style={styles.noteTitle}>Note to customer</Text>
-            <Text style={styles.noteText}>Thanks again,</Text>
-            {signatureSrc
-              ? <Image src={signatureSrc} style={styles.signature} />
-              : <Text style={styles.signatureFallback}>Jeff</Text>
-            }
+            <View style={styles.signatureGroup} wrap={false}>
+              <Text style={styles.noteText}>Thanks again,</Text>
+              {signatureSrc
+                ? <Image src={signatureSrc} style={styles.signature} />
+                : <Text style={styles.signatureFallback}>Jeff</Text>
+              }
+            </View>
             {packet.expenseNotes ? (
               <Text style={styles.expenseNoteText}>Expense notes: {packet.expenseNotes}</Text>
             ) : null}
