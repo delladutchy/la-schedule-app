@@ -792,6 +792,57 @@ export function InvoiceSection({
     }
   }
 
+  function parseExpenseInput(value: string): number | null {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const num = parseFloat(trimmed);
+    return isNaN(num) ? null : num;
+  }
+
+  function buildCurrentInvoiceInputPatch(): Record<string, unknown> {
+    return {
+      workday_entries: workdayEntries,
+      bag_fees: parseExpenseInput(expenses.bag_fees),
+      hotel: parseExpenseInput(expenses.hotel),
+      parking: parseExpenseInput(expenses.parking),
+      tolls: parseExpenseInput(expenses.tolls),
+      uber: parseExpenseInput(expenses.uber),
+      other_expenses: parseExpenseInput(expenses.other_expenses),
+      expense_notes: expenses.expense_notes.trim() ? expenses.expense_notes : null,
+    };
+  }
+
+  async function flushCurrentInvoiceInputs(): Promise<{ invoiceData: InvoiceData; packet: InvoicePacket } | null> {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      const res = await fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
+        method: "PATCH",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        body: JSON.stringify(buildCurrentInvoiceInputPatch()),
+      });
+      if (!res.ok) {
+        setSaveError("Could not save invoice data. Try again.");
+        return null;
+      }
+      const json = await res.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
+      setInvoiceData(json.invoiceData);
+      setPacket(json.packet);
+      return json;
+    } catch {
+      setSaveError("Network error saving invoice data. Try again.");
+      return null;
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   function scheduleSave(patch: Record<string, unknown>) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => { void save(patch); }, 600);
@@ -889,32 +940,13 @@ export function InvoiceSection({
       template: "orange-2026",
     });
 
-    // Cancel any pending debounced save so we don't double-write after the flush.
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
-
     setPdfState({ status: "generating", error: null });
     setSaveError(null);
 
-    // Step 1: flush current workday state to DB before the PDF route reads it.
-    try {
-      const flushRes = await fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
-        method: "PATCH",
-        headers: buildAuthHeaders(editorToken),
-        credentials: "same-origin",
-        body: JSON.stringify({ workday_entries: workdayEntries }),
-      });
-      if (!flushRes.ok) {
-        setPdfState({ status: "error", error: "Could not save invoice data — try again" });
-        return;
-      }
-      const flushJson = await flushRes.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
-      setInvoiceData(flushJson.invoiceData);
-      setPacket(flushJson.packet);
-    } catch {
-      setPdfState({ status: "error", error: "Network error — could not save before generating PDF" });
+    // Step 1: flush all current invoice inputs to DB before the PDF route reads them.
+    const flushed = await flushCurrentInvoiceInputs();
+    if (!flushed) {
+      setPdfState({ status: "error", error: "Could not save invoice data — try again" });
       return;
     }
 
@@ -1016,6 +1048,16 @@ export function InvoiceSection({
 
     setEmailDialog((prev) => ({ ...prev, status: "sending", error: null }));
     try {
+      const flushed = await flushCurrentInvoiceInputs();
+      if (!flushed) {
+        setEmailDialog((prev) => ({
+          ...prev,
+          status: "error",
+          error: "Could not save the latest invoice changes — email was not sent.",
+        }));
+        return;
+      }
+
       const res = await fetch(`/api/invoice/email/${encodeURIComponent(eventId)}`, {
         method: "POST",
         headers: buildAuthHeaders(editorToken),

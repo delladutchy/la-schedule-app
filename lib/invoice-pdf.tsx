@@ -363,7 +363,7 @@ function fmtHours(n: number): string {
 
 function formatLaJobNumber(laNumber: string | null): string | null {
   if (!laNumber) return null;
-  const clean = laNumber.replace(/^LA#?/i, "").replace(/[^a-zA-Z0-9-]/g, "");
+  const clean = laNumber.replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
   return clean ? `LA #${clean}` : laNumber;
 }
 
@@ -373,7 +373,7 @@ function escapeRegExp(value: string): string {
 
 function formatJobTitle(gigSummary: string, laNumber: string | null): string {
   let title = gigSummary.trim();
-  const cleanLa = laNumber?.replace(/^LA#?/i, "").replace(/[^a-zA-Z0-9-]/g, "") ?? "";
+  const cleanLa = laNumber?.replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "") ?? "";
   if (cleanLa) {
     title = title
       .replace(
@@ -435,7 +435,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   const workDateStr = fmtWorkDates(packet.workdays);
   const workedDateTimes = fmtWorkedDateTimes(packet.workdays);
   const formattedLaJob = formatLaJobNumber(packet.laNumber);
-  const invoiceNumberWithJob = formattedLaJob ? `${invoiceNumber} - ${formattedLaJob}` : invoiceNumber;
+  const clientInvoiceNumber = formattedLaJob ?? invoiceNumber;
   const jobTitle = formatJobTitle(gigSummary, packet.laNumber);
   const billToAddress = CLIENT_INFO_BY_NAME[packet.client]?.addressLines ?? [];
   const dueDate = addDaysIso(issuedDate, 15);
@@ -509,7 +509,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
     });
   }
   return (
-    <Document title={`Invoice ${invoiceNumber}`} author={CONTRACTOR_INFO.name}>
+    <Document title={`Invoice ${clientInvoiceNumber}`} author={CONTRACTOR_INFO.name}>
       <Page size="LETTER" style={styles.page}>
 
         {/* ── Header ── */}
@@ -552,7 +552,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
               <Text style={styles.infoLabel}>Invoice details</Text>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Invoice no.:</Text>
-                <Text style={styles.detailValue}>{invoiceNumberWithJob}</Text>
+                <Text style={styles.detailValue}>{clientInvoiceNumber}</Text>
               </View>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Terms:</Text>
