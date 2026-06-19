@@ -25,7 +25,6 @@ import type { InvoicePacket } from "./invoice-types";
 // Logo hosted on Netlify CDN. Fetched at PDF render time and embedded as base64.
 // Falls back to text branding when unavailable (file not yet deployed, network error, etc.).
 const LOGO_PDF_URL = "https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png";
-const SIGNATURE_PDF_URL = "https://la-schedule-app.netlify.app/brand/jeff-signature.png";
 
 // ---------------------------------------------------------------------------
 // Business info
@@ -250,16 +249,11 @@ const styles = StyleSheet.create({
     lineHeight: 1.35,
     marginBottom: 7,
   },
-  signature: {
-    width: 92,
-    marginTop: 1,
-    marginLeft: -2,
-  },
   signatureFallback: {
     fontSize: 9,
     color: C.body,
     marginTop: 1,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   expenseNoteText: {
     fontSize: 8.2,
@@ -427,10 +421,9 @@ interface InvoicePDFProps {
   gigSummary:    string;
   issuedDate:    string; // YYYY-MM-DD
   logoSrc:       string | null;
-  signatureSrc:  string | null;
 }
 
-function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, signatureSrc }: InvoicePDFProps) {
+function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: InvoicePDFProps) {
   const m       = packet.mileage;
   const hasOT   = packet.overtimeTotal > 0;
   const hasMile = m !== null && m.totalMiles > 0;
@@ -618,10 +611,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, si
           <View style={styles.noteBox}>
             <Text style={styles.noteTitle}>Note to customer</Text>
             <Text style={styles.noteText}>Thanks again,</Text>
-            {signatureSrc
-              ? <Image src={signatureSrc} style={styles.signature} />
-              : <Text style={styles.signatureFallback}>Jeff</Text>
-            }
+            <Text style={styles.signatureFallback}>Jeff</Text>
             {packet.expenseNotes ? (
               <Text style={styles.expenseNoteText}>Expense notes: {packet.expenseNotes}</Text>
             ) : null}
@@ -671,7 +661,6 @@ export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<B
   // a second network round-trip. Falls back to text branding on any error or 404.
   // Note: public/ files are NOT on the serverless function's filesystem — URL fetch is required.
   let logoSrc: string | null = null;
-  let signatureSrc: string | null = null;
   try {
     console.log(`[invoice/pdf] fetching logo from ${LOGO_PDF_URL}`);
     const res = await fetch(LOGO_PDF_URL);
@@ -684,18 +673,6 @@ export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<B
   } catch (e) {
     console.warn(`[invoice/pdf] logo fetch failed: ${e instanceof Error ? e.message : String(e)}`);
   }
-  try {
-    console.log(`[invoice/pdf] fetching signature from ${SIGNATURE_PDF_URL}`);
-    const res = await fetch(SIGNATURE_PDF_URL);
-    console.log(`[invoice/pdf] signature fetch status=${res.status} ok=${res.ok}`);
-    if (res.ok) {
-      const buf = Buffer.from(await res.arrayBuffer());
-      signatureSrc = `data:image/png;base64,${buf.toString("base64")}`;
-      console.log(`[invoice/pdf] signature embedded (${buf.byteLength} bytes)`);
-    }
-  } catch (e) {
-    console.warn(`[invoice/pdf] signature fetch failed: ${e instanceof Error ? e.message : String(e)}`);
-  }
 
   const element = React.createElement(InvoicePDF, {
     packet:        opts.packet,
@@ -703,7 +680,6 @@ export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<B
     gigSummary:    opts.gigSummary,
     issuedDate,
     logoSrc,
-    signatureSrc,
   });
   return renderToBuffer(element as React.ReactElement);
 }
