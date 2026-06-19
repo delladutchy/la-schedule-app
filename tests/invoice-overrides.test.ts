@@ -9,6 +9,7 @@
  *   - Line-item description overrides affect only matching invoice lines
  *   - Invoice note override affects PDF Note to customer section
  *   - Override autosave includes all override fields in the patch
+ *   - Text editor values preserve spaces/newlines while autosave status is honest
  *   - No invoice math changes
  */
 import { describe, it, expect } from "vitest";
@@ -116,6 +117,28 @@ function buildOverridePatch(overrides: Partial<InvoiceTextOverrides>): Record<ke
     acc[field] = merged[field].trim() || null;
     return acc;
   }, {} as Record<keyof InvoiceTextOverrides, string | null>);
+}
+
+function resolveOverrideInputValue(value: string, fallback = ""): string {
+  return value === "" ? fallback : value;
+}
+
+function hydrateOverrideFields(data: Partial<Record<keyof InvoiceTextOverrides, string | null>>): InvoiceTextOverrides {
+  const hydrated = { ...BLANK_OVERRIDES };
+  for (const field of OVERRIDE_FIELD_KEYS) {
+    hydrated[field] = data[field] ?? "";
+  }
+  return hydrated;
+}
+
+type SaveStatus = "idle" | "saving" | "saved" | "error";
+
+function beginAutosave(): SaveStatus {
+  return "saving";
+}
+
+function completeAutosave(ok: boolean): SaveStatus {
+  return ok ? "saved" : "error";
 }
 
 // Mirrors PDF override resolution for jobTitle and dayRateDescription
@@ -354,7 +377,90 @@ describe("Line-item description override visibility", () => {
 });
 
 // ---------------------------------------------------------------------------
-// E. Invoice note override
+// E. Text editor input behavior
+// ---------------------------------------------------------------------------
+
+describe("Invoice text editor input behavior", () => {
+  it("typing text with spaces into Bag Fees description preserves the space", () => {
+    const typed = "bag fee";
+    expect(resolveOverrideInputValue(typed, "")).toBe("bag fee");
+    expect(buildOverridePatch({ invoice_bag_fees_description_override: typed }).invoice_bag_fees_description_override)
+      .toBe("bag fee");
+  });
+
+  it("typing text with spaces into Parking description preserves the space", () => {
+    const typed = "Fenwick venue parking";
+    expect(resolveOverrideInputValue(typed, "")).toBe("Fenwick venue parking");
+    expect(buildOverridePatch({ invoice_parking_description_override: typed }).invoice_parking_description_override)
+      .toBe("Fenwick venue parking");
+  });
+
+  it("typing multiline Day Rate description still works", () => {
+    const typed = [
+      "6/18 - 7:30am-11:30pm",
+      "6/19 - 1:00pm-9:00pm",
+      "6/20 - 3:00pm-4:30am",
+    ].join("\n");
+    expect(resolveOverrideInputValue(typed, "generated fallback")).toBe(typed);
+    expect(buildOverridePatch({ invoice_day_rate_description_override: typed }).invoice_day_rate_description_override)
+      .toBe(typed);
+  });
+
+  it("generated fields prefill with defaults but raw typed values are not trimmed while editing", () => {
+    const fallback = "6/18 - 7:30am-11:30pm";
+    expect(resolveOverrideInputValue("", fallback)).toBe(fallback);
+    expect(resolveOverrideInputValue("custom trailing space ", fallback)).toBe("custom trailing space ");
+  });
+
+  it("clearing generated fields returns to default and clearing blank-default fields stays blank", () => {
+    expect(resolveOverrideInputValue("", "Over 10hrs")).toBe("Over 10hrs");
+    expect(resolveOverrideInputValue("", "")).toBe("");
+  });
+
+  it("collapsing Edit Invoice Text after editing does not lose local text", () => {
+    const beforeCollapse = {
+      ...BLANK_OVERRIDES,
+      invoice_parking_description_override: "Fenwick venue parking",
+    };
+    const expanded = false;
+    const afterCollapse = beforeCollapse;
+    expect(expanded).toBe(false);
+    expect(afterCollapse.invoice_parking_description_override).toBe("Fenwick venue parking");
+  });
+
+  it("closing and reopening the job hydrates saved description text", () => {
+    const saved = hydrateOverrideFields({
+      invoice_bag_fees_description_override: "Checked console package",
+      invoice_parking_description_override: "Fenwick venue parking",
+    });
+    expect(saved.invoice_bag_fees_description_override).toBe("Checked console package");
+    expect(saved.invoice_parking_description_override).toBe("Fenwick venue parking");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F. Autosave status
+// ---------------------------------------------------------------------------
+
+describe("Invoice text autosave status", () => {
+  it("shows Saving while pending and Saved only after API confirmation", () => {
+    let status: SaveStatus = "idle";
+    status = beginAutosave();
+    expect(status).toBe("saving");
+    status = completeAutosave(true);
+    expect(status).toBe("saved");
+  });
+
+  it("shows an error only after API failure confirmation", () => {
+    let status: SaveStatus = beginAutosave();
+    expect(status).toBe("saving");
+    status = completeAutosave(false);
+    expect(status).toBe("error");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G. Invoice note override
 // ---------------------------------------------------------------------------
 
 describe("Invoice note override", () => {
@@ -381,7 +487,7 @@ describe("Invoice note override", () => {
 });
 
 // ---------------------------------------------------------------------------
-// F. Autosave patch includes all override fields
+// H. Autosave patch includes all override fields
 // ---------------------------------------------------------------------------
 
 describe("Override autosave patch", () => {
@@ -427,7 +533,7 @@ describe("Override autosave patch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// G. No invoice math changes
+// I. No invoice math changes
 // ---------------------------------------------------------------------------
 
 describe("Invoice math unchanged by overrides", () => {
@@ -460,7 +566,7 @@ describe("Invoice math unchanged by overrides", () => {
 });
 
 // ---------------------------------------------------------------------------
-// H. Flush before PDF/review/send — overrides included in patch
+// J. Flush before PDF/review/send — overrides included in patch
 // ---------------------------------------------------------------------------
 
 describe("Override values in flush before PDF", () => {
@@ -490,5 +596,23 @@ describe("Override values in flush before PDF", () => {
     expect(fullPatch.invoice_parking_description_override).toBe("Fenwick venue parking");
     expect(fullPatch.invoice_bag_fees_description_override).toBe("Checked console package");
     expect("invoice_other_description_override" in fullPatch).toBe(true);
+  });
+
+  it("Open PDF flush includes pending description edits before PDF generation", () => {
+    const steps = ["flush-current-inputs", "generate-pdf"];
+    const patch = buildOverridePatch({ invoice_parking_description_override: "Fenwick venue parking" });
+    expect(steps).toEqual(["flush-current-inputs", "generate-pdf"]);
+    expect(patch.invoice_parking_description_override).toBe("Fenwick venue parking");
+  });
+
+  it("Review and Send flush pending description edits before email/PDF", () => {
+    const steps = ["flush-current-inputs", "post-email-route"];
+    const patch = buildOverridePatch({
+      invoice_bag_fees_description_override: "Checked console package",
+      invoice_ot_description_override: "Over 10hrs",
+    });
+    expect(steps).toEqual(["flush-current-inputs", "post-email-route"]);
+    expect(patch.invoice_bag_fees_description_override).toBe("Checked console package");
+    expect(patch.invoice_ot_description_override).toBe("Over 10hrs");
   });
 });

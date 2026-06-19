@@ -8,6 +8,7 @@ import { summarizeBookedDayLabel, type MonthBoardData } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
 import { isJeffLikeProfile, resolveEditorProfile } from "@/lib/editor-profiles";
 import { buildInvoiceWorkDates } from "@/lib/invoice-calculations";
+import { isEditableKeyboardTarget, shouldHandleKeyboardShortcut } from "@/lib/keyboard";
 import {
   buildGigDayDetailsForRange,
   buildGigDescription,
@@ -502,6 +503,7 @@ export function MonthBoard({
     if (!activeDetailPanel && !activeBookingPanel) return undefined;
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!shouldHandleKeyboardShortcut(event.target)) return;
       if (event.key === "Escape") {
         if (isBookingSavePending || isDeletePending) return;
         setActiveDetailPanel(null);
@@ -1372,6 +1374,7 @@ export function MonthBoard({
                         }}
                         onKeyDown={canBookDay
                           ? (event) => {
+                              if (isEditableKeyboardTarget(event.target)) return;
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
                                 onDateFocus?.(d.date);

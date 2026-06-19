@@ -12,6 +12,7 @@ import {
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
 import { isJeffLikeProfile, resolveEditorProfile } from "@/lib/editor-profiles";
 import { buildInvoiceWorkDates } from "@/lib/invoice-calculations";
+import { isEditableKeyboardTarget, shouldHandleKeyboardShortcut } from "@/lib/keyboard";
 import { LocationMapPreview } from "@/components/LocationMapPreview";
 import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { JobTimeSection } from "@/components/JobTimeSection";
@@ -537,6 +538,7 @@ export function DayBoard({
     if (!activeDetailPanel && !activeBookingPanel) return undefined;
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!shouldHandleKeyboardShortcut(event.target)) return;
       if (event.key === "Escape") {
         if (isBookingSavePending || isDeletePending) return;
         setActiveDetailPanel(null);
@@ -1368,6 +1370,7 @@ export function DayBoard({
                               openDetailPanelForRow(rowKey, bookedLabel, d.date);
                             }}
                             onKeyDown={(event) => {
+                              if (isEditableKeyboardTarget(event.target)) return;
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
                                 openDetailPanelForRow(rowKey, bookedLabel, d.date);
@@ -1436,6 +1439,7 @@ export function DayBoard({
                   }}
                   onKeyDown={(canBookRow || (!!bookedLabel && !bookedLabel.isPrivateUnavailable))
                     ? (event) => {
+                      if (isEditableKeyboardTarget(event.target)) return;
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         onDateFocus?.(d.date);

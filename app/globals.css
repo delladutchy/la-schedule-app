@@ -5700,12 +5700,37 @@ html.modal-open body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   width: 100%;
   background: transparent;
   border: none;
   padding: 0;
   cursor: pointer;
   text-align: left;
+}
+
+.invoice-collapsible-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.invoice-save-status {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.invoice-save-status[data-status="saved"] {
+  color: #16803a;
+}
+
+.invoice-save-status[data-status="error"] {
+  color: var(--danger);
 }
 
 .invoice-collapsible-chevron {

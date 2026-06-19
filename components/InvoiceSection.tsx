@@ -18,6 +18,7 @@ import {
   round2,
 } from "@/lib/invoice-calculations";
 import { isNumericInvoiceNumber } from "@/lib/invoice-number";
+import { isEditableKeyboardTarget } from "@/lib/keyboard";
 
 // ---------------------------------------------------------------------------
 // Time dropdown helpers
@@ -111,6 +112,8 @@ interface PdfState {
   error: string | null;
   action: "open" | "download" | "review" | "manual" | null;
 }
+
+type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 interface RenumberState {
   status: "idle" | "renumbering" | "error";
@@ -624,6 +627,10 @@ function resolveOverrideText(value: string, fallback = ""): string {
   return value.trim() || fallback;
 }
 
+function resolveOverrideInputValue(value: string, fallback = ""): string {
+  return value === "" ? fallback : value;
+}
+
 function buildPreviewSubject(laNumber: string | null, jobTitle: string): string {
   const cleanLa = emailCleanLa(laNumber);
   if (cleanLa) return `Jeff Ulsh - Invoice LA #${cleanLa}`;
@@ -859,6 +866,7 @@ export function InvoiceSection({
   const [syncState, setSyncState] = useState<SyncState>({ status: "idle", message: null, syncedAt: null });
   const [sheetUrl, setSheetUrl] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [isSaving, setIsSaving] = useState(false);
   const [pdfState, setPdfState] = useState<PdfState>({ status: "idle", error: null, action: null });
   const [renumberState, setRenumberState] = useState<RenumberState>({ status: "idle", error: null });
@@ -867,6 +875,7 @@ export function InvoiceSection({
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveVersionRef = useRef(0);
   const requestKey = `${eventId}::${workDates.join("|")}`;
 
   // Fetch existing invoice data on mount / key change
@@ -874,6 +883,7 @@ export function InvoiceSection({
     if (!eventId) return;
     setFetchState({ status: "loading" });
     setSaveError(null);
+    setSaveStatus("idle");
 
     const headers: Record<string, string> = {};
     if (editorToken) headers.Authorization = `Bearer ${editorToken}`;
@@ -982,8 +992,29 @@ export function InvoiceSection({
   // Save helpers
   // ---------------------------------------------------------------------------
 
-  async function save(patch: Record<string, unknown>): Promise<void> {
+  function markSavePending(): number {
+    saveVersionRef.current += 1;
     setSaveError(null);
+    setSaveStatus("saving");
+    return saveVersionRef.current;
+  }
+
+  function markSaveSucceeded(version: number): void {
+    if (version === saveVersionRef.current) {
+      setSaveStatus("saved");
+    }
+  }
+
+  function markSaveFailed(version: number, message: string): void {
+    if (version === saveVersionRef.current) {
+      setSaveError(message);
+      setSaveStatus("error");
+    }
+  }
+
+  async function save(patch: Record<string, unknown>, version = markSavePending()): Promise<void> {
+    setSaveError(null);
+    setSaveStatus("saving");
     setIsSaving(true);
     try {
       const res = await fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
@@ -992,17 +1023,21 @@ export function InvoiceSection({
         credentials: "same-origin",
         body: JSON.stringify(patch),
       });
-      if (!res.ok) { setSaveError("Could not save. Try again."); return; }
+      if (!res.ok) {
+        markSaveFailed(version, "Could not save invoice data — try again");
+        return;
+      }
       const json = await res.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
       setInvoiceData(json.invoiceData);
       setPacket(json.packet);
+      markSaveSucceeded(version);
       // Do NOT optimistically mark sheet as synced here. The background Sheets API
       // call fires after this response returns, and may fail silently (e.g. in
       // serverless where the Lambda terminates after the response). syncState is
       // only updated when the actual Sheets upsert is confirmed (PDF refresh,
       // manual Sync button, or email send).
     } catch {
-      setSaveError("Network error. Try again.");
+      markSaveFailed(version, "Could not save invoice data — try again");
     } finally {
       setIsSaving(false);
     }
@@ -1037,6 +1072,7 @@ export function InvoiceSection({
     }
 
     setSaveError(null);
+    const version = markSavePending();
     setIsSaving(true);
     try {
       const res = await fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
@@ -1046,15 +1082,16 @@ export function InvoiceSection({
         body: JSON.stringify(buildCurrentInvoiceInputPatch()),
       });
       if (!res.ok) {
-        setSaveError("Could not save invoice data. Try again.");
+        markSaveFailed(version, "Could not save invoice data — try again");
         return null;
       }
       const json = await res.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
       setInvoiceData(json.invoiceData);
       setPacket(json.packet);
+      markSaveSucceeded(version);
       return json;
     } catch {
-      setSaveError("Network error saving invoice data. Try again.");
+      markSaveFailed(version, "Could not save invoice data — try again");
       return null;
     } finally {
       setIsSaving(false);
@@ -1063,11 +1100,12 @@ export function InvoiceSection({
 
   function scheduleSave(patch: Record<string, unknown>) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    const version = markSavePending();
     // Always include gigSummary so the server-side background sheet sync has the full job title.
     // Always include the current merged workday list so past/missing invoice days cannot be
     // dropped by an expense/text-only autosave.
     saveTimer.current = setTimeout(() => {
-      void save({ workday_entries: workdayEntries, ...patch, gigSummary });
+      void save({ workday_entries: workdayEntries, ...patch, gigSummary }, version);
     }, 600);
   }
 
@@ -1470,6 +1508,8 @@ export function InvoiceSection({
   const defaultDayRateDescription = p ? buildWorkedDateTimeLines(p.workdays) : "";
   const resolveLineItemDescription = (field: LineItemDescriptionField, fallback = "") =>
     resolveOverrideText(overrides[field], fallback);
+  const resolveLineItemInputValue = (field: LineItemDescriptionField, fallback = "") =>
+    resolveOverrideInputValue(overrides[field], fallback);
   const lineItemDescriptionFields = p
     ? [
         {
@@ -1546,7 +1586,7 @@ export function InvoiceSection({
         },
       ].filter((field) => field.visible)
     : [];
-  const invoiceNoteText = resolveOverrideText(overrides.invoice_note_override, DEFAULT_INVOICE_NOTE);
+  const invoiceNoteText = resolveOverrideInputValue(overrides.invoice_note_override, DEFAULT_INVOICE_NOTE);
 
   // Per-day mileage is the source of truth. Legacy total_miles only matters when
   // no per-day mileage has been entered yet.
@@ -1571,7 +1611,12 @@ export function InvoiceSection({
   }
 
   return (
-    <div className="invoice-section">
+    <div
+      className="invoice-section"
+      onKeyDown={(event) => {
+        if (isEditableKeyboardTarget(event.target)) event.stopPropagation();
+      }}
+    >
       <p className="board-day-modal-event-label">Invoice / Tracking</p>
 
       {saveError ? <p className="invoice-error" role="alert">{saveError}</p> : null}
@@ -1676,7 +1721,18 @@ export function InvoiceSection({
           aria-expanded={overridesExpanded}
         >
           <span className="invoice-block-label">Edit invoice text</span>
-          <span className="invoice-collapsible-chevron">{overridesExpanded ? "▲" : "▼"}</span>
+          <span className="invoice-collapsible-meta">
+            {saveStatus !== "idle" ? (
+              <span className="invoice-save-status" data-status={saveStatus}>
+                {saveStatus === "saving"
+                  ? "Saving…"
+                  : saveStatus === "saved"
+                    ? "Saved"
+                    : "Could not save invoice data — try again"}
+              </span>
+            ) : null}
+            <span className="invoice-collapsible-chevron">{overridesExpanded ? "▲" : "▼"}</span>
+          </span>
         </button>
         {overridesExpanded ? (
           <div className="invoice-collapsible-content invoice-overrides-content">
@@ -1696,7 +1752,7 @@ export function InvoiceSection({
               <p className="invoice-override-hint-sm">Affects: PDF job row, email body. (Subject always uses LA #.)</p>
             </div>
             {lineItemDescriptionFields.map((fieldConfig) => {
-              const value = resolveLineItemDescription(fieldConfig.field, fieldConfig.defaultDescription);
+              const value = resolveLineItemInputValue(fieldConfig.field, fieldConfig.defaultDescription);
               return (
                 <div className="invoice-override-field" key={fieldConfig.field}>
                   <label className="invoice-label-sm" htmlFor={`inv-override-${fieldConfig.field}`}>{fieldConfig.label}</label>
