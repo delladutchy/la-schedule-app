@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { DateTime } from "luxon";
 import { summarizeBookedDayLabel, type MonthBoardData } from "@/lib/view";
 import { EDITOR_TOKEN_SESSION_KEY, sanitizeEditorToken } from "@/lib/editor-session";
+import { isJeffLikeProfile, resolveEditorProfile } from "@/lib/editor-profiles";
 import {
   buildGigDayDetailsForRange,
   buildGigDescription,
@@ -411,8 +412,9 @@ export function MonthBoard({
   const stagedLoadingCopy = useStagedLoadingCopy(isBookingSavePending || isDeletePending);
   const editorModeActive = !!(editorToken || resolvedEditorId);
   const normalizedEditorId = resolvedEditorId?.trim().toLowerCase() ?? null;
+  const editorProfile = normalizedEditorId ? resolveEditorProfile(normalizedEditorId) : null;
   const isMikeEditor = normalizedEditorId === "mike";
-  const isJeffEditor = normalizedEditorId === "jeff" || normalizedEditorId === "legacy";
+  const isJeffEditor = editorProfile ? isJeffLikeProfile(editorProfile) : false;
   const isJeffCreateModeSelectable = isJeffEditor;
   const defaultBookingMode: "la" | "overture" = isMikeEditor ? "overture" : "la";
 

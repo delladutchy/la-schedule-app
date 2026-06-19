@@ -36,7 +36,7 @@ export function resolveEditorProfile(rawEditorId: string): EditorProfile {
   }
 }
 
-function isJeffLikeProfile(profile: EditorProfile): boolean {
+export function isJeffLikeProfile(profile: EditorProfile): boolean {
   return profile.editorId === "jeff" || profile.editorId === "legacy";
 }
 
