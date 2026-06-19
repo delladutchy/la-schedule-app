@@ -98,10 +98,10 @@ const styles = StyleSheet.create({
   headerContact: {
     flexDirection: "column",
     width: 150,
-    paddingTop: 31,
+    paddingTop: 25,
   },
   logo: {
-    width: 108,
+    width: 120,
   },
   invoiceWordmark: {
     fontSize: 17,
@@ -128,13 +128,13 @@ const styles = StyleSheet.create({
   },
   headerRight: {
     alignItems: "flex-end",
-    width: 110,
-    marginTop: -8,
+    width: 122,
+    marginTop: -10,
   },
   logoFallback: {
-    width: 108,
-    height: 108,
-    borderRadius: 54,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
     backgroundColor: C.infoBg,
     alignItems: "center",
     justifyContent: "center",
@@ -349,11 +349,12 @@ function fmtPayment(n: number): string {
 
 function fmtDate(isoDate: string): string {
   const [y, mo, d] = isoDate.split("-").map(Number);
-  return new Date(Number(y), Number(mo) - 1, Number(d)).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+  return `${String(mo).padStart(2, "0")}/${String(d).padStart(2, "0")}/${y}`;
+}
+
+function fmtShortDate(isoDate: string, includeYear = false): string {
+  const [y, mo, d] = isoDate.split("-").map(Number);
+  return includeYear ? `${mo}/${d}/${y}` : `${mo}/${d}`;
 }
 
 function addDaysIso(isoDate: string, days: number): string {
@@ -369,9 +370,12 @@ function addDaysIso(isoDate: string, days: number): string {
 function fmtWorkDates(workdays: InvoicePacket["workdays"]): string {
   if (workdays.length === 0) return "";
   const dates = workdays.map((w) => w.date);
-  if (dates.length === 1) return fmtDate(dates[0]!);
+  if (dates.length === 1) return fmtShortDate(dates[0]!);
   const sorted = [...dates].sort();
-  return `${fmtDate(sorted[0]!)} – ${fmtDate(sorted[sorted.length - 1]!)}`;
+  const start = sorted[0]!;
+  const end = sorted[sorted.length - 1]!;
+  const includeYear = start.slice(0, 4) !== end.slice(0, 4);
+  return `${fmtShortDate(start, includeYear)} - ${fmtShortDate(end, includeYear)}`;
 }
 
 function fmtHours(n: number): string {
@@ -381,7 +385,29 @@ function fmtHours(n: number): string {
 function formatLaJobNumber(laNumber: string | null): string | null {
   if (!laNumber) return null;
   const clean = laNumber.replace(/^LA#?/i, "").replace(/[^a-zA-Z0-9-]/g, "");
-  return clean ? `LA${clean}` : laNumber;
+  return clean ? `LA #${clean}` : laNumber;
+}
+
+function fmtCompactTime(raw: string): string {
+  const trimmed = raw.trim();
+  const match = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i.exec(trimmed);
+  if (!match) return trimmed.replace(/\s+/g, "").toLowerCase();
+  const hour = Number(match[1]);
+  const minute = match[2] ?? "00";
+  const meridiem = (match[3] ?? "").toLowerCase();
+  return `${hour}:${minute}${meridiem}`;
+}
+
+function fmtWorkedDateTimes(workdays: InvoicePacket["workdays"]): string {
+  return workdays
+    .map((workday) => {
+      const date = fmtShortDate(workday.date);
+      const start = fmtCompactTime(workday.startTime);
+      const end = fmtCompactTime(workday.endTime);
+      if (!start || !end) return date;
+      return `${date} - ${start}-${end}`;
+    })
+    .join("\n");
 }
 
 interface PdfLineItem {
@@ -410,7 +436,9 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   const hasMile = m !== null && m.totalMiles > 0;
   const hasPD   = packet.perDiemTotal > 0;
   const workDateStr = fmtWorkDates(packet.workdays);
+  const workedDateTimes = fmtWorkedDateTimes(packet.workdays);
   const formattedLaJob = formatLaJobNumber(packet.laNumber);
+  const invoiceNumberWithJob = formattedLaJob ? `${invoiceNumber} - ${formattedLaJob}` : invoiceNumber;
   const billToAddress = CLIENT_INFO_BY_NAME[packet.client]?.addressLines ?? [];
   const dueDate = addDaysIso(issuedDate, 15);
   const invoiceTotal = packet.estimatedTotal;
@@ -440,7 +468,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   if (packet.dayRateQty > 0) {
     lineItems.push({
       service: "Freelance Audio Engineer",
-      description: workDateStr ? `Audio services, ${workDateStr}` : "Audio services",
+      description: workedDateTimes,
       qty: String(packet.dayRateQty),
       rate: fmt(packet.dayRate),
       amount: packet.dayRateTotal,
@@ -449,8 +477,8 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   if (hasOT) {
     lineItems.push({
       service: "Overtime",
-      description: "Overtime hours",
-      qty: `${fmtHours(packet.totalOvertimeHours)} h`,
+      description: "Over 10hrs",
+      qty: fmtHours(packet.totalOvertimeHours),
       rate: fmt(packet.overtimeRate),
       amount: packet.overtimeTotal,
     });
@@ -458,7 +486,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   if (hasPD) {
     lineItems.push({
       service: "Per Diem",
-      description: "Daily allowance",
+      description: "",
       qty: String(packet.perDiemQty),
       rate: fmt(packet.perDiemRate),
       amount: packet.perDiemTotal,
@@ -468,7 +496,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
     lineItems.push({
       service: "Mileage",
       description: "Billable mileage after deduction",
-      qty: `${m!.reimbursedMiles} mi`,
+      qty: `${m!.reimbursedMiles}`,
       rate: fmt(m!.mileageRate),
       amount: m!.mileageAmount,
     });
@@ -476,7 +504,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   for (const exp of expenses) {
     lineItems.push({
       service: exp.label,
-      description: "Reimbursable expense",
+      description: "",
       qty: "1",
       rate: fmt(exp.amount),
       amount: exp.amount,
@@ -492,7 +520,6 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
           <View style={styles.headerIdentity}>
             <Text style={styles.invoiceWordmark}>INVOICE</Text>
             <Text style={styles.contractorName}>{CONTRACTOR_INFO.name}</Text>
-            <Text style={styles.contractorTitle}>{CONTRACTOR_INFO.title}</Text>
             {CONTRACTOR_INFO.addressLines.map((line) => (
               <Text key={line} style={styles.contractorSub}>{line}</Text>
             ))}
@@ -525,14 +552,10 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
               ))}
             </View>
             <View style={styles.infoBlock}>
-              <Text style={styles.infoLabel}>Job / Invoice details</Text>
+              <Text style={styles.infoLabel}>Invoice details</Text>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Invoice no.:</Text>
-                <Text style={styles.detailValue}>{invoiceNumber}</Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>LA Job #:</Text>
-                <Text style={styles.detailValue}>{formattedLaJob ?? "—"}</Text>
+                <Text style={styles.detailValue}>{invoiceNumberWithJob}</Text>
               </View>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Terms:</Text>
@@ -594,8 +617,6 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
           <View style={styles.noteBox}>
             <Text style={styles.noteTitle}>Note to customer</Text>
             <Text style={styles.noteText}>Thanks again,{"\n"}Jeff</Text>
-            <Text style={styles.paymentNoteBold}>Payment method: Direct Deposit</Text>
-            <Text style={styles.paymentNote}>Please reference Invoice no. or LA Job # when depositing.</Text>
             {packet.expenseNotes ? (
               <Text style={styles.expenseNoteText}>Expense notes: {packet.expenseNotes}</Text>
             ) : null}
