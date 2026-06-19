@@ -46,7 +46,13 @@ export async function POST(request: NextRequest) {
   }
 
   const packet = calculateInvoicePacket(invoiceData);
-  const row = generateSheetRow(packet, gigSummary || invoiceData.la_number || eventId);
+  const row = generateSheetRow(packet, gigSummary || invoiceData.la_number || eventId, undefined, undefined, {
+    sentTo: invoiceData.invoice_sent_to,
+    sentSubject: invoiceData.invoice_sent_subject,
+    jobNameOverride: invoiceData.invoice_job_name_override,
+    dayRateDescriptionOverride: invoiceData.invoice_day_rate_description_override,
+    noteOverride: invoiceData.invoice_note_override,
+  });
 
   try {
     await upsertSheetRow(row);

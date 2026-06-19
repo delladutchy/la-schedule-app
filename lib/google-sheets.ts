@@ -63,6 +63,13 @@ const COLUMN_ORDER: Array<keyof SheetRow> = [
   "paymentMethod",
   "paymentReceivedDate",
   "paymentBatchRef",
+  // Optional extended columns (AC–AG). Add matching headers in the Sheet to label them.
+  // Recommended: SENT TO | SENT SUBJECT | JOB NAME OVERRIDE | DAY RATE DESC OVERRIDE | INVOICE NOTE OVERRIDE
+  "sentTo",
+  "sentSubject",
+  "jobNameOverride",
+  "dayRateDescriptionOverride",
+  "noteOverride",
 ];
 
 async function getPrivateKey(): Promise<string> {

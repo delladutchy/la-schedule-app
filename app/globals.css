@@ -5704,6 +5704,69 @@ html.modal-open body {
   margin-top: 8px;
 }
 
+.invoice-overrides-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.invoice-overrides-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.invoice-override-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.invoice-override-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.invoice-override-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.invoice-override-hint-sm {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.35;
+}
+
+.invoice-sheet-sync-status {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+
+.invoice-sheet-sync-status--warn {
+  color: #b45309;
+}
+
+.invoice-sheet-link {
+  font-size: 0.82rem;
+  color: var(--color-accent, #4f7df7);
+  text-decoration: underline;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.invoice-sheet-link--disabled {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  cursor: default;
+}
+
 .invoice-sync-row {
   display: flex;
   flex-direction: column;

@@ -431,15 +431,22 @@ interface PdfLineItem {
 // PDF Component
 // ---------------------------------------------------------------------------
 
+interface InvoicePDFOverrides {
+  jobNameOverride?: string | null;
+  dayRateDescriptionOverride?: string | null;
+  noteOverride?: string | null;
+}
+
 interface InvoicePDFProps {
   packet:        InvoicePacket;
   invoiceNumber: string;
   gigSummary:    string;
   issuedDate:    string; // YYYY-MM-DD
   logoSrc:       string | null;
+  overrides?:    InvoicePDFOverrides;
 }
 
-function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: InvoicePDFProps) {
+function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, overrides }: InvoicePDFProps) {
   const m       = packet.mileage;
   const hasOT   = packet.overtimeTotal > 0;
   const hasMile = m !== null && m.totalMiles > 0;
@@ -453,7 +460,11 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   const clientInvoiceNumber = formattedLaJob
     ? `${invoiceNumber} - ${formattedLaJob}`
     : invoiceNumber;
-  const jobTitle = formatJobTitle(gigSummary, effectiveLaNumber);
+  // Job name override: use user-provided text if filled, else cleaned calendar title.
+  const autoJobTitle = formatJobTitle(gigSummary, effectiveLaNumber);
+  const jobTitle = overrides?.jobNameOverride?.trim() || autoJobTitle;
+  // Day rate description override: use user-provided text if filled, else auto date/time lines.
+  const dayRateDescription = overrides?.dayRateDescriptionOverride?.trim() || workedDateTimes;
   const billToAddress = CLIENT_INFO_BY_NAME[packet.client]?.addressLines ?? [];
   const dueDate = addDaysIso(issuedDate, 15);
   const invoiceTotal = packet.estimatedTotal;
@@ -481,7 +492,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   if (packet.dayRateQty > 0) {
     lineItems.push({
       service: "Freelance Audio Engineer",
-      description: workedDateTimes,
+      description: dayRateDescription,
       qty: String(packet.dayRateQty),
       rate: fmt(packet.dayRate),
       amount: packet.dayRateTotal,
@@ -624,10 +635,14 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
         <View style={styles.lowerSection} wrap={false}>
           <View style={styles.noteBox}>
             <Text style={styles.noteTitle}>Note to customer</Text>
-            <View style={styles.signatureGroup} wrap={false}>
-              <Text style={styles.noteText}>Thanks again,</Text>
-              <Text style={styles.signatureFallback}>Jeff</Text>
-            </View>
+            {overrides?.noteOverride?.trim() ? (
+              <Text style={styles.noteText}>{overrides.noteOverride.trim()}</Text>
+            ) : (
+              <View style={styles.signatureGroup} wrap={false}>
+                <Text style={styles.noteText}>Thanks again,</Text>
+                <Text style={styles.signatureFallback}>Jeff</Text>
+              </View>
+            )}
             {packet.expenseNotes ? (
               <Text style={styles.expenseNoteText}>Expense notes: {packet.expenseNotes}</Text>
             ) : null}
@@ -668,6 +683,7 @@ export interface RenderInvoicePDFOptions {
   invoiceNumber: string;
   gigSummary:    string;
   issuedDate:    string;
+  overrides?:    InvoicePDFOverrides;
 }
 
 export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<Buffer> {
@@ -695,6 +711,7 @@ export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<B
     gigSummary:    opts.gigSummary,
     issuedDate,
     logoSrc,
+    overrides:     opts.overrides,
   });
   return renderToBuffer(element as React.ReactElement);
 }

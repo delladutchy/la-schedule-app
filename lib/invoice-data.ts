@@ -37,6 +37,9 @@ function coerceInvoiceData(row: Record<string, unknown>): InvoiceData {
     invoice_sent_to: row.invoice_sent_to != null ? String(row.invoice_sent_to) : null,
     invoice_sent_subject: row.invoice_sent_subject != null ? String(row.invoice_sent_subject) : null,
     invoice_total: row.invoice_total != null ? Number(row.invoice_total) : null,
+    invoice_job_name_override: row.invoice_job_name_override != null ? String(row.invoice_job_name_override) : null,
+    invoice_day_rate_description_override: row.invoice_day_rate_description_override != null ? String(row.invoice_day_rate_description_override) : null,
+    invoice_note_override: row.invoice_note_override != null ? String(row.invoice_note_override) : null,
     amount_paid: Number(row.amount_paid ?? 0),
     remaining_balance: row.remaining_balance != null ? Number(row.remaining_balance) : null,
     // QuickBooks fields (require scripts/qb-migration.sql)
@@ -150,6 +153,9 @@ export interface InvoiceDataPatch {
   invoice_sent_to?: string | null;
   invoice_sent_subject?: string | null;
   invoice_total?: number | null;
+  invoice_job_name_override?: string | null;
+  invoice_day_rate_description_override?: string | null;
+  invoice_note_override?: string | null;
   amount_paid?: number;
   remaining_balance?: number | null;
   // QB fields (require scripts/qb-migration.sql applied)

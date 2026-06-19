@@ -15,6 +15,8 @@ import {
   getInvoiceData,
   markInvoicePdfCreated,
   markInvoiceSent,
+  markSheetSynced,
+  markSheetSyncError,
 } from "@/lib/invoice-data";
 import { calculateInvoicePacket, generateSheetRow } from "@/lib/invoice-calculations";
 import { resolveInvoiceNumber } from "@/lib/invoice-number";
@@ -262,7 +264,9 @@ export async function POST(
   const cleanLa = cleanLaNumber(invoiceData.la_number) || cleanLaFromGigSummary(gigSummary);
   const effectiveLaNumber = cleanLa ? `LA#${cleanLa}` : null;
   const clientInvoiceNumber = formatClientInvoiceNumber(effectiveLaNumber, invoiceNumber);
-  const jobTitle = formatJobTitle(gigSummary, effectiveLaNumber);
+  const autoJobTitle = formatJobTitle(gigSummary, effectiveLaNumber);
+  // If user set a job name override, use it in the email body instead of the auto-cleaned title.
+  const jobTitle = invoiceData.invoice_job_name_override?.trim() || autoJobTitle;
   const workDateStr = fmtWorkDateRange(packet.workdays);
   const issuedDate = new Date().toISOString().slice(0, 10);
 
@@ -276,7 +280,17 @@ export async function POST(
 
   let pdfBuffer: Buffer;
   try {
-    pdfBuffer = await renderInvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate });
+    pdfBuffer = await renderInvoicePDF({
+      packet,
+      invoiceNumber,
+      gigSummary,
+      issuedDate,
+      overrides: {
+        jobNameOverride: invoiceData.invoice_job_name_override,
+        dayRateDescriptionOverride: invoiceData.invoice_day_rate_description_override,
+        noteOverride: invoiceData.invoice_note_override,
+      },
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[invoice/email] PDF render failed: ${msg}`);
@@ -310,7 +324,13 @@ export async function POST(
   }
 
   try {
-    const sheetRow = generateSheetRow(packet, gigSummary, invoiceNumber);
+    const sheetRow = generateSheetRow(packet, gigSummary, invoiceNumber, undefined, {
+      sentTo: invoiceData.invoice_sent_to,
+      sentSubject: invoiceData.invoice_sent_subject,
+      jobNameOverride: invoiceData.invoice_job_name_override,
+      dayRateDescriptionOverride: invoiceData.invoice_day_rate_description_override,
+      noteOverride: invoiceData.invoice_note_override,
+    });
     await upsertSheetRow(sheetRow);
   } catch (sheetErr) {
     console.error(`[invoice/email] sheet sync failed after PDF regeneration (non-fatal): ${sheetErr instanceof Error ? sheetErr.message : sheetErr}`);
@@ -360,14 +380,23 @@ export async function POST(
   const sentSubject = subject;
   await markInvoiceSent(params.eventId, sentAt, sentTo, sentSubject);
 
-  // Re-sync Google Sheet with invoice_status = "sent" and sent date.
+  // Re-sync Google Sheet with invoice_status = "sent", sent date, sentTo, and sentSubject.
   // The earlier upsertSheetRow used status from packet (sheet_synced); this corrects it.
   try {
     const sentPacket = calculateInvoicePacket({ ...invoiceData, invoice_status: "sent", invoice_sent_at: sentAt });
-    const sentSheetRow = generateSheetRow(sentPacket, gigSummary, invoiceNumber);
+    const sentSheetRow = generateSheetRow(sentPacket, gigSummary, invoiceNumber, undefined, {
+      sentTo,
+      sentSubject,
+      jobNameOverride: invoiceData.invoice_job_name_override,
+      dayRateDescriptionOverride: invoiceData.invoice_day_rate_description_override,
+      noteOverride: invoiceData.invoice_note_override,
+    });
     await upsertSheetRow(sentSheetRow);
+    await markSheetSynced(params.eventId, new Date().toISOString());
   } catch (sheetErr) {
-    console.error(`[invoice/email] post-send sheet re-sync failed (non-fatal): ${sheetErr instanceof Error ? sheetErr.message : sheetErr}`);
+    const sheetMsg = sheetErr instanceof Error ? sheetErr.message : String(sheetErr);
+    console.error(`[invoice/email] post-send sheet re-sync failed (non-fatal): ${sheetMsg}`);
+    try { await markSheetSyncError(params.eventId, sheetMsg); } catch { /* ignore secondary failure */ }
   }
 
   return NextResponse.json({

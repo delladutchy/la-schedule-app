@@ -110,6 +110,10 @@ export interface InvoiceData {
   invoice_sent_to: string | null;      // comma-separated recipients; see invoice-sent-to-migration.sql
   invoice_sent_subject: string | null; // email subject from last send; see invoice-sent-subject-migration.sql
   invoice_total: number | null;
+  // Text overrides (see scripts/invoice-overrides-migration.sql)
+  invoice_job_name_override: string | null;
+  invoice_day_rate_description_override: string | null;
+  invoice_note_override: string | null;
   amount_paid: number;
   remaining_balance: number | null;
 
@@ -196,4 +200,11 @@ export interface SheetRow {
   paymentMethod: string;
   paymentReceivedDate: string;
   paymentBatchRef: string;
+  // Optional extended columns (AC–AG). Add matching headers in the Sheet to label them.
+  // Omit or leave undefined to skip writing these columns.
+  sentTo?: string;
+  sentSubject?: string;
+  jobNameOverride?: string;
+  dayRateDescriptionOverride?: string;
+  noteOverride?: string;
 }

@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
-import { getInvoiceData, upsertInvoiceData } from "@/lib/invoice-data";
-import { calculateInvoicePacket } from "@/lib/invoice-calculations";
+import { getInvoiceData, upsertInvoiceData, markSheetSynced, markSheetSyncError } from "@/lib/invoice-data";
+import { calculateInvoicePacket, generateSheetRow } from "@/lib/invoice-calculations";
+import { upsertSheetRow } from "@/lib/google-sheets";
 import type { InvoiceDataPatch } from "@/lib/invoice-data";
-import type { WorkdayEntry } from "@/lib/invoice-types";
+import type { InvoiceData, InvoicePacket, WorkdayEntry } from "@/lib/invoice-types";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,40 @@ interface RouteContext {
 
 function jeffOnlyResponse() {
   return NextResponse.json({ error: "forbidden" }, { status: 403 });
+}
+
+// Build the Google Sheet public URL from the env var (server-side only).
+function getSheetUrl(): string | null {
+  const id = process.env.GOOGLE_SHEET_ID;
+  return id ? `https://docs.google.com/spreadsheets/d/${id}` : null;
+}
+
+// Fire-and-forget sheet sync after invoice save. Logs failure but never throws.
+// Records syncedAt / syncError in the DB so the client can surface the status.
+function syncSheetBackground(eventId: string, data: InvoiceData, packet: InvoicePacket, gigSummary: string): void {
+  void (async () => {
+    try {
+      const sheetRow = generateSheetRow(
+        packet,
+        gigSummary || data.la_number || "",
+        data.invoice_number ?? undefined,
+        undefined,
+        {
+          sentTo: data.invoice_sent_to,
+          sentSubject: data.invoice_sent_subject,
+          jobNameOverride: data.invoice_job_name_override,
+          dayRateDescriptionOverride: data.invoice_day_rate_description_override,
+          noteOverride: data.invoice_note_override,
+        },
+      );
+      await upsertSheetRow(sheetRow);
+      await markSheetSynced(eventId, new Date().toISOString());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[invoice PATCH] background sheet sync failed (non-fatal):", msg);
+      try { await markSheetSyncError(eventId, msg); } catch { /* ignore secondary failure */ }
+    }
+  })();
 }
 
 export async function GET(request: NextRequest, context: RouteContext) {
@@ -36,10 +71,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const data = await getInvoiceData(eventId);
     if (!data) {
-      return NextResponse.json({ invoiceData: null, packet: null });
+      return NextResponse.json({ invoiceData: null, packet: null, sheetUrl: getSheetUrl() });
     }
     const packet = calculateInvoicePacket(data);
-    return NextResponse.json({ invoiceData: data, packet });
+    return NextResponse.json({ invoiceData: data, packet, sheetUrl: getSheetUrl() });
   } catch (err) {
     console.error("[invoice GET]", err);
     return NextResponse.json({ error: "server_error" }, { status: 503 });
@@ -75,6 +110,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   const b = body as Record<string, unknown>;
 
+  // gigSummary is used for Google Sheets gigEvent column on background sync.
+  // Client always sends it; if absent fall back to empty string (sheets match by laJobNumber).
+  const gigSummary = typeof b.gigSummary === "string" ? b.gigSummary.trim() : "";
+
   const patch: InvoiceDataPatch = {};
 
   if ("la_number" in b) patch.la_number = b.la_number != null ? String(b.la_number) : null;
@@ -108,6 +147,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
     const data = await upsertInvoiceData(eventId, patch);
     const packet = calculateInvoicePacket(data);
+    // Background sheet sync — non-blocking; failures are logged, never surface to client.
+    // gigSummary must be sent by the client for gigEvent to be accurate; falls back to la_number.
+    syncSheetBackground(eventId, data, packet, gigSummary);
     return NextResponse.json({ invoiceData: data, packet });
   } catch (err) {
     console.error("[invoice PATCH]", err);

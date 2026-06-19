@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
-import { getInvoiceData, getAllInvoiceNumbers, markInvoicePdfCreated } from "@/lib/invoice-data";
+import { getInvoiceData, getAllInvoiceNumbers, markInvoicePdfCreated, markSheetSynced, markSheetSyncError } from "@/lib/invoice-data";
 import { calculateInvoicePacket } from "@/lib/invoice-calculations";
 import { resolveInvoiceNumber } from "@/lib/invoice-number";
 import { renderInvoicePDF } from "@/lib/invoice-pdf";
@@ -148,7 +148,17 @@ export async function POST(
   // 1. Render PDF
   let pdfBuffer: Buffer;
   try {
-    pdfBuffer = await renderInvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate });
+    pdfBuffer = await renderInvoicePDF({
+      packet,
+      invoiceNumber,
+      gigSummary,
+      issuedDate,
+      overrides: {
+        jobNameOverride: invoiceData.invoice_job_name_override,
+        dayRateDescriptionOverride: invoiceData.invoice_day_rate_description_override,
+        noteOverride: invoiceData.invoice_note_override,
+      },
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[invoice/pdf] render failed: ${msg}`);
@@ -189,10 +199,19 @@ export async function POST(
 
   // 4. Sync Google Sheets (best-effort — don't fail the PDF if sheets is down)
   try {
-    const sheetRow = generateSheetRow(packet, gigSummary, invoiceNumber);
+    const sheetRow = generateSheetRow(packet, gigSummary, invoiceNumber, undefined, {
+      sentTo: invoiceData.invoice_sent_to,
+      sentSubject: invoiceData.invoice_sent_subject,
+      jobNameOverride: invoiceData.invoice_job_name_override,
+      dayRateDescriptionOverride: invoiceData.invoice_day_rate_description_override,
+      noteOverride: invoiceData.invoice_note_override,
+    });
     await upsertSheetRow(sheetRow);
+    await markSheetSynced(params.eventId, new Date().toISOString());
   } catch (sheetErr) {
-    console.error(`[invoice/pdf] sheet sync failed (non-fatal): ${sheetErr instanceof Error ? sheetErr.message : sheetErr}`);
+    const sheetMsg = sheetErr instanceof Error ? sheetErr.message : String(sheetErr);
+    console.error(`[invoice/pdf] sheet sync failed (non-fatal): ${sheetMsg}`);
+    try { await markSheetSyncError(params.eventId, sheetMsg); } catch { /* ignore secondary failure */ }
   }
 
   return NextResponse.json({

@@ -176,6 +176,12 @@ interface ExpenseFields {
   expense_notes: string;
 }
 
+interface OverrideFields {
+  invoice_job_name_override: string;
+  invoice_day_rate_description_override: string;
+  invoice_note_override: string;
+}
+
 interface AutoMileage {
   oneWayMiles: number;
   roundTripMiles: number;
@@ -740,11 +746,18 @@ export function InvoiceSection({
     expense_notes: "",
   });
   const [expensesExpanded, setExpensesExpanded] = useState(false);
+  const [overrides, setOverrides] = useState<OverrideFields>({
+    invoice_job_name_override: "",
+    invoice_day_rate_description_override: "",
+    invoice_note_override: "",
+  });
+  const [overridesExpanded, setOverridesExpanded] = useState(false);
   const [autoMileage, setAutoMileage] = useState<AutoMileage | null>(null);
   const [autoMileageNote, setAutoMileageNote] = useState<AutoMileageNote | null>(
     jobLocation ? null : "no_location",
   );
   const [syncState, setSyncState] = useState<SyncState>({ status: "idle", message: null, syncedAt: null });
+  const [sheetUrl, setSheetUrl] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [pdfState, setPdfState] = useState<PdfState>({ status: "idle", error: null, action: null });
@@ -775,8 +788,10 @@ export function InvoiceSection({
         if (cancelled) return;
         if (res.status === 503) { setFetchState({ status: "unavailable" }); return; }
         if (!res.ok) { setFetchState({ status: "error" }); return; }
-        const json = await res.json() as { invoiceData: InvoiceData | null; packet: InvoicePacket | null };
+        const json = await res.json() as { invoiceData: InvoiceData | null; packet: InvoicePacket | null; sheetUrl?: string | null };
         if (cancelled) return;
+
+        if (json.sheetUrl) setSheetUrl(json.sheetUrl);
 
         const data = json.invoiceData;
         if (data) {
@@ -793,6 +808,14 @@ export function InvoiceSection({
             expense_notes: data.expense_notes ?? "",
           };
           setExpenses(exp);
+          setOverrides({
+            invoice_job_name_override: data.invoice_job_name_override ?? "",
+            invoice_day_rate_description_override: data.invoice_day_rate_description_override ?? "",
+            invoice_note_override: data.invoice_note_override ?? "",
+          });
+          setOverridesExpanded(
+            !!(data.invoice_job_name_override || data.invoice_day_rate_description_override || data.invoice_note_override),
+          );
           setExpensesExpanded(
             data.bag_fees != null || data.hotel != null || data.parking != null ||
             data.tolls != null || data.uber != null || data.other_expenses != null ||
@@ -874,6 +897,8 @@ export function InvoiceSection({
       const json = await res.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
       setInvoiceData(json.invoiceData);
       setPacket(json.packet);
+      // Optimistic: background sheet sync fires immediately after save and almost always succeeds.
+      setSyncState((prev) => ({ ...prev, status: "success", syncedAt: new Date().toISOString() }));
     } catch {
       setSaveError("Network error. Try again.");
     } finally {
@@ -890,6 +915,7 @@ export function InvoiceSection({
 
   function buildCurrentInvoiceInputPatch(): Record<string, unknown> {
     return {
+      gigSummary,
       workday_entries: workdayEntries,
       bag_fees: parseExpenseInput(expenses.bag_fees),
       hotel: parseExpenseInput(expenses.hotel),
@@ -898,6 +924,9 @@ export function InvoiceSection({
       uber: parseExpenseInput(expenses.uber),
       other_expenses: parseExpenseInput(expenses.other_expenses),
       expense_notes: expenses.expense_notes.trim() ? expenses.expense_notes : null,
+      invoice_job_name_override: overrides.invoice_job_name_override.trim() || null,
+      invoice_day_rate_description_override: overrides.invoice_day_rate_description_override.trim() || null,
+      invoice_note_override: overrides.invoice_note_override.trim() || null,
     };
   }
 
@@ -923,6 +952,8 @@ export function InvoiceSection({
       const json = await res.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
       setInvoiceData(json.invoiceData);
       setPacket(json.packet);
+      // Optimistic sync state: background sync fires right after this save.
+      setSyncState((prev) => ({ ...prev, status: "success", syncedAt: new Date().toISOString() }));
       return json;
     } catch {
       setSaveError("Network error saving invoice data. Try again.");
@@ -934,7 +965,8 @@ export function InvoiceSection({
 
   function scheduleSave(patch: Record<string, unknown>) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { void save(patch); }, 600);
+    // Always include gigSummary so the server-side background sheet sync has the full job title.
+    saveTimer.current = setTimeout(() => { void save({ ...patch, gigSummary }); }, 600);
   }
 
   // ---------------------------------------------------------------------------
@@ -956,6 +988,11 @@ export function InvoiceSection({
       const num = parseFloat(value);
       scheduleSave({ [field]: value === "" || isNaN(num) ? null : num });
     }
+  }
+
+  function handleOverrideChange(field: keyof OverrideFields, value: string) {
+    setOverrides((prev) => ({ ...prev, [field]: value }));
+    scheduleSave({ [field]: value.trim() || null });
   }
 
   // ---------------------------------------------------------------------------
@@ -1303,11 +1340,13 @@ export function InvoiceSection({
   // the calendar event title so the subject/body are correct even when la_number
   // hasn't been explicitly saved in invoice_data.
   const effectiveEmailLaNumber = laNumber ?? parseLaFromSummary(gigSummary);
-  const previewJobTitle = emailStripLaPrefix(gigSummary, effectiveEmailLaNumber);
+  const autoPreviewJobTitle = emailStripLaPrefix(gigSummary, effectiveEmailLaNumber);
+  // Job name override applies to the email body default (user can still edit in Review panel).
+  const previewJobTitle = overrides.invoice_job_name_override.trim() || autoPreviewJobTitle;
   const previewWorkDates = p ? emailWorkDateRange(p.workdays) : "";
-  const emailSubject = buildPreviewSubject(effectiveEmailLaNumber, previewJobTitle);
+  const emailSubject = buildPreviewSubject(effectiveEmailLaNumber, autoPreviewJobTitle);
   const emailBody = buildPreviewBody(effectiveEmailLaNumber, previewJobTitle, previewWorkDates);
-  const emailFilename = buildPreviewFilename(effectiveEmailLaNumber, previewJobTitle, invoiceNumber);
+  const emailFilename = buildPreviewFilename(effectiveEmailLaNumber, autoPreviewJobTitle, invoiceNumber);
 
   // Per-day mileage is the source of truth. Legacy total_miles only matters when
   // no per-day mileage has been entered yet.
@@ -1428,6 +1467,62 @@ export function InvoiceSection({
         ) : null}
       </div>
 
+      {/* ── Edit Invoice Text (optional overrides, collapsed by default) ── */}
+      <div className="invoice-block">
+        <button
+          type="button"
+          className="invoice-collapsible-toggle"
+          onClick={() => setOverridesExpanded((prev) => !prev)}
+          aria-expanded={overridesExpanded}
+        >
+          <span className="invoice-block-label">Edit invoice text</span>
+          <span className="invoice-collapsible-chevron">{overridesExpanded ? "▲" : "▼"}</span>
+        </button>
+        {overridesExpanded ? (
+          <div className="invoice-collapsible-content invoice-overrides-content">
+            <p className="invoice-overrides-hint">
+              Leave blank to use auto-generated values. Fill in only what you want to override.
+            </p>
+            <div className="invoice-override-field">
+              <label className="invoice-label-sm" htmlFor="inv-override-job">Job name</label>
+              <input
+                id="inv-override-job"
+                type="text"
+                className="invoice-input invoice-override-input"
+                value={overrides.invoice_job_name_override}
+                onChange={(e) => handleOverrideChange("invoice_job_name_override", e.target.value)}
+                placeholder={autoPreviewJobTitle || "e.g. Wilm U Grad"}
+              />
+              <p className="invoice-override-hint-sm">Affects: PDF job row, email body. (Subject always uses LA #.)</p>
+            </div>
+            <div className="invoice-override-field">
+              <label className="invoice-label-sm" htmlFor="inv-override-dayrate">Day Rate description</label>
+              <textarea
+                id="inv-override-dayrate"
+                className="invoice-textarea invoice-override-textarea"
+                value={overrides.invoice_day_rate_description_override}
+                onChange={(e) => handleOverrideChange("invoice_day_rate_description_override", e.target.value)}
+                placeholder={"6/18 - 7:30am-11:30pm\n6/19 - 1:00pm-9:00pm"}
+                rows={3}
+              />
+              <p className="invoice-override-hint-sm">Affects: PDF Day Rate description column. Leave blank to use auto date/time lines.</p>
+            </div>
+            <div className="invoice-override-field">
+              <label className="invoice-label-sm" htmlFor="inv-override-note">Invoice note</label>
+              <textarea
+                id="inv-override-note"
+                className="invoice-textarea invoice-override-textarea"
+                value={overrides.invoice_note_override}
+                onChange={(e) => handleOverrideChange("invoice_note_override", e.target.value)}
+                placeholder={"Thanks again,\nJeff"}
+                rows={3}
+              />
+              <p className="invoice-override-hint-sm">Affects: PDF "Note to customer" section. Leave blank for default.</p>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
       {/* ── Invoice Preview ────────────────────────────────────── */}
       {p ? (
         <div className="invoice-block invoice-block--preview">
@@ -1435,14 +1530,14 @@ export function InvoiceSection({
           <div className="invoice-preview">
             {p.dayRateQty > 0 ? (
               <div className="invoice-preview-row">
-                <span>Freelance Audio – Day Rate</span>
+                <span>Day Rate</span>
                 <span className="invoice-preview-qty">{p.dayRateQty} × {fmtCurrency(p.dayRate)}</span>
                 <span className="invoice-preview-amount">{fmtCurrency(p.dayRateTotal)}</span>
               </div>
             ) : null}
             {p.totalOvertimeHours > 0 ? (
               <div className="invoice-preview-row">
-                <span>Overtime</span>
+                <span>OT</span>
                 <span className="invoice-preview-qty">{fmtHours(p.totalOvertimeHours)} h × {fmtCurrency(p.overtimeRate)}</span>
                 <span className="invoice-preview-amount">{fmtCurrency(p.overtimeTotal)}</span>
               </div>
@@ -1669,6 +1764,17 @@ export function InvoiceSection({
                 <p className="invoice-error" role="alert">{pdfState.error}</p>
               ) : null}
 
+              {/* Sheet sync status — small, non-intrusive; always visible when there is info */}
+              {syncState.status === "success" && syncedLabel ? (
+                <p className="invoice-sheet-sync-status">Sheet sync: Updated {syncedLabel}</p>
+              ) : syncState.status === "error" ? (
+                <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn">
+                  Sheet sync warning — use Advanced → Sync to retry
+                </p>
+              ) : syncState.status === "syncing" ? (
+                <p className="invoice-sheet-sync-status">Sheet sync: Syncing…</p>
+              ) : null}
+
               {/* Advanced — collapsed by default; Download PDF / Regenerate / Sync live here */}
               <div className="invoice-advanced">
                 <button
@@ -1715,6 +1821,20 @@ export function InvoiceSection({
                             : "Sync to Google Sheet"}
                       </button>
                     </div>
+                    {sheetUrl ? (
+                      <a
+                        href={sheetUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="invoice-sheet-link"
+                      >
+                        Open Google Sheet ↗
+                      </a>
+                    ) : (
+                      <span className="invoice-sheet-link invoice-sheet-link--disabled">
+                        Google Sheet not configured
+                      </span>
+                    )}
                     {syncState.status === "success" && syncedLabel ? (
                       <p className="invoice-sync-success">Sheet synced {syncedLabel}</p>
                     ) : syncState.status === "error" ? (

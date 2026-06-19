@@ -243,6 +243,14 @@ export function calculateInvoicePacket(data: InvoiceData): InvoicePacket {
 }
 
 /** Generate a Google Sheet row from a calculated InvoicePacket. */
+export interface GenerateSheetRowExtras {
+  sentTo?: string | null;
+  sentSubject?: string | null;
+  jobNameOverride?: string | null;
+  dayRateDescriptionOverride?: string | null;
+  noteOverride?: string | null;
+}
+
 export function generateSheetRow(
   packet: InvoicePacket,
   gigSummary: string,
@@ -252,6 +260,7 @@ export function generateSheetRow(
     paymentReceivedDate?: string;
     paymentBatchRef?: string;
   },
+  extras?: GenerateSheetRowExtras,
 ): SheetRow {
   const m = packet.mileage;
   const pm = paymentMeta ?? {};
@@ -285,5 +294,11 @@ export function generateSheetRow(
     paymentMethod:        pm.paymentMethod            ?? "",
     paymentReceivedDate:  pm.paymentReceivedDate      ?? "",
     paymentBatchRef:      pm.paymentBatchRef          ?? "",
+    // Optional extended columns (AC–AG) — write when extras provided
+    sentTo:                     extras?.sentTo                     ?? "",
+    sentSubject:                extras?.sentSubject                ?? "",
+    jobNameOverride:            extras?.jobNameOverride            ?? "",
+    dayRateDescriptionOverride: extras?.dayRateDescriptionOverride ?? "",
+    noteOverride:               extras?.noteOverride               ?? "",
   };
 }
