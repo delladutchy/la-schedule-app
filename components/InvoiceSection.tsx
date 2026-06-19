@@ -897,8 +897,11 @@ export function InvoiceSection({
       const json = await res.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
       setInvoiceData(json.invoiceData);
       setPacket(json.packet);
-      // Optimistic: background sheet sync fires immediately after save and almost always succeeds.
-      setSyncState((prev) => ({ ...prev, status: "success", syncedAt: new Date().toISOString() }));
+      // Do NOT optimistically mark sheet as synced here. The background Sheets API
+      // call fires after this response returns, and may fail silently (e.g. in
+      // serverless where the Lambda terminates after the response). syncState is
+      // only updated when the actual Sheets upsert is confirmed (PDF refresh,
+      // manual Sync button, or email send).
     } catch {
       setSaveError("Network error. Try again.");
     } finally {
@@ -952,8 +955,6 @@ export function InvoiceSection({
       const json = await res.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
       setInvoiceData(json.invoiceData);
       setPacket(json.packet);
-      // Optimistic sync state: background sync fires right after this save.
-      setSyncState((prev) => ({ ...prev, status: "success", syncedAt: new Date().toISOString() }));
       return json;
     } catch {
       setSaveError("Network error saving invoice data. Try again.");
@@ -1010,11 +1011,15 @@ export function InvoiceSection({
         credentials: "same-origin",
         body: JSON.stringify({ eventId, gigSummary }),
       });
+      const json = await res.json().catch(() => ({})) as {
+        syncedAt?: string;
+        message?: string;
+        sheetTarget?: { sheetId?: string | null; sheetName?: string };
+      };
       if (res.ok) {
-        const json = await res.json() as { syncedAt: string };
         setSyncState({ status: "success", message: null, syncedAt: json.syncedAt ?? null });
       } else {
-        const json = await res.json().catch(() => ({})) as { message?: string };
+        // Use the server-classified message (auth error, tab not found, etc.) if available.
         setSyncState({
           status: "error",
           message: json.message ?? "Sheet sync failed — retry",
@@ -1022,7 +1027,7 @@ export function InvoiceSection({
         });
       }
     } catch {
-      setSyncState({ status: "error", message: "Sheet sync failed — retry", syncedAt: prevSyncedAt });
+      setSyncState({ status: "error", message: "Sheet sync failed — network error", syncedAt: prevSyncedAt });
     }
   }
 

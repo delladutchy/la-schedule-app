@@ -5,6 +5,7 @@ import { isJeffEditorId } from "@/lib/job-time";
 import { getInvoiceData, markSheetSynced, markSheetSyncError } from "@/lib/invoice-data";
 import { calculateInvoicePacket, generateSheetRow } from "@/lib/invoice-calculations";
 import { upsertSheetRow } from "@/lib/google-sheets";
+import { classifySheetsError } from "@/lib/google-error";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "missing_event_id" }, { status: 400 });
   }
 
+  // Expose which spreadsheet/tab is the sync target so the client can verify.
+  const sheetId = process.env.GOOGLE_SHEET_ID ?? null;
+  const sheetName = process.env.GOOGLE_SHEET_NAME ?? "LA PAY (2026)";
+  const sheetTarget = { sheetId, sheetName };
+
+  if (!sheetId) {
+    return NextResponse.json(
+      {
+        error: "sheet_not_configured",
+        message: "GOOGLE_SHEET_ID env var not configured",
+        sheetTarget,
+      },
+      { status: 503 },
+    );
+  }
+
   let invoiceData;
   try {
     invoiceData = await getInvoiceData(eventId);
@@ -57,15 +74,16 @@ export async function POST(request: NextRequest) {
   try {
     await upsertSheetRow(row);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[sync-sheet] sheet write failed", message);
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const friendlyMsg = classifySheetsError(err, sheetId, sheetName);
+    console.error("[sync-sheet] sheet write failed:", rawMsg);
     try {
-      await markSheetSyncError(eventId, message);
+      await markSheetSyncError(eventId, rawMsg);
     } catch {
       // Don't let a secondary DB failure hide the sheet error
     }
     return NextResponse.json(
-      { error: "sheet_sync_failed", message: "Sheet sync failed — retry" },
+      { error: "sheet_sync_failed", message: friendlyMsg, sheetTarget },
       { status: 502 },
     );
   }
@@ -75,8 +93,8 @@ export async function POST(request: NextRequest) {
     await markSheetSynced(eventId, syncedAt);
   } catch (err) {
     console.error("[sync-sheet] mark-synced failed (non-fatal)", err);
-    // The row was written — return partial success so UI doesn't show error
+    // The row was written — return success so UI doesn't show error
   }
 
-  return NextResponse.json({ success: true, syncedAt });
+  return NextResponse.json({ success: true, syncedAt, sheetTarget });
 }

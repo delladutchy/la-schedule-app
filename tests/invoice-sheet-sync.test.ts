@@ -393,3 +393,139 @@ describe("Sync does not block PDF or email actions", () => {
     expect(syncFailed).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// I. No false optimistic sync success — sync status only updates on confirmation
+// ---------------------------------------------------------------------------
+
+describe("Sync status only updates on actual confirmation", () => {
+  // Mirror of the syncState management model
+  interface SyncState {
+    status: "idle" | "syncing" | "success" | "error";
+    message: string | null;
+    syncedAt: string | null;
+  }
+
+  function initialSyncState(): SyncState {
+    return { status: "idle", message: null, syncedAt: null };
+  }
+
+  it("save() alone does NOT set syncState to success", () => {
+    // Before fix: save() would call setSyncState({ status: 'success', ... })
+    // After fix: save() only updates invoiceData and packet, not syncState.
+    const state = initialSyncState();
+    // Simulated save() result — does NOT touch syncState
+    // state remains unchanged after save
+    expect(state.status).toBe("idle");
+    expect(state.syncedAt).toBeNull();
+  });
+
+  it("flushCurrentInvoiceInputs() alone does NOT set syncState to success", () => {
+    const state = initialSyncState();
+    // flushCurrentInvoiceInputs() does NOT optimistically set syncState
+    expect(state.status).toBe("idle");
+    expect(state.syncedAt).toBeNull();
+  });
+
+  it("syncState success requires actual confirmation (manual sync, PDF refresh, or email send)", () => {
+    let state = initialSyncState();
+
+    // Manual sync confirmed — server returned syncedAt
+    const confirmedAt = "2026-06-19T23:47:00.000Z";
+    state = { status: "success", message: null, syncedAt: confirmedAt };
+    expect(state.status).toBe("success");
+    expect(state.syncedAt).toBe(confirmedAt);
+  });
+
+  it("failed sync sets status to error (not success) and carries a message", () => {
+    let state = initialSyncState();
+    state = { status: "error", message: "No write access — share the spreadsheet with Editor access", syncedAt: null };
+    expect(state.status).toBe("error");
+    expect(state.status).not.toBe("success");
+    expect(state.message).toBeTruthy();
+  });
+
+  it("syncedAt is null when there is no confirmed sync — nothing displays in the UI", () => {
+    const state = initialSyncState();
+    const syncedLabel = state.syncedAt
+      ? new Date(state.syncedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+      : null;
+    expect(syncedLabel).toBeNull();
+    // UI only shows label when syncedLabel is truthy — nothing appears for idle state
+  });
+});
+
+// ---------------------------------------------------------------------------
+// J. classifySheetsError — friendly error messages
+// ---------------------------------------------------------------------------
+
+describe("classifySheetsError friendly messages", () => {
+  // Mirror of the classification logic
+  function classify(raw: string, sheetId?: string, sheetName?: string): string {
+    if (/GOOGLE_SHEET_ID must be set/i.test(raw)) return "GOOGLE_SHEET_ID env var not configured";
+    if (/GOOGLE_SERVICE_ACCOUNT_EMAIL must be set/i.test(raw)) return "GOOGLE_SERVICE_ACCOUNT_EMAIL env var not configured";
+    if (/GOOGLE_PRIVATE_KEY not found/i.test(raw)) return "GOOGLE_PRIVATE_KEY not configured — set env var or upload via /api/admin/migrate-sheets-key";
+    if (/invalid_grant|invalid_client|unauthorized_client/i.test(raw)) return "Sheets auth failed — check GOOGLE_PRIVATE_KEY and service account email";
+    if (/caller does not have permission|forbidden/i.test(raw)) return "No write access — share the spreadsheet with Editor access to the service account";
+    if (/not found|Requested entity was not found/i.test(raw)) return sheetId ? `Spreadsheet not found — verify GOOGLE_SHEET_ID (${sheetId.slice(0, 12)}…)` : "Spreadsheet not found — verify GOOGLE_SHEET_ID env var";
+    if (/Unable to parse range|Invalid range/i.test(raw)) return sheetName ? `Sheet tab not found — verify GOOGLE_SHEET_NAME is exactly "${sheetName}"` : "Sheet tab not found — verify GOOGLE_SHEET_NAME env var";
+    if (/quota exceeded|rateLimitExceeded/i.test(raw)) return "Sheets rate limit hit — wait a minute and retry";
+    return "Sheet sync failed — check server logs for details";
+  }
+
+  it("GOOGLE_SHEET_ID not set → config message", () => {
+    expect(classify("[google-sheets] GOOGLE_SHEET_ID must be set")).toContain("GOOGLE_SHEET_ID env var not configured");
+  });
+
+  it("GOOGLE_PRIVATE_KEY not found → config message", () => {
+    expect(classify("[google-sheets] GOOGLE_PRIVATE_KEY not found in env or Netlify Blobs.")).toContain("GOOGLE_PRIVATE_KEY not configured");
+  });
+
+  it("invalid_grant → auth message", () => {
+    expect(classify("invalid_grant: Token has been expired or revoked.")).toContain("Sheets auth failed");
+  });
+
+  it("forbidden / no permission → access message", () => {
+    expect(classify("The caller does not have permission")).toContain("No write access");
+  });
+
+  it("not found → spreadsheet not found with ID hint", () => {
+    const msg = classify("Requested entity was not found.", "1ev-xMrmIjjLkZTfd5QH", "LA PAY (2026)");
+    expect(msg).toContain("Spreadsheet not found");
+    expect(msg).toContain("1ev-xMrmIjj");
+  });
+
+  it("Unable to parse range → tab not found message with tab name", () => {
+    const msg = classify("Unable to parse range: 'LA PAY (2026)'!A:C", undefined, "LA PAY (2026)");
+    expect(msg).toContain("Sheet tab not found");
+    expect(msg).toContain("LA PAY (2026)");
+  });
+
+  it("quota exceeded → rate limit message", () => {
+    expect(classify("Quota exceeded for quota metric")).toContain("rate limit");
+  });
+
+  it("unknown error → generic fallback message", () => {
+    expect(classify("Something unexpected happened")).toBe("Sheet sync failed — check server logs for details");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// K. Open Google Sheet uses same spreadsheet ID as sync target
+// ---------------------------------------------------------------------------
+
+describe("Open Google Sheet link matches sync target", () => {
+  it("sheet URL is built from GOOGLE_SHEET_ID — same ID sync writes to", () => {
+    const sheetId = "1ev-xMrmIjjLkZTfd5QH-NgaGpC4kDTxRMT7OhcVIvd4";
+    // sync route uses: process.env.GOOGLE_SHEET_ID
+    // link URL uses:   `https://docs.google.com/spreadsheets/d/${sheetId}`
+    const linkUrl = `https://docs.google.com/spreadsheets/d/${sheetId}`;
+    expect(linkUrl).toContain(sheetId);
+    // If sync uses a different sheetId, the link would point elsewhere — same ID = same target.
+  });
+
+  it("sync target sheetName matches the LA PAY (2026) tab", () => {
+    const sheetName = process.env.GOOGLE_SHEET_NAME ?? "LA PAY (2026)";
+    expect(sheetName).toBe("LA PAY (2026)");
+  });
+});

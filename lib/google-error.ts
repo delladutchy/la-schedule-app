@@ -76,3 +76,76 @@ export const CALENDAR_AUTH_FAILED_MESSAGE =
 
 export const CALENDAR_RATE_LIMIT_MESSAGE =
   "Google Calendar is rate-limiting sync right now. Wait about a minute and try again.";
+
+// ---------------------------------------------------------------------------
+// Sheets error classification
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts a raw googleapis/lib error from a Sheets API call into a short,
+ * user-visible message. Never exposes raw auth credentials or stack traces.
+ *
+ * @param error  — the caught error value
+ * @param sheetId — GOOGLE_SHEET_ID in use (for context in the message)
+ * @param sheetName — GOOGLE_SHEET_NAME in use
+ */
+export function classifySheetsError(
+  error: unknown,
+  sheetId?: string,
+  sheetName?: string,
+): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const httpStatus = (() => {
+    if (typeof error !== "object" || error === null) return undefined;
+    const e = error as Record<string, unknown>;
+    if (typeof e.status === "number") return e.status;
+    if (typeof e.code === "number") return e.code;
+    return undefined;
+  })();
+
+  // Config errors (our own messages from lib/google-sheets.ts)
+  if (/GOOGLE_SHEET_ID must be set/i.test(raw)) {
+    return "GOOGLE_SHEET_ID env var not configured";
+  }
+  if (/GOOGLE_SERVICE_ACCOUNT_EMAIL must be set/i.test(raw)) {
+    return "GOOGLE_SERVICE_ACCOUNT_EMAIL env var not configured";
+  }
+  if (/GOOGLE_PRIVATE_KEY not found/i.test(raw)) {
+    return "GOOGLE_PRIVATE_KEY not configured — set env var or upload via /api/admin/migrate-sheets-key";
+  }
+
+  // Auth failures
+  if (httpStatus === 401 || /invalid_grant|invalid_client|unauthorized_client/i.test(raw)) {
+    return "Sheets auth failed — check GOOGLE_PRIVATE_KEY and service account email";
+  }
+
+  // Permission errors
+  if (httpStatus === 403 || /caller does not have permission|forbidden/i.test(raw)) {
+    const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    return email
+      ? `No write access — share the spreadsheet with Editor access to ${email}`
+      : "No write access — share the spreadsheet with Editor access to the service account";
+  }
+
+  // Spreadsheet not found
+  if (httpStatus === 404 || /not found|Requested entity was not found/i.test(raw)) {
+    return sheetId
+      ? `Spreadsheet not found — verify GOOGLE_SHEET_ID (${sheetId.slice(0, 12)}…)`
+      : "Spreadsheet not found — verify GOOGLE_SHEET_ID env var";
+  }
+
+  // Tab/range errors
+  if (/Unable to parse range|Invalid range|No grid with id/i.test(raw)) {
+    return sheetName
+      ? `Sheet tab not found — verify GOOGLE_SHEET_NAME is exactly "${sheetName}"`
+      : "Sheet tab not found — verify GOOGLE_SHEET_NAME env var";
+  }
+
+  // Rate limit
+  if (/quota exceeded|rateLimitExceeded/i.test(raw)) {
+    return "Sheets rate limit hit — wait a minute and retry";
+  }
+
+  // Generic
+  return "Sheet sync failed — check server logs for details";
+}
