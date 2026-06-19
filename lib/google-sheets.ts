@@ -33,6 +33,9 @@ const QUOTED_SHEET_NAME = `'${SHEET_NAME}'`;
 // Columns 22–28: native invoicing / payment metadata (appended to the right)
 // PDF LINK, SENT DATE, AMOUNT PAID, REMAINING BALANCE,
 // PAYMENT METHOD, PAYMENT RECEIVED DATE, PAYMENT BATCH REF
+//
+// Columns 29–33 (optional AC–AG): extended sync fields
+// SENT TO, SENT SUBJECT, JOB NAME OVERRIDE, DAY RATE DESC OVERRIDE, INVOICE NOTE OVERRIDE
 const COLUMN_ORDER: Array<keyof SheetRow> = [
   "invoiceNumber",
   "date",
@@ -71,6 +74,38 @@ const COLUMN_ORDER: Array<keyof SheetRow> = [
   "dayRateDescriptionOverride",
   "noteOverride",
 ];
+
+// ---------------------------------------------------------------------------
+// Row-matching helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalize an LA number for comparison.
+ * "LA#5555", "LA #5555", "5555" all normalize to "5555".
+ * This prevents duplicates caused by format mismatches between syncs.
+ */
+export function normalizeLA(la: string): string {
+  return la.replace(/^LA\s*#?\s*/i, "").trim();
+}
+
+/**
+ * True if a sheet row (identified by its col-A and col-C values) looks like
+ * an invoice data row rather than a totals/summary row.
+ *
+ * Invoice rows have a LA job number in col C, OR an invoice-number-like value
+ * (starts with a digit or "JU-") in col A.  Totals/summary rows have empty
+ * col C and a label such as "TOTAL" in col A — they do not pass this check.
+ */
+export function isInvoiceDataRow(cellA: string, cellC: string): boolean {
+  if (cellC.trim()) return true;               // col C (LA#) present → invoice row
+  const a = cellA.trim();
+  if (!a) return false;
+  return /^\d/.test(a) || /^JU-/i.test(a);    // numeric or JU-format invoice number
+}
+
+// ---------------------------------------------------------------------------
+// Auth / client helpers
+// ---------------------------------------------------------------------------
 
 async function getPrivateKey(): Promise<string> {
   // Env var takes priority — required for local dev and during migration window.
@@ -113,10 +148,23 @@ function rowToValues(row: SheetRow): (string | number)[] {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Main upsert
+// ---------------------------------------------------------------------------
+
 /**
  * Upsert one invoice row in the Google Sheet.
- * Matches by LA Job # in column C (index 2). Appends if not found.
- * Throws on auth/API failure so the caller can handle retry.
+ *
+ * Stable key: normalised LA job # (col C) first; invoice number (col A) as
+ * fallback for rows written before a LA # was recorded.  Both keys are
+ * normalised to prevent format-mismatch duplicates ("5555" vs "LA#5555").
+ *
+ * New rows are inserted with insertDimension immediately after the last
+ * detected invoice-data row, so they are never placed inside totals/summary
+ * sections (which the spreadsheets.values.append API can land in when those
+ * sections contain formulas that count as "last row with data").
+ *
+ * Throws on auth/API failure so the caller can surface/log the error.
  */
 export async function upsertSheetRow(row: SheetRow): Promise<void> {
   const sheetId = process.env.GOOGLE_SHEET_ID;
@@ -125,23 +173,62 @@ export async function upsertSheetRow(row: SheetRow): Promise<void> {
   const auth = await getSheetAuth();
   const sheets = google.sheets({ version: "v4", auth });
 
-  // Read existing rows to find a match by LA Job #
-  const readRange = `${QUOTED_SHEET_NAME}!A:C`;
-  const readRes = await sheets.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: readRange,
-  });
+  // Normalise the incoming keys once.
+  const incomingLa  = normalizeLA(row.laJobNumber);
+  const incomingInv = String(row.invoiceNumber ?? "").trim();
+
+  if (!incomingLa && !incomingInv) {
+    // Without a stable key we cannot prevent duplicates — refuse to write.
+    throw new Error(
+      "[google-sheets] upsertSheetRow: both laJobNumber and invoiceNumber are empty. " +
+      "Cannot safely upsert without a stable row key.",
+    );
+  }
+
+  // Parallel reads: spreadsheet metadata (needed for insertDimension's numeric
+  // sheet ID) + column-A/C data (for duplicate detection and placement).
+  const [spreadsheetRes, readRes] = await Promise.all([
+    sheets.spreadsheets.get({ spreadsheetId: sheetId }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${QUOTED_SHEET_NAME}!A:C`,
+    }),
+  ]);
+
+  // Resolve the numeric tab ID required by batchUpdate / insertDimension.
+  const tabMeta = spreadsheetRes.data.sheets?.find(
+    (s) => s.properties?.title === SHEET_NAME,
+  );
+  if (!tabMeta || tabMeta.properties?.sheetId == null) {
+    throw new Error(
+      `[google-sheets] Tab "${SHEET_NAME}" not found in spreadsheet. ` +
+      `Check GOOGLE_SHEET_NAME env var (currently: "${SHEET_NAME}").`,
+    );
+  }
+  const numericTabId = tabMeta.properties.sheetId;
 
   const existingRows = readRes.data.values ?? [];
-  const laJobNumber = row.laJobNumber.trim();
-  let matchRowIndex = -1;
+  let matchRowIndex  = -1;  // 1-indexed Sheets row of an existing match
+  let lastDataRow    = 1;   // 1-indexed last row that looks like invoice data
 
-  if (laJobNumber) {
-    for (let i = 1; i < existingRows.length; i++) {
-      const cellVal = String(existingRows[i]?.[2] ?? "").trim();
-      if (cellVal === laJobNumber) {
-        matchRowIndex = i + 1; // Sheets rows are 1-indexed; header is row 1
-        break;
+  // i = 0 is the header row — scan from i = 1.
+  for (let i = 1; i < existingRows.length; i++) {
+    const cellA = String(existingRows[i]?.[0] ?? "").trim(); // col A: INV#
+    const cellC = String(existingRows[i]?.[2] ?? "").trim(); // col C: LA Job #
+    const sheetsRow = i + 1; // convert to 1-indexed Sheets row number
+
+    // Track the last row that is recognisable as invoice data.
+    // Totals/summary rows (empty col C, label in col A) will NOT advance this counter.
+    if (isInvoiceDataRow(cellA, cellC)) {
+      lastDataRow = sheetsRow;
+    }
+
+    // Match: primary key = normalised LA# in col C; fallback = invoice# in col A.
+    if (matchRowIndex < 0) {
+      if (incomingLa && normalizeLA(cellC) === incomingLa) {
+        matchRowIndex = sheetsRow;
+      } else if (incomingInv && cellA && cellA === incomingInv) {
+        matchRowIndex = sheetsRow;
       }
     }
   }
@@ -149,25 +236,58 @@ export async function upsertSheetRow(row: SheetRow): Promise<void> {
   const values = [rowToValues(row)];
 
   if (matchRowIndex > 0) {
-    // Update existing row
-    const updateRange = `${QUOTED_SHEET_NAME}!A${matchRowIndex}`;
+    // ── UPDATE existing row in-place ─────────────────────────────────────────
+    // Never creates a duplicate — always targets the same physical row.
     await sheets.spreadsheets.values.update({
       spreadsheetId: sheetId,
-      range: updateRange,
+      range: `${QUOTED_SHEET_NAME}!A${matchRowIndex}`,
       valueInputOption: "USER_ENTERED",
       requestBody: { values },
     });
-  } else {
-    // Append new row
-    const appendRange = `${QUOTED_SHEET_NAME}!A:A`;
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: sheetId,
-      range: appendRange,
-      valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values },
-    });
+    return;
   }
+
+  // ── INSERT new row after the last invoice data row ────────────────────────
+  //
+  // We use insertDimension (not values.append) so the new row is placed at an
+  // exact position we control.  values.append detects "last row with data" by
+  // scanning the full column — formula-containing totals rows count as data, so
+  // append can land new rows inside or below the totals section.
+  //
+  // insertDimension uses 0-indexed row positions:
+  //   startIndex = lastDataRow inserts BEFORE the current row at 0-index lastDataRow,
+  //   which is AFTER 1-indexed Sheets row lastDataRow (the last data row).
+  //
+  // Example: lastDataRow = 10 (Sheets row 10 is the last invoice row)
+  //   startIndex = 10  →  new row inserted at 0-index 10  →  Sheets row 11
+  //   old Sheets row 11 (first totals row) shifts down to Sheets row 12  ✓
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: sheetId,
+    requestBody: {
+      requests: [
+        {
+          insertDimension: {
+            range: {
+              sheetId: numericTabId,
+              dimension: "ROWS",
+              startIndex: lastDataRow,       // 0-indexed: insert after lastDataRow
+              endIndex: lastDataRow + 1,
+            },
+            inheritFromBefore: lastDataRow > 1, // inherit data-row formatting (not header)
+          },
+        },
+      ],
+    },
+  });
+
+  // The newly inserted blank row is now at 1-indexed position (lastDataRow + 1).
+  const newRowNumber = lastDataRow + 1;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_SHEET_NAME}!A${newRowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -192,14 +312,16 @@ export interface SheetPaymentUpdate {
  * Targeted update of payment columns (T:AB) in an existing sheet row.
  * Also refreshes column A (invoice number) in case it was generated in the old JU-format.
  *
- * Matches by LA Job # in column C. No-op if the row does not exist — the row
- * will receive the full update the next time upsertSheetRow() is called (e.g.
- * on PDF regeneration). Does NOT append new rows.
+ * Matches by normalised LA Job # (col C) first, then invoice number (col A).
+ * No-op if the row does not exist yet — it will be written on the next full
+ * upsertSheetRow call. Does NOT append new rows.
  *
  * Throws on auth/API failure so callers can catch and handle non-fatally.
  */
 export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Promise<void> {
-  if (!update.laJobNumber.trim()) return; // can't find a row without a job number
+  const normLa = normalizeLA(update.laJobNumber);
+  const normInv = update.invoiceNumber.trim();
+  if (!normLa && !normInv) return; // can't find a row without a key
 
   const sheetId = process.env.GOOGLE_SHEET_ID;
   if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
@@ -207,19 +329,23 @@ export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Pro
   const auth = await getSheetAuth();
   const sheets = google.sheets({ version: "v4", auth });
 
-  // Find row by LA Job # in column C
   const readRes = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
     range: `${QUOTED_SHEET_NAME}!A:C`,
   });
 
   const rows = readRes.data.values ?? [];
-  const laNumber = update.laJobNumber.trim();
   let matchRowIndex = -1;
 
   for (let i = 1; i < rows.length; i++) {
-    if (String(rows[i]?.[2] ?? "").trim() === laNumber) {
-      matchRowIndex = i + 1; // 1-indexed; header is row 1
+    const cellA = String(rows[i]?.[0] ?? "").trim();
+    const cellC = String(rows[i]?.[2] ?? "").trim();
+    if (normLa && normalizeLA(cellC) === normLa) {
+      matchRowIndex = i + 1;
+      break;
+    }
+    if (normInv && cellA === normInv) {
+      matchRowIndex = i + 1;
       break;
     }
   }
@@ -250,4 +376,70 @@ export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Pro
       ],
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate-row report (read-only — never deletes)
+// ---------------------------------------------------------------------------
+
+export interface SheetDuplicateGroup {
+  key: string;                       // "INV#:LA#" or whichever keys exist
+  rows: Array<{ rowNumber: number; invNumber: string; laNumber: string; date: string; total: string }>;
+  keepRow: number;                   // suggested row to keep (latest date or last in list)
+  deleteRows: number[];              // row numbers safe to delete after review
+}
+
+/**
+ * Reads the sheet and returns groups of duplicate rows (same invoice# or LA#).
+ * READ-ONLY — never modifies the sheet. Use the result to decide which rows
+ * to manually delete.
+ */
+export async function findSheetDuplicates(): Promise<SheetDuplicateGroup[]> {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
+
+  const auth = await getSheetAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const readRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_SHEET_NAME}!A:E`, // INV#, DATE, LA#, GIG, TOTAL
+  });
+
+  const rows = readRes.data.values ?? [];
+
+  // Group rows by (normalised LA# OR invoice#).
+  const groups = new Map<string, Array<{ rowNumber: number; invNumber: string; laNumber: string; date: string; total: string }>>();
+
+  for (let i = 1; i < rows.length; i++) {
+    const cellA = String(rows[i]?.[0] ?? "").trim();
+    const cellB = String(rows[i]?.[1] ?? "").trim();
+    const cellC = String(rows[i]?.[2] ?? "").trim();
+    const cellE = String(rows[i]?.[4] ?? "").trim();
+
+    if (!isInvoiceDataRow(cellA, cellC)) continue; // skip totals/summary rows
+
+    // Build a canonical key for this row. Prefer LA# since it's more stable.
+    const normLa  = normalizeLA(cellC);
+    const normInv = cellA;
+    const key     = normLa ? `la:${normLa}` : normInv ? `inv:${normInv}` : null;
+    if (!key) continue;
+
+    const entry = { rowNumber: i + 1, invNumber: cellA, laNumber: cellC, date: cellB, total: cellE };
+    const existing = groups.get(key) ?? [];
+    existing.push(entry);
+    groups.set(key, existing);
+  }
+
+  // Return only groups with more than one row.
+  const duplicates: SheetDuplicateGroup[] = [];
+  for (const [key, entries] of groups) {
+    if (entries.length <= 1) continue;
+    // Keep the last entry (latest sync is most current). All others are candidates for deletion.
+    const keepRow    = entries[entries.length - 1]!.rowNumber;
+    const deleteRows = entries.slice(0, -1).map((e) => e.rowNumber);
+    duplicates.push({ key, rows: entries, keepRow, deleteRows });
+  }
+
+  return duplicates;
 }

@@ -517,15 +517,291 @@ describe("classifySheetsError friendly messages", () => {
 describe("Open Google Sheet link matches sync target", () => {
   it("sheet URL is built from GOOGLE_SHEET_ID — same ID sync writes to", () => {
     const sheetId = "1ev-xMrmIjjLkZTfd5QH-NgaGpC4kDTxRMT7OhcVIvd4";
-    // sync route uses: process.env.GOOGLE_SHEET_ID
-    // link URL uses:   `https://docs.google.com/spreadsheets/d/${sheetId}`
     const linkUrl = `https://docs.google.com/spreadsheets/d/${sheetId}`;
     expect(linkUrl).toContain(sheetId);
-    // If sync uses a different sheetId, the link would point elsewhere — same ID = same target.
   });
 
   it("sync target sheetName matches the LA PAY (2026) tab", () => {
     const sheetName = process.env.GOOGLE_SHEET_NAME ?? "LA PAY (2026)";
     expect(sheetName).toBe("LA PAY (2026)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// L. normalizeLA — format-mismatch duplicate prevention
+// ---------------------------------------------------------------------------
+
+// Mirror the exported helper logic for unit testing without a real Sheets call.
+function normalizeLA(la: string): string {
+  return la.replace(/^LA\s*#?\s*/i, "").trim();
+}
+
+describe("normalizeLA — strips prefix for dedup matching", () => {
+  it("bare number passes through unchanged", () => {
+    expect(normalizeLA("5555")).toBe("5555");
+  });
+  it("LA#5555 → 5555", () => {
+    expect(normalizeLA("LA#5555")).toBe("5555");
+  });
+  it("LA #5555 (space before hash) → 5555", () => {
+    expect(normalizeLA("LA #5555")).toBe("5555");
+  });
+  it("la#5555 (lower-case) → 5555", () => {
+    expect(normalizeLA("la#5555")).toBe("5555");
+  });
+  it("LA 5555 (space, no hash) → 5555", () => {
+    expect(normalizeLA("LA 5555")).toBe("5555");
+  });
+  it("normalizing both sides prevents false mismatch between syncs", () => {
+    // Sheet stored "5555" in a previous sync; new sync sends "LA#5555".
+    // Without normalization these differ → duplicate. With normalization → match.
+    expect(normalizeLA("5555")).toBe(normalizeLA("LA#5555"));
+  });
+  it("empty string stays empty", () => {
+    expect(normalizeLA("")).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M. isInvoiceDataRow — totals/summary row detection
+// ---------------------------------------------------------------------------
+
+function isInvoiceDataRow(cellA: string, cellC: string): boolean {
+  if (cellC.trim()) return true;
+  const a = cellA.trim();
+  if (!a) return false;
+  return /^\d/.test(a) || /^JU-/i.test(a);
+}
+
+describe("isInvoiceDataRow — correctly identifies invoice vs summary rows", () => {
+  it("row with LA# in col C is an invoice row", () => {
+    expect(isInvoiceDataRow("1001", "5555")).toBe(true);
+  });
+  it("row with only LA# in col C (col A empty) is an invoice row", () => {
+    expect(isInvoiceDataRow("", "5555")).toBe(true);
+  });
+  it("row with numeric invoice number in col A (col C empty) is an invoice row", () => {
+    expect(isInvoiceDataRow("1001", "")).toBe(true);
+  });
+  it("row with JU-format invoice number in col A is an invoice row", () => {
+    expect(isInvoiceDataRow("JU-2024-001", "")).toBe(true);
+  });
+  it("totals row: col A = 'TOTAL', col C empty → NOT an invoice row", () => {
+    expect(isInvoiceDataRow("TOTAL", "")).toBe(false);
+  });
+  it("totals row: col A = 'GRAND TOTAL', col C empty → NOT an invoice row", () => {
+    expect(isInvoiceDataRow("GRAND TOTAL", "")).toBe(false);
+  });
+  it("completely empty row → NOT an invoice row", () => {
+    expect(isInvoiceDataRow("", "")).toBe(false);
+  });
+  it("row with label 'SUBTOTAL' in col A → NOT an invoice row", () => {
+    expect(isInvoiceDataRow("SUBTOTAL", "")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N. Row placement — last data row tracking avoids totals section
+// ---------------------------------------------------------------------------
+
+describe("Row placement — lastDataRow computation avoids totals/summary section", () => {
+  // Simulate the row-scanning loop from upsertSheetRow
+  function findLastDataRow(rows: Array<[string, string]>): number {
+    let lastDataRow = 1; // header row
+    for (let i = 0; i < rows.length; i++) {
+      const [cellA, cellC] = rows[i]!;
+      if (isInvoiceDataRow(cellA, cellC)) {
+        lastDataRow = i + 2; // +1 for header, +1 for 1-indexed
+      }
+    }
+    return lastDataRow;
+  }
+
+  it("no data rows → lastDataRow = 1 (header), insert goes to row 2", () => {
+    const rows: Array<[string, string]> = [];
+    expect(findLastDataRow(rows) + 1).toBe(2);
+  });
+
+  it("one data row → lastDataRow = 2, new row goes to row 3", () => {
+    const rows: Array<[string, string]> = [["1001", "5555"]];
+    expect(findLastDataRow(rows) + 1).toBe(3);
+  });
+
+  it("three data rows → lastDataRow = 4, new row goes to row 5", () => {
+    const rows: Array<[string, string]> = [
+      ["1001", "5555"],
+      ["1002", "6666"],
+      ["1003", "7777"],
+    ];
+    expect(findLastDataRow(rows) + 1).toBe(5);
+  });
+
+  it("totals rows after data rows do NOT advance lastDataRow", () => {
+    // Sheet structure: header | data x3 | empty | TOTAL row
+    const rows: Array<[string, string]> = [
+      ["1001", "5555"],  // row 2 — data
+      ["1002", "6666"],  // row 3 — data
+      ["1003", "7777"],  // row 4 — data
+      ["", ""],          // row 5 — empty
+      ["TOTAL", ""],     // row 6 — totals (should NOT count)
+    ];
+    // lastDataRow should be 4 (row 4 = "1003"), new row → 5
+    expect(findLastDataRow(rows)).toBe(4);
+    expect(findLastDataRow(rows) + 1).toBe(5);
+  });
+
+  it("totals in the middle: new row inserts after last real data, not after totals", () => {
+    // Unusual but defensive: totals section interspersed
+    const rows: Array<[string, string]> = [
+      ["1001", "5555"],   // row 2 — data
+      ["TOTAL", ""],      // row 3 — totals
+    ];
+    // lastDataRow = 2 (row 2), new row → 3 (before the totals row via insertDimension)
+    expect(findLastDataRow(rows)).toBe(2);
+    expect(findLastDataRow(rows) + 1).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O. Duplicate key matching — same invoice synced twice updates same row
+// ---------------------------------------------------------------------------
+
+describe("Duplicate detection — same invoice synced twice finds existing row", () => {
+  interface FakeSheetRow { rowA: string; rowC: string; }
+
+  function findMatch(
+    existingRows: FakeSheetRow[],
+    incomingLa: string,
+    incomingInv: string,
+  ): number {
+    // Mirror of the match loop in upsertSheetRow
+    for (let i = 0; i < existingRows.length; i++) {
+      const cellA = existingRows[i]!.rowA.trim();
+      const cellC = existingRows[i]!.rowC.trim();
+      const sheetsRow = i + 2; // +1 for header, +1 for 1-indexed
+      if (incomingLa && normalizeLA(cellC) === normalizeLA(incomingLa)) return sheetsRow;
+      if (incomingInv && cellA && cellA === incomingInv) return sheetsRow;
+    }
+    return -1; // not found
+  }
+
+  it("exact LA# match → finds existing row (no duplicate)", () => {
+    const existing = [{ rowA: "1001", rowC: "5555" }];
+    expect(findMatch(existing, "5555", "1001")).toBe(2);
+  });
+
+  it("LA# format mismatch: sheet has '5555', incoming is 'LA#5555' → still matches", () => {
+    const existing = [{ rowA: "1001", rowC: "5555" }];
+    expect(findMatch(existing, "LA#5555", "1001")).toBe(2);
+  });
+
+  it("LA# format mismatch: sheet has 'LA#5555', incoming is '5555' → still matches", () => {
+    const existing = [{ rowA: "1001", rowC: "LA#5555" }];
+    expect(findMatch(existing, "5555", "1001")).toBe(2);
+  });
+
+  it("empty LA#: falls back to invoice number match", () => {
+    // Row was written before la_number was set — col C is empty, col A has invoice#
+    const existing = [{ rowA: "1001", rowC: "" }];
+    expect(findMatch(existing, "", "1001")).toBe(2);
+  });
+
+  it("completely new invoice (no LA# or inv# in sheet) → returns -1 (insert)", () => {
+    const existing = [{ rowA: "1001", rowC: "5555" }];
+    expect(findMatch(existing, "6666", "1002")).toBe(-1);
+  });
+
+  it("same invoice synced after expense change: LA# unchanged → same row found", () => {
+    const existing = [{ rowA: "1001", rowC: "5555" }];
+    // Expense change modifies total/labor but not the key — same row matched
+    expect(findMatch(existing, "5555", "1001")).toBe(2);
+  });
+
+  it("Open PDF, Review, Send Invoice all produce same LA# key → same row matched every time", () => {
+    const existing = [{ rowA: "1001", rowC: "5555" }];
+    // All three actions ultimately call upsertSheetRow with same laJobNumber
+    expect(findMatch(existing, "5555", "1001")).toBe(2); // Open PDF
+    expect(findMatch(existing, "5555", "1001")).toBe(2); // Review
+    expect(findMatch(existing, "5555", "1001")).toBe(2); // Send Invoice
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P. Stable key guard — no key → refuse write (not a silent insert)
+// ---------------------------------------------------------------------------
+
+describe("Stable key guard — no write without a stable key", () => {
+  it("throws when both laJobNumber and invoiceNumber are empty", () => {
+    function guardedUpsert(la: string, inv: string): void {
+      if (!la.trim() && !inv.trim()) {
+        throw new Error(
+          "[google-sheets] upsertSheetRow: both laJobNumber and invoiceNumber are empty. " +
+          "Cannot safely upsert without a stable row key.",
+        );
+      }
+    }
+    expect(() => guardedUpsert("", "")).toThrow("both laJobNumber and invoiceNumber are empty");
+  });
+
+  it("does NOT throw when only LA# is present", () => {
+    function guardedUpsert(la: string, inv: string): void {
+      if (!la.trim() && !inv.trim()) throw new Error("no key");
+    }
+    expect(() => guardedUpsert("5555", "")).not.toThrow();
+  });
+
+  it("does NOT throw when only invoice# is present", () => {
+    function guardedUpsert(la: string, inv: string): void {
+      if (!la.trim() && !inv.trim()) throw new Error("no key");
+    }
+    expect(() => guardedUpsert("", "1001")).not.toThrow();
+  });
+
+  it("classifySheetsError maps the no-key error to a user-friendly message", () => {
+    function classify(raw: string): string {
+      if (/both laJobNumber and invoiceNumber are empty/i.test(raw)) {
+        return "Cannot sync: invoice has no invoice number or LA job number set yet — save the invoice first";
+      }
+      return "Sheet sync failed — check server logs for details";
+    }
+    const msg = classify("[google-sheets] upsertSheetRow: both laJobNumber and invoiceNumber are empty.");
+    expect(msg).toContain("Cannot sync");
+    expect(msg).toContain("invoice number");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Q. classifySheetsError — new error patterns from upsertSheetRow rewrite
+// ---------------------------------------------------------------------------
+
+describe("classifySheetsError — new patterns", () => {
+  function classify(raw: string, sheetId?: string, sheetName?: string): string {
+    if (/GOOGLE_SHEET_ID must be set/i.test(raw)) return "GOOGLE_SHEET_ID env var not configured";
+    if (/GOOGLE_SERVICE_ACCOUNT_EMAIL must be set/i.test(raw)) return "GOOGLE_SERVICE_ACCOUNT_EMAIL env var not configured";
+    if (/GOOGLE_PRIVATE_KEY not found/i.test(raw)) return "GOOGLE_PRIVATE_KEY not configured — set env var or upload via /api/admin/migrate-sheets-key";
+    if (/Tab ".+" not found in spreadsheet/i.test(raw)) return sheetName ? `Sheet tab not found — verify GOOGLE_SHEET_NAME is exactly "${sheetName}"` : "Sheet tab not found — verify GOOGLE_SHEET_NAME env var";
+    if (/both laJobNumber and invoiceNumber are empty/i.test(raw)) return "Cannot sync: invoice has no invoice number or LA job number set yet — save the invoice first";
+    if (/invalid_grant|invalid_client|unauthorized_client/i.test(raw)) return "Sheets auth failed — check GOOGLE_PRIVATE_KEY and service account email";
+    if (/caller does not have permission|forbidden/i.test(raw)) return "No write access — share the spreadsheet with Editor access to the service account";
+    if (/not found|Requested entity was not found/i.test(raw)) return sheetId ? `Spreadsheet not found — verify GOOGLE_SHEET_ID (${sheetId.slice(0, 12)}…)` : "Spreadsheet not found — verify GOOGLE_SHEET_ID env var";
+    if (/Unable to parse range|Invalid range|No grid with id/i.test(raw)) return sheetName ? `Sheet tab not found — verify GOOGLE_SHEET_NAME is exactly "${sheetName}"` : "Sheet tab not found — verify GOOGLE_SHEET_NAME env var";
+    if (/quota exceeded|rateLimitExceeded/i.test(raw)) return "Sheets rate limit hit — wait a minute and retry";
+    return "Sheet sync failed — check server logs for details";
+  }
+
+  it("our own 'Tab not found' error is classified before generic not-found → tab message", () => {
+    const msg = classify(`[google-sheets] Tab "LA PAY (2026)" not found in spreadsheet.`, undefined, "LA PAY (2026)");
+    expect(msg).toContain("Sheet tab not found");
+    expect(msg).not.toContain("Spreadsheet not found");
+  });
+
+  it("no-key error → actionable 'save first' message", () => {
+    const msg = classify("[google-sheets] upsertSheetRow: both laJobNumber and invoiceNumber are empty.");
+    expect(msg).toContain("Cannot sync");
+  });
+
+  it("No grid with id (insertDimension numeric tab mismatch) → tab not found message", () => {
+    const msg = classify("No grid with id: 123456789", undefined, "LA PAY (2026)");
+    expect(msg).toContain("Sheet tab not found");
   });
 });

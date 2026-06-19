@@ -103,7 +103,8 @@ export function classifySheetsError(
     return undefined;
   })();
 
-  // Config errors (our own messages from lib/google-sheets.ts)
+  // Config/internal errors (our own messages from lib/google-sheets.ts).
+  // These must be checked BEFORE generic "not found" patterns below.
   if (/GOOGLE_SHEET_ID must be set/i.test(raw)) {
     return "GOOGLE_SHEET_ID env var not configured";
   }
@@ -112,6 +113,16 @@ export function classifySheetsError(
   }
   if (/GOOGLE_PRIVATE_KEY not found/i.test(raw)) {
     return "GOOGLE_PRIVATE_KEY not configured — set env var or upload via /api/admin/migrate-sheets-key";
+  }
+  // Tab not found (our own error — must come before the generic 404/not-found check)
+  if (/Tab ".+" not found in spreadsheet/i.test(raw)) {
+    return sheetName
+      ? `Sheet tab not found — verify GOOGLE_SHEET_NAME is exactly "${sheetName}"`
+      : "Sheet tab not found — verify GOOGLE_SHEET_NAME env var";
+  }
+  // No stable key — invoice not ready to sync yet
+  if (/both laJobNumber and invoiceNumber are empty/i.test(raw)) {
+    return "Cannot sync: invoice has no invoice number or LA job number set yet — save the invoice first";
   }
 
   // Auth failures
