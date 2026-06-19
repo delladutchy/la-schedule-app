@@ -180,7 +180,69 @@ interface ExpenseFields {
 interface OverrideFields {
   invoice_job_name_override: string;
   invoice_day_rate_description_override: string;
+  invoice_ot_description_override: string;
+  invoice_per_diem_description_override: string;
+  invoice_bag_fees_description_override: string;
+  invoice_parking_description_override: string;
+  invoice_uber_description_override: string;
+  invoice_tolls_description_override: string;
+  invoice_hotel_description_override: string;
+  invoice_other_description_override: string;
   invoice_note_override: string;
+}
+
+type OverrideFieldKey = keyof OverrideFields;
+type LineItemDescriptionField = Exclude<OverrideFieldKey, "invoice_job_name_override" | "invoice_note_override">;
+
+const DEFAULT_OT_DESCRIPTION = "Over 10hrs";
+const DEFAULT_INVOICE_NOTE = "Thanks again,\nJeff";
+
+const OVERRIDE_FIELD_KEYS: readonly OverrideFieldKey[] = [
+  "invoice_job_name_override",
+  "invoice_day_rate_description_override",
+  "invoice_ot_description_override",
+  "invoice_per_diem_description_override",
+  "invoice_bag_fees_description_override",
+  "invoice_parking_description_override",
+  "invoice_uber_description_override",
+  "invoice_tolls_description_override",
+  "invoice_hotel_description_override",
+  "invoice_other_description_override",
+  "invoice_note_override",
+];
+
+const EMPTY_OVERRIDE_FIELDS: OverrideFields = {
+  invoice_job_name_override: "",
+  invoice_day_rate_description_override: "",
+  invoice_ot_description_override: "",
+  invoice_per_diem_description_override: "",
+  invoice_bag_fees_description_override: "",
+  invoice_parking_description_override: "",
+  invoice_uber_description_override: "",
+  invoice_tolls_description_override: "",
+  invoice_hotel_description_override: "",
+  invoice_other_description_override: "",
+  invoice_note_override: "",
+};
+
+function hydrateOverrideFields(data: InvoiceData | null | undefined): OverrideFields {
+  const hydrated = { ...EMPTY_OVERRIDE_FIELDS };
+  if (!data) return hydrated;
+  for (const field of OVERRIDE_FIELD_KEYS) {
+    hydrated[field] = data[field] ?? "";
+  }
+  return hydrated;
+}
+
+function buildOverridePatch(overrides: OverrideFields): Record<OverrideFieldKey, string | null> {
+  return OVERRIDE_FIELD_KEYS.reduce((acc, field) => {
+    acc[field] = overrides[field].trim() || null;
+    return acc;
+  }, {} as Record<OverrideFieldKey, string | null>);
+}
+
+function hasOverrideText(overrides: OverrideFields): boolean {
+  return OVERRIDE_FIELD_KEYS.some((field) => overrides[field].trim() !== "");
 }
 
 interface AutoMileage {
@@ -531,6 +593,37 @@ function emailWorkDateRange(workdays: InvoicePacket["workdays"]): string {
   return `${fmtShort(dates[0]!)} - ${fmtShort(dates[dates.length - 1]!)}`;
 }
 
+function fmtInvoiceShortDate(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  if (!year || !month || !day) return isoDate;
+  return `${month}/${day}`;
+}
+
+function fmtInvoiceCompactTime(raw: string): string {
+  const trimmed = raw.trim();
+  const match = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i.exec(trimmed);
+  if (!match) return trimmed.replace(/\s+/g, "").toLowerCase();
+  const hour = Number(match[1]);
+  const minute = match[2] ?? "00";
+  const meridiem = (match[3] ?? "").toLowerCase();
+  return `${hour}:${minute}${meridiem}`;
+}
+
+function buildWorkedDateTimeLines(workdays: InvoicePacket["workdays"]): string {
+  return workdays
+    .map((workday) => {
+      const date = fmtInvoiceShortDate(workday.date);
+      const start = fmtInvoiceCompactTime(workday.startTime);
+      const end = fmtInvoiceCompactTime(workday.endTime);
+      return start && end ? `${date} - ${start}-${end}` : date;
+    })
+    .join("\n");
+}
+
+function resolveOverrideText(value: string, fallback = ""): string {
+  return value.trim() || fallback;
+}
+
 function buildPreviewSubject(laNumber: string | null, jobTitle: string): string {
   const cleanLa = emailCleanLa(laNumber);
   if (cleanLa) return `Jeff Ulsh - Invoice LA #${cleanLa}`;
@@ -566,6 +659,16 @@ interface EmailDialogProps {
   onSend: () => void;
   onClose: () => void;
   filename: string;
+}
+
+function InvoicePreviewLabel({ label, description }: { label: string; description?: string }) {
+  const cleanDescription = description?.trim();
+  return (
+    <span className="invoice-preview-label">
+      <span>{label}</span>
+      {cleanDescription ? <small className="invoice-preview-description">{cleanDescription}</small> : null}
+    </span>
+  );
 }
 
 function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialogProps) {
@@ -747,11 +850,7 @@ export function InvoiceSection({
     expense_notes: "",
   });
   const [expensesExpanded, setExpensesExpanded] = useState(false);
-  const [overrides, setOverrides] = useState<OverrideFields>({
-    invoice_job_name_override: "",
-    invoice_day_rate_description_override: "",
-    invoice_note_override: "",
-  });
+  const [overrides, setOverrides] = useState<OverrideFields>({ ...EMPTY_OVERRIDE_FIELDS });
   const [overridesExpanded, setOverridesExpanded] = useState(false);
   const [autoMileage, setAutoMileage] = useState<AutoMileage | null>(null);
   const [autoMileageNote, setAutoMileageNote] = useState<AutoMileageNote | null>(
@@ -811,14 +910,9 @@ export function InvoiceSection({
             expense_notes: data.expense_notes ?? "",
           };
           setExpenses(exp);
-          setOverrides({
-            invoice_job_name_override: data.invoice_job_name_override ?? "",
-            invoice_day_rate_description_override: data.invoice_day_rate_description_override ?? "",
-            invoice_note_override: data.invoice_note_override ?? "",
-          });
-          setOverridesExpanded(
-            !!(data.invoice_job_name_override || data.invoice_day_rate_description_override || data.invoice_note_override),
-          );
+          const hydratedOverrides = hydrateOverrideFields(data);
+          setOverrides(hydratedOverrides);
+          setOverridesExpanded(hasOverrideText(hydratedOverrides));
           setExpensesExpanded(
             data.bag_fees != null || data.hotel != null || data.parking != null ||
             data.tolls != null || data.uber != null || data.other_expenses != null ||
@@ -833,6 +927,8 @@ export function InvoiceSection({
           setWorkdayEntries(initWorkdayEntries([], workDates, defaultStartTime, defaultEndTime));
           setInvoiceData(null);
           setPacket(null);
+          setOverrides({ ...EMPTY_OVERRIDE_FIELDS });
+          setOverridesExpanded(false);
         }
         setFetchState({ status: "ready" });
       })
@@ -930,9 +1026,7 @@ export function InvoiceSection({
       uber: parseExpenseInput(expenses.uber),
       other_expenses: parseExpenseInput(expenses.other_expenses),
       expense_notes: expenses.expense_notes.trim() ? expenses.expense_notes : null,
-      invoice_job_name_override: overrides.invoice_job_name_override.trim() || null,
-      invoice_day_rate_description_override: overrides.invoice_day_rate_description_override.trim() || null,
-      invoice_note_override: overrides.invoice_note_override.trim() || null,
+      ...buildOverridePatch(overrides),
     };
   }
 
@@ -1373,6 +1467,86 @@ export function InvoiceSection({
   const emailSubject = buildPreviewSubject(effectiveEmailLaNumber, autoPreviewJobTitle);
   const emailBody = buildPreviewBody(effectiveEmailLaNumber, previewJobTitle, previewWorkDates);
   const emailFilename = buildPreviewFilename(effectiveEmailLaNumber, autoPreviewJobTitle, invoiceNumber);
+  const defaultDayRateDescription = p ? buildWorkedDateTimeLines(p.workdays) : "";
+  const resolveLineItemDescription = (field: LineItemDescriptionField, fallback = "") =>
+    resolveOverrideText(overrides[field], fallback);
+  const lineItemDescriptionFields = p
+    ? [
+        {
+          field: "invoice_day_rate_description_override" as const,
+          label: "Day Rate description",
+          defaultDescription: defaultDayRateDescription,
+          rows: Math.max(3, p.workdays.length),
+          visible: p.dayRateQty > 0,
+          hint: "Generated from saved workday dates/times. Clear to return to generated lines.",
+        },
+        {
+          field: "invoice_ot_description_override" as const,
+          label: "OT description",
+          defaultDescription: DEFAULT_OT_DESCRIPTION,
+          rows: 2,
+          visible: p.overtimeTotal > 0,
+          hint: "Clear to return to the default OT description.",
+        },
+        {
+          field: "invoice_per_diem_description_override" as const,
+          label: "Per Diem description",
+          defaultDescription: "",
+          rows: 2,
+          visible: p.perDiemTotal > 0,
+          hint: "Optional description for this line.",
+        },
+        {
+          field: "invoice_bag_fees_description_override" as const,
+          label: "Bag Fees description",
+          defaultDescription: "",
+          rows: 2,
+          visible: p.bagFees > 0,
+          hint: "Optional description for this line.",
+        },
+        {
+          field: "invoice_parking_description_override" as const,
+          label: "Parking description",
+          defaultDescription: "",
+          rows: 2,
+          visible: p.parking > 0,
+          hint: "Optional description for this line.",
+        },
+        {
+          field: "invoice_uber_description_override" as const,
+          label: "Uber description",
+          defaultDescription: "",
+          rows: 2,
+          visible: p.uber > 0,
+          hint: "Optional description for this line.",
+        },
+        {
+          field: "invoice_tolls_description_override" as const,
+          label: "Tolls description",
+          defaultDescription: "",
+          rows: 2,
+          visible: p.tolls > 0,
+          hint: "Optional description for this line.",
+        },
+        {
+          field: "invoice_hotel_description_override" as const,
+          label: "Hotel description",
+          defaultDescription: "",
+          rows: 2,
+          visible: p.hotel > 0,
+          hint: "Optional description for this line.",
+        },
+        {
+          field: "invoice_other_description_override" as const,
+          label: "Other description",
+          defaultDescription: "",
+          rows: 2,
+          visible: p.otherExpenses > 0,
+          hint: "Optional description for this line.",
+        },
+      ].filter((field) => field.visible)
+    : [];
+  const invoiceNoteText = resolveOverrideText(overrides.invoice_note_override, DEFAULT_INVOICE_NOTE);
 
   // Per-day mileage is the source of truth. Legacy total_miles only matters when
   // no per-day mileage has been entered yet.
@@ -1507,7 +1681,7 @@ export function InvoiceSection({
         {overridesExpanded ? (
           <div className="invoice-collapsible-content invoice-overrides-content">
             <p className="invoice-overrides-hint">
-              Leave blank to use auto-generated values. Fill in only what you want to override.
+              Clear any generated/default text to return to the automatic invoice wording.
             </p>
             <div className="invoice-override-field">
               <label className="invoice-label-sm" htmlFor="inv-override-job">Job name</label>
@@ -1521,26 +1695,31 @@ export function InvoiceSection({
               />
               <p className="invoice-override-hint-sm">Affects: PDF job row, email body. (Subject always uses LA #.)</p>
             </div>
-            <div className="invoice-override-field">
-              <label className="invoice-label-sm" htmlFor="inv-override-dayrate">Day Rate description</label>
-              <textarea
-                id="inv-override-dayrate"
-                className="invoice-textarea invoice-override-textarea"
-                value={overrides.invoice_day_rate_description_override}
-                onChange={(e) => handleOverrideChange("invoice_day_rate_description_override", e.target.value)}
-                placeholder={"6/18 - 7:30am-11:30pm\n6/19 - 1:00pm-9:00pm"}
-                rows={3}
-              />
-              <p className="invoice-override-hint-sm">Affects: PDF Day Rate description column. Leave blank to use auto date/time lines.</p>
-            </div>
+            {lineItemDescriptionFields.map((fieldConfig) => {
+              const value = resolveLineItemDescription(fieldConfig.field, fieldConfig.defaultDescription);
+              return (
+                <div className="invoice-override-field" key={fieldConfig.field}>
+                  <label className="invoice-label-sm" htmlFor={`inv-override-${fieldConfig.field}`}>{fieldConfig.label}</label>
+                  <textarea
+                    id={`inv-override-${fieldConfig.field}`}
+                    className="invoice-textarea invoice-override-textarea"
+                    value={value}
+                    onChange={(e) => handleOverrideChange(fieldConfig.field, e.target.value)}
+                    placeholder={fieldConfig.defaultDescription || "Optional description"}
+                    rows={fieldConfig.rows}
+                  />
+                  <p className="invoice-override-hint-sm">Affects: PDF/preview description column. {fieldConfig.hint}</p>
+                </div>
+              );
+            })}
             <div className="invoice-override-field">
               <label className="invoice-label-sm" htmlFor="inv-override-note">Invoice note</label>
               <textarea
                 id="inv-override-note"
                 className="invoice-textarea invoice-override-textarea"
-                value={overrides.invoice_note_override}
+                value={invoiceNoteText}
                 onChange={(e) => handleOverrideChange("invoice_note_override", e.target.value)}
-                placeholder={"Thanks again,\nJeff"}
+                placeholder={DEFAULT_INVOICE_NOTE}
                 rows={3}
               />
               <p className="invoice-override-hint-sm">Affects: PDF "Note to customer" section. Leave blank for default.</p>
@@ -1556,21 +1735,30 @@ export function InvoiceSection({
           <div className="invoice-preview">
             {p.dayRateQty > 0 ? (
               <div className="invoice-preview-row">
-                <span>Day Rate</span>
+                <InvoicePreviewLabel
+                  label="Day Rate"
+                  description={resolveLineItemDescription("invoice_day_rate_description_override", defaultDayRateDescription)}
+                />
                 <span className="invoice-preview-qty">{p.dayRateQty} × {fmtCurrency(p.dayRate)}</span>
                 <span className="invoice-preview-amount">{fmtCurrency(p.dayRateTotal)}</span>
               </div>
             ) : null}
             {p.totalOvertimeHours > 0 ? (
               <div className="invoice-preview-row">
-                <span>OT</span>
+                <InvoicePreviewLabel
+                  label="OT"
+                  description={resolveLineItemDescription("invoice_ot_description_override", DEFAULT_OT_DESCRIPTION)}
+                />
                 <span className="invoice-preview-qty">{fmtHours(p.totalOvertimeHours)} h × {fmtCurrency(p.overtimeRate)}</span>
                 <span className="invoice-preview-amount">{fmtCurrency(p.overtimeTotal)}</span>
               </div>
             ) : null}
             {p.perDiemQty > 0 ? (
               <div className="invoice-preview-row">
-                <span>Per Diem</span>
+                <InvoicePreviewLabel
+                  label="Per Diem"
+                  description={resolveLineItemDescription("invoice_per_diem_description_override")}
+                />
                 <span className="invoice-preview-qty">{p.perDiemQty} × {fmtCurrency(p.perDiemRate)}</span>
                 <span className="invoice-preview-amount">{fmtCurrency(p.perDiemTotal)}</span>
               </div>
@@ -1593,37 +1781,61 @@ export function InvoiceSection({
             ) : null}
             {p.bagFees > 0 ? (
               <div className="invoice-preview-row">
-                <span>Bag Fees</span>
+                <InvoicePreviewLabel
+                  label="Bag Fees"
+                  description={resolveLineItemDescription("invoice_bag_fees_description_override")}
+                />
+                <span className="invoice-preview-qty" />
                 <span className="invoice-preview-amount">{fmtCurrency(p.bagFees)}</span>
               </div>
             ) : null}
             {p.hotel > 0 ? (
               <div className="invoice-preview-row">
-                <span>Hotel</span>
+                <InvoicePreviewLabel
+                  label="Hotel"
+                  description={resolveLineItemDescription("invoice_hotel_description_override")}
+                />
+                <span className="invoice-preview-qty" />
                 <span className="invoice-preview-amount">{fmtCurrency(p.hotel)}</span>
               </div>
             ) : null}
             {p.parking > 0 ? (
               <div className="invoice-preview-row">
-                <span>Parking</span>
+                <InvoicePreviewLabel
+                  label="Parking"
+                  description={resolveLineItemDescription("invoice_parking_description_override")}
+                />
+                <span className="invoice-preview-qty" />
                 <span className="invoice-preview-amount">{fmtCurrency(p.parking)}</span>
               </div>
             ) : null}
             {p.tolls > 0 ? (
               <div className="invoice-preview-row">
-                <span>Tolls</span>
+                <InvoicePreviewLabel
+                  label="Tolls"
+                  description={resolveLineItemDescription("invoice_tolls_description_override")}
+                />
+                <span className="invoice-preview-qty" />
                 <span className="invoice-preview-amount">{fmtCurrency(p.tolls)}</span>
               </div>
             ) : null}
             {p.uber > 0 ? (
               <div className="invoice-preview-row">
-                <span>Uber</span>
+                <InvoicePreviewLabel
+                  label="Uber"
+                  description={resolveLineItemDescription("invoice_uber_description_override")}
+                />
+                <span className="invoice-preview-qty" />
                 <span className="invoice-preview-amount">{fmtCurrency(p.uber)}</span>
               </div>
             ) : null}
             {p.otherExpenses > 0 ? (
               <div className="invoice-preview-row">
-                <span>Other</span>
+                <InvoicePreviewLabel
+                  label="Other"
+                  description={resolveLineItemDescription("invoice_other_description_override")}
+                />
+                <span className="invoice-preview-qty" />
                 <span className="invoice-preview-amount">{fmtCurrency(p.otherExpenses)}</span>
               </div>
             ) : null}

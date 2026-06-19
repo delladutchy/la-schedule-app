@@ -156,6 +156,14 @@ export async function POST(
       overrides: {
         jobNameOverride: invoiceData.invoice_job_name_override,
         dayRateDescriptionOverride: invoiceData.invoice_day_rate_description_override,
+        otDescriptionOverride: invoiceData.invoice_ot_description_override,
+        perDiemDescriptionOverride: invoiceData.invoice_per_diem_description_override,
+        bagFeesDescriptionOverride: invoiceData.invoice_bag_fees_description_override,
+        parkingDescriptionOverride: invoiceData.invoice_parking_description_override,
+        uberDescriptionOverride: invoiceData.invoice_uber_description_override,
+        tollsDescriptionOverride: invoiceData.invoice_tolls_description_override,
+        hotelDescriptionOverride: invoiceData.invoice_hotel_description_override,
+        otherDescriptionOverride: invoiceData.invoice_other_description_override,
         noteOverride: invoiceData.invoice_note_override,
       },
     });

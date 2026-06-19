@@ -347,6 +347,14 @@ describe("gigSummary included in every save patch", () => {
       expense_notes: null,
       invoice_job_name_override: null,
       invoice_day_rate_description_override: null,
+      invoice_ot_description_override: null,
+      invoice_per_diem_description_override: null,
+      invoice_bag_fees_description_override: null,
+      invoice_parking_description_override: null,
+      invoice_uber_description_override: null,
+      invoice_tolls_description_override: null,
+      invoice_hotel_description_override: null,
+      invoice_other_description_override: null,
       invoice_note_override: null,
     };
     expect(patch.gigSummary).toBe(gigSummary);

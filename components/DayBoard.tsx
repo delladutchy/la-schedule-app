@@ -228,7 +228,7 @@ function formatDayAbbrev(isoDate: string): string {
   return DateTime.fromISO(isoDate, { zone: "utc" }).toFormat("ccc");
 }
 
-function formatPopupDateRange(startDate: string, endDate: string): string {
+export function formatPopupDateRange(startDate: string, endDate: string): string {
   const start = DateTime.fromISO(startDate, { zone: "utc" });
   const end = DateTime.fromISO(endDate, { zone: "utc" });
   if (!start.isValid || !end.isValid || end < start) return `${startDate} – ${endDate}`;
@@ -355,7 +355,7 @@ function mergeRangeBounds(
   };
 }
 
-function resolveInvoiceRangeBounds(
+export function resolveInvoiceRangeBounds(
   primaryDetail: BookedLabel["details"][number] | null,
   details: BookedLabel["details"],
 ): { startDate: string; endDateInclusive: string } | null {
@@ -369,6 +369,14 @@ function resolveInvoiceRangeBounds(
     null,
   );
   return merged ?? resolveDetailRangeBounds(primaryDetail);
+}
+
+export function resolveDetailHeaderRangeBounds(
+  primaryDetail: BookedLabel["details"][number] | null,
+  details: BookedLabel["details"],
+  fallbackRangeBounds: { startDate: string; endDateInclusive: string } | null,
+): { startDate: string; endDateInclusive: string } | null {
+  return resolveInvoiceRangeBounds(primaryDetail, details) ?? fallbackRangeBounds;
 }
 
 function detailIncludesDate(detail: BookedLabel["details"][number], date: string): boolean {
@@ -1145,12 +1153,17 @@ export function DayBoard({
   const jobTimeWorkDates = activeInvoiceRangeBounds
     ? buildInvoiceWorkDates(activeInvoiceRangeBounds.startDate, activeInvoiceRangeBounds.endDateInclusive)
     : [];
-  const activeDetailIsMultiDay = !!(
-    activeDetailRangeBounds
-    && activeDetailRangeBounds.startDate !== activeDetailRangeBounds.endDateInclusive
+  const activeHeaderRangeBounds = resolveDetailHeaderRangeBounds(
+    activePrimaryDetail,
+    activeDetailPanel?.details ?? [],
+    activeDetailRangeBounds,
   );
-  const activeDetailRangeLabel = activeDetailRangeBounds
-    ? formatPopupDateRange(activeDetailRangeBounds.startDate, activeDetailRangeBounds.endDateInclusive)
+  const activeDetailIsMultiDay = !!(
+    activeHeaderRangeBounds
+    && activeHeaderRangeBounds.startDate !== activeHeaderRangeBounds.endDateInclusive
+  );
+  const activeDetailRangeLabel = activeHeaderRangeBounds
+    ? formatPopupDateRange(activeHeaderRangeBounds.startDate, activeHeaderRangeBounds.endDateInclusive)
     : activePrimaryDetail?.dateRangeLabel ?? null;
   const activeDetailDayRows = (() => {
     if (!activeDetailPanel || !activeDetailRangeBounds) return [] as Array<{ date: string; startTime: string | null; dayNotes: string | null; eventId: string | null }>;

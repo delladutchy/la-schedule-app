@@ -3,7 +3,9 @@ import type { DayStatus, Snapshot } from "@/lib/types";
 import {
   buildBookedDayInlineMetaForDate,
   buildWeekBookedBadgeDisplay,
+  formatPopupDateRange,
   filterWeekRowsByWeekendVisibility,
+  resolveDetailHeaderRangeBounds,
   resolveSelectedDayPopupMeta,
 } from "@/components/DayBoard";
 import {
@@ -913,6 +915,25 @@ describe("buildWeekBookedBadgeDisplay", () => {
 });
 
 describe("resolveSelectedDayPopupMeta", () => {
+  it("uses the full event range for the detail header, not the visible schedule slice", () => {
+    const primaryDetail = {
+      eventId: "evt-la-5555",
+      summary: "LA#5555 — test job",
+      startUtc: "2026-06-18T10:00:00.000Z",
+      endUtc: "2026-06-21T03:00:00.000Z",
+      startDate: "2026-06-18",
+      endDateInclusive: "2026-06-20",
+      dateRangeLabel: "Jun 19–20",
+      displayMode: "details",
+    } as NonNullable<Parameters<typeof resolveDetailHeaderRangeBounds>[0]>;
+    const visibleSliceBounds = { startDate: "2026-06-19", endDateInclusive: "2026-06-20" };
+
+    const bounds = resolveDetailHeaderRangeBounds(primaryDetail, [primaryDetail], visibleSliceBounds);
+
+    expect(bounds).toEqual({ startDate: "2026-06-18", endDateInclusive: "2026-06-20" });
+    expect(formatPopupDateRange(bounds!.startDate, bounds!.endDateInclusive)).toBe("Jun 18–20");
+  });
+
   it("returns selected-day time and notes first, with separate global notes", () => {
     const detail = summarizeBookedDayLabel(
       ["LA#70924 — Test Job"],

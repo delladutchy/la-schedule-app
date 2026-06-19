@@ -113,6 +113,14 @@ export interface InvoiceData {
   // Text overrides (see scripts/invoice-overrides-migration.sql)
   invoice_job_name_override: string | null;
   invoice_day_rate_description_override: string | null;
+  invoice_ot_description_override: string | null;
+  invoice_per_diem_description_override: string | null;
+  invoice_bag_fees_description_override: string | null;
+  invoice_parking_description_override: string | null;
+  invoice_uber_description_override: string | null;
+  invoice_tolls_description_override: string | null;
+  invoice_hotel_description_override: string | null;
+  invoice_other_description_override: string | null;
   invoice_note_override: string | null;
   amount_paid: number;
   remaining_balance: number | null;

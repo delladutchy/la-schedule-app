@@ -419,6 +419,10 @@ function fmtWorkedDateTimes(workdays: InvoicePacket["workdays"]): string {
     .join("\n");
 }
 
+function resolveDescription(override: string | null | undefined, fallback = ""): string {
+  return override?.trim() || fallback;
+}
+
 interface PdfLineItem {
   service: string;
   description: string;
@@ -434,6 +438,14 @@ interface PdfLineItem {
 interface InvoicePDFOverrides {
   jobNameOverride?: string | null;
   dayRateDescriptionOverride?: string | null;
+  otDescriptionOverride?: string | null;
+  perDiemDescriptionOverride?: string | null;
+  bagFeesDescriptionOverride?: string | null;
+  parkingDescriptionOverride?: string | null;
+  uberDescriptionOverride?: string | null;
+  tollsDescriptionOverride?: string | null;
+  hotelDescriptionOverride?: string | null;
+  otherDescriptionOverride?: string | null;
   noteOverride?: string | null;
 }
 
@@ -463,8 +475,10 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
   // Job name override: use user-provided text if filled, else cleaned calendar title.
   const autoJobTitle = formatJobTitle(gigSummary, effectiveLaNumber);
   const jobTitle = overrides?.jobNameOverride?.trim() || autoJobTitle;
-  // Day rate description override: use user-provided text if filled, else auto date/time lines.
-  const dayRateDescription = overrides?.dayRateDescriptionOverride?.trim() || workedDateTimes;
+  // Line description overrides: use user-provided text if filled, else generated/default text.
+  const dayRateDescription = resolveDescription(overrides?.dayRateDescriptionOverride, workedDateTimes);
+  const otDescription = resolveDescription(overrides?.otDescriptionOverride, "Over 10hrs");
+  const perDiemDescription = resolveDescription(overrides?.perDiemDescriptionOverride);
   const billToAddress = CLIENT_INFO_BY_NAME[packet.client]?.addressLines ?? [];
   const dueDate = addDaysIso(issuedDate, 15);
   const invoiceTotal = packet.estimatedTotal;
@@ -479,13 +493,13 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
   const showPaymentRow = paidAmount > 0;
   const showPaidInFull = balanceDue <= 0;
 
-  const expenses: Array<{ label: string; amount: number }> = [
-    { label: "Bag Fees",           amount: packet.bagFees },
-    { label: "Parking",            amount: packet.parking },
-    { label: "Hotel",              amount: packet.hotel },
-    { label: "Tolls",              amount: packet.tolls },
-    { label: "Uber",               amount: packet.uber },
-    { label: "Other",              amount: packet.otherExpenses },
+  const expenses: Array<{ label: string; amount: number; description: string }> = [
+    { label: "Bag Fees", amount: packet.bagFees, description: resolveDescription(overrides?.bagFeesDescriptionOverride) },
+    { label: "Parking",  amount: packet.parking, description: resolveDescription(overrides?.parkingDescriptionOverride) },
+    { label: "Uber",     amount: packet.uber, description: resolveDescription(overrides?.uberDescriptionOverride) },
+    { label: "Tolls",    amount: packet.tolls, description: resolveDescription(overrides?.tollsDescriptionOverride) },
+    { label: "Hotel",    amount: packet.hotel, description: resolveDescription(overrides?.hotelDescriptionOverride) },
+    { label: "Other",    amount: packet.otherExpenses, description: resolveDescription(overrides?.otherDescriptionOverride) },
   ].filter((e) => e.amount > 0);
 
   const lineItems: PdfLineItem[] = [];
@@ -501,7 +515,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
   if (hasOT) {
     lineItems.push({
       service: "Overtime",
-      description: "Over 10hrs",
+      description: otDescription,
       qty: fmtHours(packet.totalOvertimeHours),
       rate: fmt(packet.overtimeRate),
       amount: packet.overtimeTotal,
@@ -510,7 +524,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
   if (hasPD) {
     lineItems.push({
       service: "Per Diem",
-      description: "",
+      description: perDiemDescription,
       qty: String(packet.perDiemQty),
       rate: fmt(packet.perDiemRate),
       amount: packet.perDiemTotal,
@@ -528,7 +542,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
   for (const exp of expenses) {
     lineItems.push({
       service: exp.label,
-      description: "",
+      description: exp.description,
       qty: "1",
       rate: fmt(exp.amount),
       amount: exp.amount,

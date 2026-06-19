@@ -6,8 +6,9 @@
  *   - Blank overrides preserve existing auto-generated behavior
  *   - Job name override affects PDF Job row and default email body
  *   - Day rate description override affects PDF Day Rate description column
+ *   - Line-item description overrides affect only matching invoice lines
  *   - Invoice note override affects PDF Note to customer section
- *   - Override autosave includes all three override fields in the patch
+ *   - Override autosave includes all override fields in the patch
  *   - No invoice math changes
  */
 import { describe, it, expect } from "vitest";
@@ -66,17 +67,55 @@ function resolveEmailJobTitle(
   return jobNameOverride.trim() || auto;
 }
 
-// Mirrors buildCurrentInvoiceInputPatch override fields
-function buildOverridePatch(overrides: {
+type InvoiceTextOverrides = {
   invoice_job_name_override: string;
   invoice_day_rate_description_override: string;
+  invoice_ot_description_override: string;
+  invoice_per_diem_description_override: string;
+  invoice_bag_fees_description_override: string;
+  invoice_parking_description_override: string;
+  invoice_uber_description_override: string;
+  invoice_tolls_description_override: string;
+  invoice_hotel_description_override: string;
+  invoice_other_description_override: string;
   invoice_note_override: string;
-}): Record<string, string | null> {
-  return {
-    invoice_job_name_override: overrides.invoice_job_name_override.trim() || null,
-    invoice_day_rate_description_override: overrides.invoice_day_rate_description_override.trim() || null,
-    invoice_note_override: overrides.invoice_note_override.trim() || null,
-  };
+};
+
+const OVERRIDE_FIELD_KEYS = [
+  "invoice_job_name_override",
+  "invoice_day_rate_description_override",
+  "invoice_ot_description_override",
+  "invoice_per_diem_description_override",
+  "invoice_bag_fees_description_override",
+  "invoice_parking_description_override",
+  "invoice_uber_description_override",
+  "invoice_tolls_description_override",
+  "invoice_hotel_description_override",
+  "invoice_other_description_override",
+  "invoice_note_override",
+] as const satisfies readonly (keyof InvoiceTextOverrides)[];
+
+const BLANK_OVERRIDES: InvoiceTextOverrides = {
+  invoice_job_name_override: "",
+  invoice_day_rate_description_override: "",
+  invoice_ot_description_override: "",
+  invoice_per_diem_description_override: "",
+  invoice_bag_fees_description_override: "",
+  invoice_parking_description_override: "",
+  invoice_uber_description_override: "",
+  invoice_tolls_description_override: "",
+  invoice_hotel_description_override: "",
+  invoice_other_description_override: "",
+  invoice_note_override: "",
+};
+
+// Mirrors buildCurrentInvoiceInputPatch override fields
+function buildOverridePatch(overrides: Partial<InvoiceTextOverrides>): Record<keyof InvoiceTextOverrides, string | null> {
+  const merged = { ...BLANK_OVERRIDES, ...overrides };
+  return OVERRIDE_FIELD_KEYS.reduce((acc, field) => {
+    acc[field] = merged[field].trim() || null;
+    return acc;
+  }, {} as Record<keyof InvoiceTextOverrides, string | null>);
 }
 
 // Mirrors PDF override resolution for jobTitle and dayRateDescription
@@ -88,6 +127,34 @@ function resolvePdfJobTitle(gigSummary: string, laNumber: string | null, jobName
 
 function resolvePdfDayRateDescription(autoDescription: string, override: string | null): string {
   return override?.trim() || autoDescription;
+}
+
+function resolvePdfLineDescription(defaultDescription: string, override: string | null): string {
+  return override?.trim() || defaultDescription;
+}
+
+function visibleLineItemDescriptionLabels(packet: {
+  dayRateQty: number;
+  overtimeTotal: number;
+  perDiemTotal: number;
+  bagFees: number;
+  parking: number;
+  uber: number;
+  tolls: number;
+  hotel: number;
+  otherExpenses: number;
+}): string[] {
+  return [
+    packet.dayRateQty > 0 ? "Day Rate description" : null,
+    packet.overtimeTotal > 0 ? "OT description" : null,
+    packet.perDiemTotal > 0 ? "Per Diem description" : null,
+    packet.bagFees > 0 ? "Bag Fees description" : null,
+    packet.parking > 0 ? "Parking description" : null,
+    packet.uber > 0 ? "Uber description" : null,
+    packet.tolls > 0 ? "Tolls description" : null,
+    packet.hotel > 0 ? "Hotel description" : null,
+    packet.otherExpenses > 0 ? "Other description" : null,
+  ].filter((label): label is string => label != null);
 }
 
 function resolvePdfNote(override: string | null): string {
@@ -232,7 +299,62 @@ describe("Day rate description override", () => {
 });
 
 // ---------------------------------------------------------------------------
-// D. Invoice note override
+// D. Line-item description overrides
+// ---------------------------------------------------------------------------
+
+describe("Line-item description override visibility", () => {
+  it("shows description fields only for invoice lines that exist", () => {
+    const labels = visibleLineItemDescriptionLabels({
+      dayRateQty: 3,
+      overtimeTotal: 618.75,
+      perDiemTotal: 120,
+      bagFees: 100,
+      parking: 110,
+      uber: 0,
+      tolls: 0,
+      hotel: 0,
+      otherExpenses: 0,
+    });
+
+    expect(labels).toEqual([
+      "Day Rate description",
+      "OT description",
+      "Per Diem description",
+      "Bag Fees description",
+      "Parking description",
+    ]);
+    expect(labels).not.toContain("Uber description");
+    expect(labels).not.toContain("Tolls description");
+    expect(labels).not.toContain("Hotel description");
+    expect(labels).not.toContain("Other description");
+  });
+
+  it("Parking description override appears on the matching PDF line", () => {
+    expect(resolvePdfLineDescription("", "Fenwick venue parking")).toBe("Fenwick venue parking");
+  });
+
+  it("Bag Fees description override appears on the matching PDF line", () => {
+    expect(resolvePdfLineDescription("", "Checked console package")).toBe("Checked console package");
+  });
+
+  it("OT description override appears on the matching PDF line", () => {
+    expect(resolvePdfLineDescription("Over 10hrs", "After-hours strike")).toBe("After-hours strike");
+  });
+
+  it("clearing generated/default overrides returns to default behavior", () => {
+    const autoDates = "6/18 - 7:30am-11:30pm\n6/19 - 1:00pm-9:00pm\n6/20 - 3:00pm-4:30am";
+    expect(resolvePdfLineDescription(autoDates, "")).toBe(autoDates);
+    expect(resolvePdfLineDescription("Over 10hrs", "   ")).toBe("Over 10hrs");
+  });
+
+  it("clearing blank-default expense overrides leaves the description blank", () => {
+    expect(resolvePdfLineDescription("", "")).toBe("");
+    expect(resolvePdfLineDescription("", "   ")).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E. Invoice note override
 // ---------------------------------------------------------------------------
 
 describe("Invoice note override", () => {
@@ -259,7 +381,7 @@ describe("Invoice note override", () => {
 });
 
 // ---------------------------------------------------------------------------
-// E. Autosave patch includes all override fields
+// F. Autosave patch includes all override fields
 // ---------------------------------------------------------------------------
 
 describe("Override autosave patch", () => {
@@ -271,6 +393,9 @@ describe("Override autosave patch", () => {
     });
     expect(patch.invoice_job_name_override).toBeNull();
     expect(patch.invoice_day_rate_description_override).toBeNull();
+    expect(patch.invoice_ot_description_override).toBeNull();
+    expect(patch.invoice_parking_description_override).toBeNull();
+    expect(patch.invoice_bag_fees_description_override).toBeNull();
     expect(patch.invoice_note_override).toBeNull();
   });
 
@@ -278,27 +403,31 @@ describe("Override autosave patch", () => {
     const patch = buildOverridePatch({
       invoice_job_name_override: "  Wilm U Grad  ",
       invoice_day_rate_description_override: "6/18 - 7:30am-11:30pm\n6/19 - 1:00pm-9:00pm",
+      invoice_ot_description_override: "  Over 12hrs  ",
+      invoice_parking_description_override: "  Fenwick venue parking  ",
       invoice_note_override: "Thank you!",
     });
     expect(patch.invoice_job_name_override).toBe("Wilm U Grad");
     expect(patch.invoice_day_rate_description_override).toBe("6/18 - 7:30am-11:30pm\n6/19 - 1:00pm-9:00pm");
+    expect(patch.invoice_ot_description_override).toBe("Over 12hrs");
+    expect(patch.invoice_parking_description_override).toBe("Fenwick venue parking");
     expect(patch.invoice_note_override).toBe("Thank you!");
   });
 
-  it("patch contains all three override field keys", () => {
+  it("patch contains every override field key", () => {
     const patch = buildOverridePatch({
       invoice_job_name_override: "test",
       invoice_day_rate_description_override: "",
       invoice_note_override: "",
     });
-    expect("invoice_job_name_override" in patch).toBe(true);
-    expect("invoice_day_rate_description_override" in patch).toBe(true);
-    expect("invoice_note_override" in patch).toBe(true);
+    for (const field of OVERRIDE_FIELD_KEYS) {
+      expect(field in patch).toBe(true);
+    }
   });
 });
 
 // ---------------------------------------------------------------------------
-// F. No invoice math changes
+// G. No invoice math changes
 // ---------------------------------------------------------------------------
 
 describe("Invoice math unchanged by overrides", () => {
@@ -331,7 +460,7 @@ describe("Invoice math unchanged by overrides", () => {
 });
 
 // ---------------------------------------------------------------------------
-// G. Flush before PDF — overrides included in patch
+// H. Flush before PDF/review/send — overrides included in patch
 // ---------------------------------------------------------------------------
 
 describe("Override values in flush before PDF", () => {
@@ -346,12 +475,20 @@ describe("Override values in flush before PDF", () => {
       uber: null,
       other_expenses: null,
       expense_notes: null,
-      invoice_job_name_override: "Wilm U Grad",
-      invoice_day_rate_description_override: null,
-      invoice_note_override: null,
+      ...buildOverridePatch({
+        invoice_job_name_override: "Wilm U Grad",
+        invoice_day_rate_description_override: "6/18 - 7:30am-11:30pm",
+        invoice_ot_description_override: "Over 10hrs",
+        invoice_parking_description_override: "Fenwick venue parking",
+        invoice_bag_fees_description_override: "Checked console package",
+      }),
     };
     expect("invoice_job_name_override" in fullPatch).toBe(true);
     expect(fullPatch.invoice_job_name_override).toBe("Wilm U Grad");
-    expect(fullPatch.invoice_day_rate_description_override).toBeNull();
+    expect(fullPatch.invoice_day_rate_description_override).toBe("6/18 - 7:30am-11:30pm");
+    expect(fullPatch.invoice_ot_description_override).toBe("Over 10hrs");
+    expect(fullPatch.invoice_parking_description_override).toBe("Fenwick venue parking");
+    expect(fullPatch.invoice_bag_fees_description_override).toBe("Checked console package");
+    expect("invoice_other_description_override" in fullPatch).toBe(true);
   });
 });

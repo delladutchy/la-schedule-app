@@ -24,6 +24,22 @@ function getSheetUrl(): string | null {
   return id ? `https://docs.google.com/spreadsheets/d/${id}` : null;
 }
 
+const INVOICE_TEXT_OVERRIDE_FIELDS = [
+  "invoice_job_name_override",
+  "invoice_day_rate_description_override",
+  "invoice_ot_description_override",
+  "invoice_per_diem_description_override",
+  "invoice_bag_fees_description_override",
+  "invoice_parking_description_override",
+  "invoice_uber_description_override",
+  "invoice_tolls_description_override",
+  "invoice_hotel_description_override",
+  "invoice_other_description_override",
+  "invoice_note_override",
+] as const satisfies readonly (keyof InvoiceDataPatch)[];
+
+type InvoiceTextOverrideField = (typeof INVOICE_TEXT_OVERRIDE_FIELDS)[number];
+
 // Fire-and-forget sheet sync after invoice save. Logs failure but never throws.
 // Records syncedAt / syncError in the DB so the client can surface the status.
 function syncSheetBackground(eventId: string, data: InvoiceData, packet: InvoicePacket, gigSummary: string): void {
@@ -143,6 +159,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     patch.mileage_deduction_miles = b.mileage_deduction_miles;
   }
   if ("paid_date" in b) patch.paid_date = b.paid_date != null ? String(b.paid_date) : null;
+  for (const field of INVOICE_TEXT_OVERRIDE_FIELDS) {
+    if (field in b) {
+      patch[field as InvoiceTextOverrideField] = b[field] != null ? String(b[field]) : null;
+    }
+  }
 
   try {
     const data = await upsertInvoiceData(eventId, patch);

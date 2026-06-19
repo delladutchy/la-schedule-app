@@ -39,6 +39,14 @@ function coerceInvoiceData(row: Record<string, unknown>): InvoiceData {
     invoice_total: row.invoice_total != null ? Number(row.invoice_total) : null,
     invoice_job_name_override: row.invoice_job_name_override != null ? String(row.invoice_job_name_override) : null,
     invoice_day_rate_description_override: row.invoice_day_rate_description_override != null ? String(row.invoice_day_rate_description_override) : null,
+    invoice_ot_description_override: row.invoice_ot_description_override != null ? String(row.invoice_ot_description_override) : null,
+    invoice_per_diem_description_override: row.invoice_per_diem_description_override != null ? String(row.invoice_per_diem_description_override) : null,
+    invoice_bag_fees_description_override: row.invoice_bag_fees_description_override != null ? String(row.invoice_bag_fees_description_override) : null,
+    invoice_parking_description_override: row.invoice_parking_description_override != null ? String(row.invoice_parking_description_override) : null,
+    invoice_uber_description_override: row.invoice_uber_description_override != null ? String(row.invoice_uber_description_override) : null,
+    invoice_tolls_description_override: row.invoice_tolls_description_override != null ? String(row.invoice_tolls_description_override) : null,
+    invoice_hotel_description_override: row.invoice_hotel_description_override != null ? String(row.invoice_hotel_description_override) : null,
+    invoice_other_description_override: row.invoice_other_description_override != null ? String(row.invoice_other_description_override) : null,
     invoice_note_override: row.invoice_note_override != null ? String(row.invoice_note_override) : null,
     amount_paid: Number(row.amount_paid ?? 0),
     remaining_balance: row.remaining_balance != null ? Number(row.remaining_balance) : null,
@@ -155,6 +163,14 @@ export interface InvoiceDataPatch {
   invoice_total?: number | null;
   invoice_job_name_override?: string | null;
   invoice_day_rate_description_override?: string | null;
+  invoice_ot_description_override?: string | null;
+  invoice_per_diem_description_override?: string | null;
+  invoice_bag_fees_description_override?: string | null;
+  invoice_parking_description_override?: string | null;
+  invoice_uber_description_override?: string | null;
+  invoice_tolls_description_override?: string | null;
+  invoice_hotel_description_override?: string | null;
+  invoice_other_description_override?: string | null;
   invoice_note_override?: string | null;
   amount_paid?: number;
   remaining_balance?: number | null;

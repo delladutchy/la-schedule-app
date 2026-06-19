@@ -214,7 +214,7 @@ function mergeRangeBounds(
   };
 }
 
-function resolveInvoiceRangeBounds(
+export function resolveInvoiceRangeBounds(
   primaryDetail: BookedLabel["details"][number] | null,
   details: BookedLabel["details"],
 ): { startDate: string; endDateInclusive: string } | null {
@@ -1040,25 +1040,27 @@ export function MonthBoard({
         return mergeRangeBounds(acc, current);
       }, null)
     : null;
-  const activeDetailRangeLabel = activeDetailRangeBounds
-    ? formatMonthPopupRange(activeDetailRangeBounds.startDate, activeDetailRangeBounds.endDateInclusive)
-    : activeDetailPanel?.details[0]?.dateRangeLabel ?? null;
   const activeJobTimeDetail = (() => {
     if (activeEditableDetail) return activeEditableDetail;
     if (!activeDetailPanel) return null;
     return activeDetailPanel.details[0] ?? null;
   })();
+  const activeInvoiceRangeBounds = resolveInvoiceRangeBounds(
+    activeJobTimeDetail,
+    activeDetailPanel?.details ?? [],
+  );
+  const activeHeaderRangeBounds = activeInvoiceRangeBounds ?? activeDetailRangeBounds;
+  const activeDetailRangeLabel = activeHeaderRangeBounds
+    ? formatMonthPopupRange(activeHeaderRangeBounds.startDate, activeHeaderRangeBounds.endDateInclusive)
+    : activeDetailPanel?.details[0]?.dateRangeLabel ?? null;
   const jobTimeWorkDates = (() => {
-    const bounds = resolveInvoiceRangeBounds(
-      activeJobTimeDetail,
-      activeDetailPanel?.details ?? [],
-    );
+    const bounds = activeInvoiceRangeBounds;
     if (!bounds) return [];
     return buildInvoiceWorkDates(bounds.startDate, bounds.endDateInclusive);
   })();
   const activeDetailIsMultiDay = !!(
-    activeDetailRangeBounds
-    && activeDetailRangeBounds.startDate !== activeDetailRangeBounds.endDateInclusive
+    activeHeaderRangeBounds
+    && activeHeaderRangeBounds.startDate !== activeHeaderRangeBounds.endDateInclusive
   );
   const activeDetailDayRows: MonthPopupDayDetailRow[] = (() => {
     if (!activeDetailPanel || !activeDetailRangeBounds) return [];
