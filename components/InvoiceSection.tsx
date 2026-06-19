@@ -108,6 +108,7 @@ interface SyncState {
 interface PdfState {
   status: "idle" | "generating" | "done" | "error";
   error: string | null;
+  action: "open" | "download" | "review" | "manual" | null;
 }
 
 interface RenumberState {
@@ -718,7 +719,7 @@ export function InvoiceSection({
   const [syncState, setSyncState] = useState<SyncState>({ status: "idle", message: null, syncedAt: null });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [pdfState, setPdfState] = useState<PdfState>({ status: "idle", error: null });
+  const [pdfState, setPdfState] = useState<PdfState>({ status: "idle", error: null, action: null });
   const [renumberState, setRenumberState] = useState<RenumberState>({ status: "idle", error: null });
   const [emailDialog, setEmailDialog] = useState<EmailDialogState>(EMAIL_DIALOG_RESET);
   const [sentDetailsOpen, setSentDetailsOpen] = useState(false);
@@ -987,76 +988,30 @@ export function InvoiceSection({
   }
 
   // ---------------------------------------------------------------------------
-  // PDF generation — full one-shot workflow:
-  //   flush save → generate PDF (server handles: mark complete + sheet sync + upload)
+  // PDF generation — core flow:
+  //   flush save → POST to PDF route → update state → return new URL to caller
+  //   Background: re-fetches full state (non-blocking).
   // ---------------------------------------------------------------------------
 
-  async function handleCreatePdf() {
-    if (pdfState.status === "generating") return;
-    const oldInvoicePdfUrl = invoiceData?.invoice_pdf_url ?? null;
-    logInvoicePdfDiagnostic("regenerate start", {
-      old_invoice_pdf_url: oldInvoicePdfUrl,
-      template: "orange-2026",
-    });
-
-    setPdfState({ status: "generating", error: null });
-    setSaveError(null);
-
-    // Step 1: flush all current invoice inputs to DB before the PDF route reads them.
-    const flushed = await flushCurrentInvoiceInputs();
-    if (!flushed) {
-      setPdfState({ status: "error", error: "Could not save invoice data — try again" });
-      return;
-    }
-
-    // Step 2: generate PDF. The route handles: mark complete, sheet sync, PDF upload, metadata.
+  // Background full-state refresh after PDF generation. Fire-and-forget; does
+  // not block the caller from acting on the new URL.
+  async function refreshInvoiceState(generated: NormalizedInvoicePdfMetadata): Promise<void> {
+    let latestPdfMetadata = generated;
     try {
-      const res = await fetch(`/api/invoice/pdf/${encodeURIComponent(eventId)}`, {
-        method: "POST",
+      const pdfMetaRes = await fetch(`/api/invoice/pdf/${encodeURIComponent(eventId)}`, {
         headers: buildAuthHeaders(editorToken),
         credentials: "same-origin",
-        body: JSON.stringify({ gigSummary }),
+        cache: "no-store",
       });
-      const json = await res.json() as InvoicePdfMetadataResponse;
-      if (!res.ok || !json.ok) {
-        setPdfState({ status: "error", error: json.detail ?? json.error ?? "PDF generation failed" });
-        return;
+      if (pdfMetaRes.ok) {
+        const pdfMetaJson = await pdfMetaRes.json() as InvoicePdfMetadataResponse;
+        const refreshedPdfMetadata = normalizeInvoicePdfMetadata(pdfMetaJson);
+        latestPdfMetadata = preferGeneratedPdfMetadata(generated, refreshedPdfMetadata);
+        setInvoiceData((prev) => mergeInvoicePdfMetadata(prev, latestPdfMetadata));
       }
-      const generatedPdfMetadata = normalizeInvoicePdfMetadata(json);
-      logInvoicePdfDiagnostic("regenerate POST returned", {
-        old_invoice_pdf_url: oldInvoicePdfUrl,
-        new_invoice_pdf_url: generatedPdfMetadata.invoicePdfUrl,
-        invoice_pdf_path: generatedPdfMetadata.storagePath,
-        invoice_updated_at: generatedPdfMetadata.invoiceUpdatedAt,
-        template: generatedPdfMetadata.template ?? "orange-2026",
-      });
+    } catch { /* non-fatal */ }
 
-      setInvoiceData((prev) => mergeInvoicePdfMetadata(prev, generatedPdfMetadata));
-
-      let latestPdfMetadata = generatedPdfMetadata;
-      try {
-        const pdfMetaRes = await fetch(`/api/invoice/pdf/${encodeURIComponent(eventId)}`, {
-          headers: buildAuthHeaders(editorToken),
-          credentials: "same-origin",
-          cache: "no-store",
-        });
-        if (pdfMetaRes.ok) {
-          const pdfMetaJson = await pdfMetaRes.json() as InvoicePdfMetadataResponse;
-          const refreshedPdfMetadata = normalizeInvoicePdfMetadata(pdfMetaJson);
-          latestPdfMetadata = preferGeneratedPdfMetadata(generatedPdfMetadata, refreshedPdfMetadata);
-          setInvoiceData((prev) => mergeInvoicePdfMetadata(prev, latestPdfMetadata));
-          logInvoicePdfDiagnostic("regenerate metadata refreshed", {
-            refreshed_invoice_pdf_url: refreshedPdfMetadata.invoicePdfUrl,
-            active_invoice_pdf_url: latestPdfMetadata.invoicePdfUrl,
-            invoice_pdf_path: latestPdfMetadata.storagePath,
-            invoice_updated_at: latestPdfMetadata.invoiceUpdatedAt,
-          });
-        }
-      } catch {
-        // The POST response already has the authoritative freshly uploaded URL.
-      }
-
-      // Step 3: refresh all invoice state so the PDF actions appear.
+    try {
       const refreshRes = await fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
         headers: buildAuthHeaders(editorToken),
         credentials: "same-origin",
@@ -1072,10 +1027,89 @@ export function InvoiceSection({
           }
         }
       }
-      setPdfState({ status: "done", error: null });
-    } catch {
-      setPdfState({ status: "error", error: "Network error — check connection and retry" });
+    } catch { /* non-fatal */ }
+  }
+
+  // Core: flush → generate → update state immediately → return new URL.
+  // Action tracks what triggered this so the UI can show context-appropriate labels.
+  async function generateFreshPdf(action: "open" | "download" | "review" | "manual"): Promise<string | null> {
+    if (pdfState.status === "generating") return null;
+    const oldInvoicePdfUrl = invoiceData?.invoice_pdf_url ?? null;
+    logInvoicePdfDiagnostic("pdf generate start", { action, old_invoice_pdf_url: oldInvoicePdfUrl });
+
+    setPdfState({ status: "generating", error: null, action });
+    setSaveError(null);
+
+    const flushed = await flushCurrentInvoiceInputs();
+    if (!flushed) {
+      setPdfState({ status: "error", error: "Could not save invoice data — try again", action });
+      return null;
     }
+
+    try {
+      const res = await fetch(`/api/invoice/pdf/${encodeURIComponent(eventId)}`, {
+        method: "POST",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        body: JSON.stringify({ gigSummary }),
+      });
+      const json = await res.json() as InvoicePdfMetadataResponse;
+      if (!res.ok || !json.ok) {
+        setPdfState({ status: "error", error: json.detail ?? json.error ?? "PDF generation failed", action });
+        return null;
+      }
+
+      const generatedPdfMetadata = normalizeInvoicePdfMetadata(json);
+      logInvoicePdfDiagnostic("pdf generate POST returned", {
+        action,
+        old_invoice_pdf_url: oldInvoicePdfUrl,
+        new_invoice_pdf_url: generatedPdfMetadata.invoicePdfUrl,
+        invoice_pdf_path: generatedPdfMetadata.storagePath,
+      });
+
+      // Update state immediately with the fresh URL — caller can use it right away.
+      setInvoiceData((prev) => mergeInvoicePdfMetadata(prev, generatedPdfMetadata));
+      setPdfState({ status: "done", error: null, action: null });
+
+      // Background: sync full invoice state without blocking the caller.
+      void refreshInvoiceState(generatedPdfMetadata);
+
+      return generatedPdfMetadata.invoicePdfUrl;
+    } catch {
+      setPdfState({ status: "error", error: "Network error — check connection and retry", action });
+      return null;
+    }
+  }
+
+  // Open PDF: regenerate fresh PDF, then open the new URL in a new tab.
+  async function handleOpenPdf() {
+    const url = await generateFreshPdf("open");
+    if (!url) return; // error already set in pdfState
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  // Download PDF: regenerate fresh PDF, then trigger a browser download of the new URL.
+  async function handleDownloadPdf() {
+    const url = await generateFreshPdf("download");
+    if (!url) return; // error already set in pdfState
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = buildPdfFilename(invoiceNumber, laNumber);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  // Review: regenerate fresh PDF, then open the email/review dialog.
+  async function handleOpenReview() {
+    const url = await generateFreshPdf("review");
+    if (!url) return; // error already set in pdfState
+    setEmailDialog({ ...EMAIL_DIALOG_RESET, open: true });
+  }
+
+  // Manual/advanced regeneration (also used by renumber flow).
+  async function handleCreatePdf() {
+    await generateFreshPdf("manual");
   }
 
   async function handleSendEmail() {
@@ -1532,39 +1566,38 @@ export function InvoiceSection({
 
               {/* PDF action buttons */}
               <div className="invoice-pdf-buttons">
-                <a
-                  href={pdfActionUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                {/* Open PDF — regenerates fresh before opening */}
+                <button
+                  type="button"
                   className="invoice-pdf-link-btn"
-                  onClick={() => logInvoicePdfDiagnostic("open pdf", {
-                    invoice_pdf_url: pdfUrl,
-                    url_used: pdfActionUrl,
-                    invoice_updated_at: pdfVersion,
-                  })}
+                  onClick={() => { void handleOpenPdf(); }}
+                  disabled={pdfState.status === "generating"}
                 >
-                  Open PDF
-                </a>
-                <a
-                  href={pdfActionUrl}
-                  download={buildPdfFilename(invoiceNumber, laNumber)}
+                  {pdfState.action === "open" && pdfState.status === "generating"
+                    ? "Updating PDF…"
+                    : "Open PDF"}
+                </button>
+                {/* Download PDF — regenerates fresh before downloading */}
+                <button
+                  type="button"
                   className="invoice-pdf-link-btn invoice-pdf-link-btn--secondary"
-                  onClick={() => logInvoicePdfDiagnostic("download pdf", {
-                    invoice_pdf_url: pdfUrl,
-                    url_used: pdfActionUrl,
-                    filename: buildPdfFilename(invoiceNumber, laNumber),
-                    invoice_updated_at: pdfVersion,
-                  })}
+                  onClick={() => { void handleDownloadPdf(); }}
+                  disabled={pdfState.status === "generating"}
                 >
-                  Download PDF
-                </a>
+                  {pdfState.action === "download" && pdfState.status === "generating"
+                    ? "Updating PDF…"
+                    : "Download PDF"}
+                </button>
                 {!emailDialog.open ? (
                   <button
                     type="button"
                     className="invoice-pdf-email-btn"
-                    onClick={() => setEmailDialog({ ...EMAIL_DIALOG_RESET, open: true })}
+                    onClick={() => { void handleOpenReview(); }}
+                    disabled={pdfState.status === "generating"}
                   >
-                    Review
+                    {pdfState.action === "review" && pdfState.status === "generating"
+                      ? "Updating…"
+                      : "Review"}
                   </button>
                 ) : null}
               </div>
@@ -1586,7 +1619,7 @@ export function InvoiceSection({
                 <p className="invoice-error" role="alert">{pdfState.error}</p>
               ) : null}
 
-              {/* Regenerate — secondary action below the PDF buttons */}
+              {/* Regenerate PDF — advanced/troubleshooting only. Normal flow uses Open PDF or Review. */}
               <div className="invoice-secondary-actions">
                 <button
                   type="button"
@@ -1594,7 +1627,9 @@ export function InvoiceSection({
                   onClick={() => { void handleCreatePdf(); }}
                   disabled={pdfState.status === "generating"}
                 >
-                  {pdfState.status === "generating" ? "Regenerating…" : "Regenerate PDF"}
+                  {pdfState.action === "manual" && pdfState.status === "generating"
+                    ? "Regenerating…"
+                    : "Regenerate PDF"}
                 </button>
               </div>
             </div>
@@ -1607,7 +1642,9 @@ export function InvoiceSection({
                 onClick={() => { void handleCreatePdf(); }}
                 disabled={pdfState.status === "generating" || isSaving || p.dayRateQty === 0}
               >
-                {pdfState.status === "generating" ? "Generating PDF…" : "Create Invoice PDF"}
+                {pdfState.action === "manual" && pdfState.status === "generating"
+                  ? "Generating PDF…"
+                  : "Create Invoice PDF"}
               </button>
               {p.dayRateQty === 0 ? (
                 <p className="invoice-status-muted">Enter start/end times for at least one day first.</p>
