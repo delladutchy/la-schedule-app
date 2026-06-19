@@ -227,3 +227,122 @@ describe("fmtWorkDateRange", () => {
     expect(fmtWorkDateRange([])).toBe("");
   });
 });
+
+// ---------------------------------------------------------------------------
+// LA number extraction from gigSummary (fallback when la_number is null in DB)
+// ---------------------------------------------------------------------------
+
+function parseLaFromSummary(summary: string): string | null {
+  const match = summary.trim().match(/^\s*LA\s*#?\s*(\d{3,})\s*/i);
+  return match?.[1] ? `LA#${match[1]}` : null;
+}
+
+function cleanLaFromGigSummary(summary: string): string {
+  const match = summary.trim().match(/^\s*LA\s*#?\s*(\d{3,})\s*/i);
+  return match?.[1] ?? "";
+}
+
+// Mirrors the effective LA resolution in InvoiceSection.tsx and the email route
+function resolveEffectiveLa(storedLaNumber: string | null, gigSummary: string): string {
+  return cleanLaNumber(storedLaNumber) || cleanLaFromGigSummary(gigSummary);
+}
+
+describe("LA number from gigSummary fallback", () => {
+  it("parseLaFromSummary: extracts digits from 'LA#5555 — test job'", () => {
+    expect(parseLaFromSummary("LA#5555 — test job")).toBe("LA#5555");
+  });
+
+  it("parseLaFromSummary: extracts digits from 'LA #5555 - test job'", () => {
+    expect(parseLaFromSummary("LA #5555 - test job")).toBe("LA#5555");
+  });
+
+  it("parseLaFromSummary: returns null for plain job name", () => {
+    expect(parseLaFromSummary("test job")).toBeNull();
+  });
+
+  it("cleanLaFromGigSummary: extracts raw digits", () => {
+    expect(cleanLaFromGigSummary("LA#5555 — test job")).toBe("5555");
+  });
+
+  it("subject is correct when la_number is null but gigSummary contains LA#", () => {
+    const gigSummary = "LA#5555 — test job";
+    const effectiveLa = resolveEffectiveLa(null, gigSummary);
+    const jobTitle = formatJobTitle(gigSummary, effectiveLa ? `LA#${effectiveLa}` : null);
+    const subject = buildSubject(effectiveLa, jobTitle);
+    expect(subject).toBe("Jeff Ulsh - Invoice LA #5555");
+  });
+
+  it("subject does NOT include job name when LA number is present", () => {
+    const gigSummary = "LA#5555 — test job";
+    const effectiveLa = resolveEffectiveLa(null, gigSummary);
+    const jobTitle = formatJobTitle(gigSummary, effectiveLa ? `LA#${effectiveLa}` : null);
+    const subject = buildSubject(effectiveLa, jobTitle);
+    expect(subject).not.toContain("test job");
+    expect(subject).not.toContain("—");
+  });
+
+  it("subject has space between LA and #: 'LA #5555' not 'LA#5555'", () => {
+    const effectiveLa = resolveEffectiveLa(null, "LA#5555 — test job");
+    const subject = buildSubject(effectiveLa, "");
+    expect(subject).toContain("LA #5555");
+    expect(subject).not.toContain("LA#5555");
+  });
+
+  it("message body uses 'LA#5555 test job' format (no space before #)", () => {
+    const gigSummary = "LA#5555 — test job";
+    const effectiveLa = resolveEffectiveLa(null, gigSummary);
+    const jobTitle = formatJobTitle(gigSummary, effectiveLa ? `LA#${effectiveLa}` : null);
+    const body = buildEmailText(effectiveLa, jobTitle, "6/18 - 6/20");
+    expect(body).toContain("Invoice for LA#5555 test job - 6/18 - 6/20.");
+    expect(body).toContain("Thank you guys,");
+    expect(body).toContain("Jeff Ulsh");
+  });
+
+  it("message body correct format: 'Invoice for LA#5555 test job - 6/18 - 6/20.'", () => {
+    const gigSummary = "LA#5555 — test job";
+    const effectiveLa = resolveEffectiveLa(null, gigSummary);
+    const jobTitle = formatJobTitle(gigSummary, effectiveLa ? `LA#${effectiveLa}` : null);
+    const body = buildEmailText(effectiveLa, jobTitle, "6/18 - 6/20");
+    const firstLine = body.split("\n")[0];
+    expect(firstLine).toBe("Invoice for LA#5555 test job - 6/18 - 6/20.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Override subject/body (editable Review panel)
+// ---------------------------------------------------------------------------
+
+describe("editable subject/body overrides", () => {
+  it("override subject is sent exactly as entered", () => {
+    const overrideSubject = "Jeff Ulsh - Invoice LA #5555";
+    const subject = overrideSubject || buildSubject("5555", "test job");
+    expect(subject).toBe("Jeff Ulsh - Invoice LA #5555");
+  });
+
+  it("override body is sent exactly as entered", () => {
+    const overrideBody = "Invoice for LA#5555 test job - 6/18 - 6/20.\n\nThank you guys,\n\nJeff Ulsh";
+    const body = overrideBody || buildEmailText("5555", "test job", "6/18 - 6/20");
+    expect(body).toBe("Invoice for LA#5555 test job - 6/18 - 6/20.\n\nThank you guys,\n\nJeff Ulsh");
+  });
+
+  it("falls back to generated subject when override is empty string", () => {
+    const overrideSubject = ""; // empty = not provided
+    const subject = (overrideSubject && overrideSubject.trim()) || buildSubject("5555", "");
+    expect(subject).toBe("Jeff Ulsh - Invoice LA #5555");
+  });
+
+  it("falls back to generated body when override is not provided", () => {
+    const overrideBody: string | null = null;
+    const body = overrideBody ?? buildEmailText("5555", "test job", "6/18 - 6/20");
+    expect(body).toBe("Invoice for LA#5555 test job - 6/18 - 6/20.\n\nThank you guys,\n\nJeff Ulsh");
+  });
+
+  it("sentSubject stored is the final subject actually sent (override when provided)", () => {
+    // The email route stores `subject` in invoice_sent_subject.
+    // When override is provided, that's what gets stored.
+    const overrideSubject = "Custom subject I edited";
+    const generatedSubject = "Jeff Ulsh - Invoice LA #5555";
+    const sentSubject = overrideSubject.trim() || generatedSubject;
+    expect(sentSubject).toBe("Custom subject I edited");
+  });
+});

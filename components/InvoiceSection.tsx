@@ -157,10 +157,13 @@ interface EmailDialogState {
   customTo: string;
   status: "idle" | "sending" | "success" | "error";
   error: string | null;
+  editableSubject: string;
+  editableBody: string;
 }
 
 const EMAIL_DIALOG_RESET: EmailDialogState = {
   open: false, presetId: "", customTo: "", status: "idle", error: null,
+  editableSubject: "", editableBody: "",
 };
 
 interface ExpenseFields {
@@ -492,6 +495,13 @@ function emailCleanLa(laNumber: string | null): string {
   return (laNumber ?? "").replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
 }
 
+// Parse LA number from a raw calendar event title when la_number is not saved in invoice_data.
+// "LA#5555 — test job" → "LA#5555"    "test job" → null
+function parseLaFromSummary(summary: string): string | null {
+  const match = summary.trim().match(/^\s*LA\s*#?\s*(\d{3,})\s*/i);
+  return match?.[1] ? `LA#${match[1]}` : null;
+}
+
 function emailStripLaPrefix(gigSummary: string, laNumber: string | null): string {
   let title = gigSummary.trim();
   const cleanLa = emailCleanLa(laNumber);
@@ -548,12 +558,10 @@ interface EmailDialogProps {
   onChange: React.Dispatch<React.SetStateAction<EmailDialogState>>;
   onSend: () => void;
   onClose: () => void;
-  subject: string;
-  body: string;
   filename: string;
 }
 
-function EmailDialog({ dialog, onChange, onSend, onClose, subject, body, filename }: EmailDialogProps) {
+function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialogProps) {
   const isBusy = dialog.status === "sending";
   const isDone = dialog.status === "success";
 
@@ -634,7 +642,7 @@ function EmailDialog({ dialog, onChange, onSend, onClose, subject, body, filenam
             </p>
           ) : null}
 
-          {/* Email preview — always visible */}
+          {/* Email review — To and Attachment are read-only; Subject and Message are editable */}
           <div className="invoice-email-review">
             <div className="invoice-email-review-row">
               <span className="invoice-email-review-label">To</span>
@@ -644,12 +652,26 @@ function EmailDialog({ dialog, onChange, onSend, onClose, subject, body, filenam
               ) : null}
             </div>
             <div className="invoice-email-review-row">
-              <span className="invoice-email-review-label">Subject</span>
-              <span className="invoice-email-review-value">{subject}</span>
+              <label className="invoice-email-review-label" htmlFor="inv-email-subject">Subject</label>
+              <input
+                id="inv-email-subject"
+                type="text"
+                className="invoice-email-edit-input"
+                value={dialog.editableSubject}
+                onChange={(e) => onChange((prev) => ({ ...prev, editableSubject: e.target.value }))}
+                disabled={isBusy}
+              />
             </div>
             <div className="invoice-email-review-row">
-              <span className="invoice-email-review-label">Message</span>
-              <p className="invoice-email-review-body">{body}</p>
+              <label className="invoice-email-review-label" htmlFor="inv-email-body">Message</label>
+              <textarea
+                id="inv-email-body"
+                className="invoice-email-edit-textarea"
+                value={dialog.editableBody}
+                onChange={(e) => onChange((prev) => ({ ...prev, editableBody: e.target.value }))}
+                disabled={isBusy}
+                rows={7}
+              />
             </div>
             <div className="invoice-email-review-row">
               <span className="invoice-email-review-label">Attachment</span>
@@ -1111,7 +1133,8 @@ export function InvoiceSection({
   async function handleOpenReview() {
     const url = await generateFreshPdf("review");
     if (!url) return; // error already set in pdfState
-    setEmailDialog({ ...EMAIL_DIALOG_RESET, open: true });
+    // Seed editable fields with computed defaults so the user can adjust before sending.
+    setEmailDialog({ ...EMAIL_DIALOG_RESET, open: true, editableSubject: emailSubject, editableBody: emailBody });
   }
 
   // Manual/advanced regeneration (also used by renumber flow).
@@ -1162,7 +1185,13 @@ export function InvoiceSection({
         method: "POST",
         headers: buildAuthHeaders(editorToken),
         credentials: "same-origin",
-        body: JSON.stringify({ to: toAddresses, cc: ccAddresses, gigSummary }),
+        body: JSON.stringify({
+          to: toAddresses,
+          cc: ccAddresses,
+          gigSummary,
+          overrideSubject: emailDialog.editableSubject || undefined,
+          overrideBody: emailDialog.editableBody || undefined,
+        }),
       });
       const json = await res.json() as {
         ok?: boolean; error?: string; detail?: string;
@@ -1269,12 +1298,16 @@ export function InvoiceSection({
   const invoiceSentTo = invoiceData?.invoice_sent_to ?? null;
   const invoiceSentSubject = invoiceData?.invoice_sent_subject ?? null;
 
-  // Email preview — computed client-side to match what the server will send
-  const previewJobTitle = emailStripLaPrefix(gigSummary, laNumber);
+  // Email preview — computed client-side to match what the server will send.
+  // effectiveEmailLaNumber: use stored la_number first; fall back to parsing from
+  // the calendar event title so the subject/body are correct even when la_number
+  // hasn't been explicitly saved in invoice_data.
+  const effectiveEmailLaNumber = laNumber ?? parseLaFromSummary(gigSummary);
+  const previewJobTitle = emailStripLaPrefix(gigSummary, effectiveEmailLaNumber);
   const previewWorkDates = p ? emailWorkDateRange(p.workdays) : "";
-  const emailSubject = buildPreviewSubject(laNumber, previewJobTitle);
-  const emailBody = buildPreviewBody(laNumber, previewJobTitle, previewWorkDates);
-  const emailFilename = buildPreviewFilename(laNumber, previewJobTitle, invoiceNumber);
+  const emailSubject = buildPreviewSubject(effectiveEmailLaNumber, previewJobTitle);
+  const emailBody = buildPreviewBody(effectiveEmailLaNumber, previewJobTitle, previewWorkDates);
+  const emailFilename = buildPreviewFilename(effectiveEmailLaNumber, previewJobTitle, invoiceNumber);
 
   // Per-day mileage is the source of truth. Legacy total_miles only matters when
   // no per-day mileage has been entered yet.
@@ -1628,8 +1661,6 @@ export function InvoiceSection({
                   onChange={setEmailDialog}
                   onSend={() => { void handleSendEmail(); }}
                   onClose={() => setEmailDialog(EMAIL_DIALOG_RESET)}
-                  subject={emailSubject}
-                  body={emailBody}
                   filename={emailFilename}
                 />
               ) : null}

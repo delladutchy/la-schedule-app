@@ -5615,6 +5615,49 @@ html.modal-open body {
   line-height: 1.55;
 }
 
+.invoice-email-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 6px 8px;
+  line-height: 1.4;
+}
+.invoice-email-edit-input:focus {
+  outline: 2px solid var(--accent, #e67e22);
+  outline-offset: 0;
+  border-color: transparent;
+}
+.invoice-email-edit-input:disabled {
+  opacity: 0.55;
+}
+
+.invoice-email-edit-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 6px 8px;
+  line-height: 1.55;
+  resize: vertical;
+}
+.invoice-email-edit-textarea:focus {
+  outline: 2px solid var(--accent, #e67e22);
+  outline-offset: 0;
+  border-color: transparent;
+}
+.invoice-email-edit-textarea:disabled {
+  opacity: 0.55;
+}
+
 /* Legacy — kept for any remaining references */
 .invoice-email-preview {
   border: 1px solid var(--border);

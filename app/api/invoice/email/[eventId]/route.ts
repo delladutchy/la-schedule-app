@@ -58,6 +58,38 @@ function cleanLaNumber(laNumber: string | null): string {
   return (laNumber ?? "").replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
 }
 
+// Parse LA digits out of a raw calendar event title as a fallback when la_number
+// is not saved in invoice_data.  "LA#5555 — test job" → "5555"
+function cleanLaFromGigSummary(summary: string): string {
+  const match = summary.trim().match(/^\s*LA\s*#?\s*(\d{3,})\s*/i);
+  return match?.[1] ?? "";
+}
+
+// Convert plain-text override body to a simple HTML email.
+function buildEmailHtmlFromOverride(text: string): string {
+  const paras = text
+    .split(/\n{2,}/)
+    .map((para) => {
+      const escaped = para
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br>");
+      return `<p style="margin:0 0 20px">${escaped}</p>`;
+    })
+    .join("");
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+</head>
+<body style="margin:0;padding:32px 20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.65;color:#111;background:#fff">
+${paras}
+</body>
+</html>`;
+}
+
 function formatClientInvoiceNumber(laNumber: string | null, invoiceNumber: string): string {
   const cleanLa = cleanLaNumber(laNumber);
   return cleanLa ? `${invoiceNumber} - LA #${cleanLa}` : invoiceNumber;
@@ -203,6 +235,10 @@ export async function POST(
   const toAddresses = normaliseTo(rawBody.to);
   const ccAddresses = normaliseCC(rawBody.cc);
   const gigSummary = typeof rawBody.gigSummary === "string" ? rawBody.gigSummary.trim() : "";
+  const overrideSubject = typeof rawBody.overrideSubject === "string" && rawBody.overrideSubject.trim()
+    ? rawBody.overrideSubject.trim() : null;
+  const overrideBody = typeof rawBody.overrideBody === "string" && rawBody.overrideBody.trim()
+    ? rawBody.overrideBody.trim() : null;
 
   const allAddresses = [...toAddresses, ...ccAddresses];
   if (allAddresses.some((a) => a.startsWith("TODO_"))) {
@@ -222,9 +258,11 @@ export async function POST(
   const packet = calculateInvoicePacket(invoiceData);
   const allNums = await getAllInvoiceNumbers();
   const invoiceNumber = resolveInvoiceNumber(invoiceData.invoice_number, allNums);
-  const cleanLa = cleanLaNumber(invoiceData.la_number);
-  const clientInvoiceNumber = formatClientInvoiceNumber(invoiceData.la_number, invoiceNumber);
-  const jobTitle = formatJobTitle(gigSummary, invoiceData.la_number);
+  // Effective LA: stored la_number first; fall back to parsing from gigSummary title.
+  const cleanLa = cleanLaNumber(invoiceData.la_number) || cleanLaFromGigSummary(gigSummary);
+  const effectiveLaNumber = cleanLa ? `LA#${cleanLa}` : null;
+  const clientInvoiceNumber = formatClientInvoiceNumber(effectiveLaNumber, invoiceNumber);
+  const jobTitle = formatJobTitle(gigSummary, effectiveLaNumber);
   const workDateStr = fmtWorkDateRange(packet.workdays);
   const issuedDate = new Date().toISOString().slice(0, 10);
 
@@ -279,8 +317,12 @@ export async function POST(
   }
 
   const attachmentFilename = buildAttachmentFilename(cleanLa, jobTitle, invoiceNumber);
-  const subject = buildSubject(cleanLa, jobTitle);
+  // Use client-provided subject/body overrides (the user may have edited them in the Review panel).
+  // Fall back to server-generated defaults when not provided.
   const emailParams: EmailParams = { cleanLa, jobTitle, workDateStr };
+  const subject = overrideSubject ?? buildSubject(cleanLa, jobTitle);
+  const emailHtml = overrideBody ? buildEmailHtmlFromOverride(overrideBody) : buildEmailHtml(emailParams);
+  const emailText = overrideBody ?? buildEmailText(emailParams);
 
   const fromName = env.INVOICE_FROM_NAME ?? "Jeff Ulsh";
   const fromEmail = env.NOTIFY_EMAIL_FROM?.trim() ?? "invoices@resend.dev";
@@ -291,8 +333,8 @@ export async function POST(
     from,
     to: toAddresses,
     subject,
-    html: buildEmailHtml(emailParams),
-    text: buildEmailText(emailParams),
+    html: emailHtml,
+    text: emailText,
     attachments: [
       {
         filename: attachmentFilename,
