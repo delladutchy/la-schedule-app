@@ -1,12 +1,11 @@
 /**
  * Invoice email recipient presets.
  *
- * To configure Dave/Milos presets: replace the TODO_ placeholder strings
- * with real email addresses. Any preset whose `to` array contains a string
- * starting with "TODO_" is automatically treated as unconfigured and cannot
- * be selected for sending.
+ * To configure TODO_ presets: replace placeholder strings with real addresses.
+ * Any preset whose `to` or `cc` arrays contain a "TODO_" string is treated as
+ * unconfigured and cannot be selected for sending.
  *
- * The HR and AP shared inboxes only need to be filled in once.
+ * The LA_HR_EMAIL and LA_AP_EMAIL shared inboxes only need to be filled in once.
  */
 
 export interface RecipientPreset {
@@ -18,17 +17,6 @@ export interface RecipientPreset {
   cc: string[];
 }
 
-// ---------------------------------------------------------------------------
-// Shared addresses — fill these in once
-// ---------------------------------------------------------------------------
-
-const LA_HR_EMAIL = "TODO_HR_EMAIL";   // e.g. "hr@lightaction.com"
-const LA_AP_EMAIL = "TODO_AP_EMAIL";   // e.g. "ap@lightaction.com"
-
-// ---------------------------------------------------------------------------
-// Presets
-// ---------------------------------------------------------------------------
-
 export const RECIPIENT_PRESETS: RecipientPreset[] = [
   {
     id:    "test-jeff",
@@ -39,14 +27,20 @@ export const RECIPIENT_PRESETS: RecipientPreset[] = [
   {
     id:    "light-action-dave",
     label: "Light Action — Dave",
-    to:    ["TODO_DAVE_EMAIL"],   // e.g. "dave@lightaction.com"
-    cc:    [LA_HR_EMAIL, LA_AP_EMAIL],
+    to:    ["dave.harris@lightaction.com", "hr@lightaction.com", "ap@lightaction.com"],
+    cc:    [],
   },
   {
     id:    "light-action-milos",
     label: "Light Action — Milos",
-    to:    ["TODO_MILOS_EMAIL"],  // e.g. "milos@lightaction.com"
-    cc:    [LA_HR_EMAIL, LA_AP_EMAIL],
+    to:    ["milos@lightaction.com", "hr@lightaction.com", "ap@lightaction.com"],
+    cc:    [],
+  },
+  {
+    id:    "overture-mike",
+    label: "Overture — Mike",
+    to:    ["Mpatille@overtureav.com"],
+    cc:    [],
   },
 ];
 

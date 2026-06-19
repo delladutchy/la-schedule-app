@@ -5478,6 +5478,45 @@ html.modal-open body {
   padding-top: 2px;
 }
 
+/* Advanced section — collapsed by default */
+.invoice-advanced {
+  margin-top: 6px;
+}
+
+.invoice-advanced-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.invoice-advanced-toggle:hover {
+  color: var(--text);
+}
+
+.invoice-advanced-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-dim, rgba(0,0,0,0.015));
+}
+
+.invoice-advanced-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .invoice-email-dialog {
   display: flex;
   flex-direction: column;
@@ -5512,6 +5551,64 @@ html.modal-open body {
   padding: 8px 10px;
 }
 
+.invoice-email-unconfigured {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface, var(--bg));
+}
+
+/* Email preview — stacked label / value layout */
+.invoice-email-review {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface, var(--bg));
+  padding: 12px 14px;
+}
+
+.invoice-email-review-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.invoice-email-review-label {
+  font-size: 0.73rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.invoice-email-review-value {
+  font-size: 0.85rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.invoice-email-review-cc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  margin-top: 1px;
+}
+
+.invoice-email-review-body {
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+/* Legacy — kept for any remaining references */
 .invoice-email-preview {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);

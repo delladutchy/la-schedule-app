@@ -562,7 +562,9 @@ function EmailDialog({ dialog, onChange, onSend, onClose, subject, body, filenam
   let previewUnconfigured = false;
 
   if (dialog.presetId === "custom") {
-    previewTo = dialog.customTo.trim() ? [dialog.customTo.trim()] : [];
+    const addr = dialog.customTo.trim();
+    // Require a plausible email (must contain @) before counting it as a valid recipient.
+    previewTo = addr.includes("@") ? [addr] : [];
   } else if (dialog.presetId) {
     const preset = findPreset(dialog.presetId);
     if (preset) {
@@ -576,19 +578,20 @@ function EmailDialog({ dialog, onChange, onSend, onClose, subject, body, filenam
   }
 
   const canSend = !isBusy && !isDone && !previewUnconfigured && previewTo.length > 0;
-  const toDisplay = previewTo.length > 0
-    ? previewTo.join(", ") + (previewCc.length > 0 ? ` — CC: ${previewCc.join(", ")}` : "")
-    : "—";
+
+  // "To" preview line: primary addresses, then CC if present.
+  const toLine = previewTo.join(", ");
+  const ccLine = previewCc.length > 0 ? previewCc.join(", ") : null;
 
   return (
-    <div className="invoice-email-dialog" role="dialog" aria-label="Send Invoice">
-      <p className="invoice-block-label">Send Invoice</p>
+    <div className="invoice-email-dialog" role="dialog" aria-label="Review Invoice">
+      <p className="invoice-block-label">Review &amp; Send</p>
 
       {!isDone ? (
         <>
-          {/* Recipient selector */}
+          {/* Send to — recipient selector */}
           <div className="invoice-email-field">
-            <label className="invoice-label-sm" htmlFor="inv-email-preset">Recipient</label>
+            <label className="invoice-label-sm" htmlFor="inv-email-preset">Send to</label>
             <select
               id="inv-email-preset"
               className="invoice-select invoice-email-select"
@@ -596,7 +599,7 @@ function EmailDialog({ dialog, onChange, onSend, onClose, subject, body, filenam
               disabled={isBusy}
               onChange={(e) => onChange((prev) => ({ ...prev, presetId: e.target.value, customTo: "", error: null }))}
             >
-              <option value="">Choose recipient…</option>
+              <option value="">— choose recipient —</option>
               {RECIPIENT_PRESETS.map((preset) => {
                 const configured = isPresetConfigured(preset);
                 return (
@@ -626,35 +629,38 @@ function EmailDialog({ dialog, onChange, onSend, onClose, subject, body, filenam
           ) : null}
 
           {previewUnconfigured ? (
-            <p className="invoice-status-muted invoice-email-preview">
-              This preset is not configured yet. Edit <code>lib/invoice-recipients.ts</code> to add the address.
+            <p className="invoice-status-muted invoice-email-unconfigured">
+              This preset is not configured. Edit <code>lib/invoice-recipients.ts</code> to add the address.
             </p>
           ) : null}
 
-          {/* Review preview */}
+          {/* Email preview — always visible */}
           <div className="invoice-email-review">
             <div className="invoice-email-review-row">
-              <span className="invoice-label-sm">To</span>
-              <span>{toDisplay}</span>
+              <span className="invoice-email-review-label">To</span>
+              <span className="invoice-email-review-value">{toLine || "—"}</span>
+              {ccLine ? (
+                <span className="invoice-email-review-cc">CC: {ccLine}</span>
+              ) : null}
             </div>
             <div className="invoice-email-review-row">
-              <span className="invoice-label-sm">Subject</span>
-              <span>{subject}</span>
+              <span className="invoice-email-review-label">Subject</span>
+              <span className="invoice-email-review-value">{subject}</span>
             </div>
-            <div className="invoice-email-review-row invoice-email-review-row--body">
-              <span className="invoice-label-sm">Message</span>
+            <div className="invoice-email-review-row">
+              <span className="invoice-email-review-label">Message</span>
               <pre className="invoice-email-review-body">{body}</pre>
             </div>
             <div className="invoice-email-review-row">
-              <span className="invoice-label-sm">Attachment</span>
-              <span>{filename}</span>
+              <span className="invoice-email-review-label">Attachment</span>
+              <span className="invoice-email-review-value">{filename}</span>
             </div>
           </div>
         </>
       ) : (
         <p className="invoice-sync-success">
           Invoice sent to {previewTo.join(", ")}.
-          {previewCc.length > 0 ? ` CC: ${previewCc.join(", ")}` : ""}
+          {ccLine ? ` CC: ${ccLine}` : ""}
         </p>
       )}
 
@@ -723,6 +729,7 @@ export function InvoiceSection({
   const [renumberState, setRenumberState] = useState<RenumberState>({ status: "idle", error: null });
   const [emailDialog, setEmailDialog] = useState<EmailDialogState>(EMAIL_DIALOG_RESET);
   const [sentDetailsOpen, setSentDetailsOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestKey = `${eventId}::${workDates.join("|")}`;
@@ -1564,30 +1571,8 @@ export function InvoiceSection({
                 </div>
               ) : null}
 
-              {/* PDF action buttons */}
+              {/* Normal action buttons — Review and Open PDF only */}
               <div className="invoice-pdf-buttons">
-                {/* Open PDF — regenerates fresh before opening */}
-                <button
-                  type="button"
-                  className="invoice-pdf-link-btn"
-                  onClick={() => { void handleOpenPdf(); }}
-                  disabled={pdfState.status === "generating"}
-                >
-                  {pdfState.action === "open" && pdfState.status === "generating"
-                    ? "Updating PDF…"
-                    : "Open PDF"}
-                </button>
-                {/* Download PDF — regenerates fresh before downloading */}
-                <button
-                  type="button"
-                  className="invoice-pdf-link-btn invoice-pdf-link-btn--secondary"
-                  onClick={() => { void handleDownloadPdf(); }}
-                  disabled={pdfState.status === "generating"}
-                >
-                  {pdfState.action === "download" && pdfState.status === "generating"
-                    ? "Updating PDF…"
-                    : "Download PDF"}
-                </button>
                 {!emailDialog.open ? (
                   <button
                     type="button"
@@ -1600,6 +1585,16 @@ export function InvoiceSection({
                       : "Review"}
                   </button>
                 ) : null}
+                <button
+                  type="button"
+                  className="invoice-pdf-link-btn"
+                  onClick={() => { void handleOpenPdf(); }}
+                  disabled={pdfState.status === "generating"}
+                >
+                  {pdfState.action === "open" && pdfState.status === "generating"
+                    ? "Updating PDF…"
+                    : "Open PDF"}
+                </button>
               </div>
 
               {/* Email dialog — inline below action row */}
@@ -1619,18 +1614,59 @@ export function InvoiceSection({
                 <p className="invoice-error" role="alert">{pdfState.error}</p>
               ) : null}
 
-              {/* Regenerate PDF — advanced/troubleshooting only. Normal flow uses Open PDF or Review. */}
-              <div className="invoice-secondary-actions">
+              {/* Advanced — collapsed by default; Download PDF / Regenerate / Sync live here */}
+              <div className="invoice-advanced">
                 <button
                   type="button"
-                  className="invoice-pdf-regen-btn"
-                  onClick={() => { void handleCreatePdf(); }}
-                  disabled={pdfState.status === "generating"}
+                  className="invoice-advanced-toggle"
+                  onClick={() => setAdvancedOpen((v) => !v)}
+                  aria-expanded={advancedOpen}
                 >
-                  {pdfState.action === "manual" && pdfState.status === "generating"
-                    ? "Regenerating…"
-                    : "Regenerate PDF"}
+                  Advanced {advancedOpen ? "▾" : "▸"}
                 </button>
+                {advancedOpen ? (
+                  <div className="invoice-advanced-content">
+                    <div className="invoice-advanced-buttons">
+                      <button
+                        type="button"
+                        className="invoice-pdf-regen-btn"
+                        onClick={() => { void handleDownloadPdf(); }}
+                        disabled={pdfState.status === "generating"}
+                      >
+                        {pdfState.action === "download" && pdfState.status === "generating"
+                          ? "Updating PDF…"
+                          : "Download PDF"}
+                      </button>
+                      <button
+                        type="button"
+                        className="invoice-pdf-regen-btn"
+                        onClick={() => { void handleCreatePdf(); }}
+                        disabled={pdfState.status === "generating"}
+                      >
+                        {pdfState.action === "manual" && pdfState.status === "generating"
+                          ? "Regenerating…"
+                          : "Regenerate PDF"}
+                      </button>
+                      <button
+                        type="button"
+                        className="invoice-sync-button"
+                        onClick={() => { void handleSyncSheet(); }}
+                        disabled={syncState.status === "syncing" || isSaving}
+                      >
+                        {syncState.status === "syncing"
+                          ? "Syncing…"
+                          : hasPreviouslySynced
+                            ? "Update Google Sheet"
+                            : "Sync to Google Sheet"}
+                      </button>
+                    </div>
+                    {syncState.status === "success" && syncedLabel ? (
+                      <p className="invoice-sync-success">Sheet synced {syncedLabel}</p>
+                    ) : syncState.status === "error" ? (
+                      <p className="invoice-error" role="alert">{syncState.message ?? "Sheet sync failed — retry"}</p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : (
@@ -1657,26 +1693,6 @@ export function InvoiceSection({
         </div>
       ) : null}
 
-      {/* ── Secondary: manual sheet sync ─────────────────────────── */}
-      <div className="invoice-sync-row invoice-sync-row--secondary">
-        {syncState.status === "success" && syncedLabel ? (
-          <p className="invoice-sync-success">Sheet synced {syncedLabel}</p>
-        ) : syncState.status === "error" ? (
-          <p className="invoice-error" role="alert">{syncState.message ?? "Sheet sync failed — retry"}</p>
-        ) : null}
-        <button
-          type="button"
-          className="invoice-sync-button"
-          onClick={() => { void handleSyncSheet(); }}
-          disabled={syncState.status === "syncing" || isSaving}
-        >
-          {syncState.status === "syncing"
-            ? "Syncing…"
-            : hasPreviouslySynced
-              ? "Update Google Sheet"
-              : "Sync to Google Sheet"}
-        </button>
-      </div>
     </div>
   );
 }
