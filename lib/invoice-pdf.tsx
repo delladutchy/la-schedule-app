@@ -9,7 +9,6 @@
  */
 import "server-only";
 
-import { readFile } from "node:fs/promises";
 import React from "react";
 import {
   Document,
@@ -26,8 +25,6 @@ import type { InvoicePacket } from "./invoice-types";
 // Logo hosted on Netlify CDN. Fetched at PDF render time and embedded as base64.
 // Falls back to text branding when unavailable (file not yet deployed, network error, etc.).
 const LOGO_PDF_URL = "https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png";
-const SIGNATURE_PUBLIC_PATH = "public/brand/jeff-signature.png";
-const SIGNATURE_PDF_URL = "https://la-schedule-app.netlify.app/brand/jeff-signature.png";
 
 // ---------------------------------------------------------------------------
 // Business info
@@ -256,12 +253,6 @@ const styles = StyleSheet.create({
     marginTop: 0,
     marginBottom: 2,
   },
-  signature: {
-    width: 50,
-    marginTop: 0,
-    marginLeft: -1,
-    marginBottom: 0,
-  },
   signatureFallback: {
     fontSize: 9,
     color: C.body,
@@ -434,10 +425,9 @@ interface InvoicePDFProps {
   gigSummary:    string;
   issuedDate:    string; // YYYY-MM-DD
   logoSrc:       string | null;
-  signatureSrc:  string | null;
 }
 
-function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, signatureSrc }: InvoicePDFProps) {
+function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: InvoicePDFProps) {
   const m       = packet.mileage;
   const hasOT   = packet.overtimeTotal > 0;
   const hasMile = m !== null && m.totalMiles > 0;
@@ -518,7 +508,6 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, si
       amount: exp.amount,
     });
   }
-
   return (
     <Document title={`Invoice ${invoiceNumber}`} author={CONTRACTOR_INFO.name}>
       <Page size="LETTER" style={styles.page}>
@@ -621,15 +610,12 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, si
         </View>
 
         {/* ── Notes / Totals ── */}
-        <View style={styles.lowerSection}>
+        <View style={styles.lowerSection} wrap={false}>
           <View style={styles.noteBox}>
             <Text style={styles.noteTitle}>Note to customer</Text>
             <View style={styles.signatureGroup} wrap={false}>
               <Text style={styles.noteText}>Thanks again,</Text>
-              {signatureSrc
-                ? <Image src={signatureSrc} style={styles.signature} />
-                : <Text style={styles.signatureFallback}>Jeff</Text>
-              }
+              <Text style={styles.signatureFallback}>Jeff</Text>
             </View>
             {packet.expenseNotes ? (
               <Text style={styles.expenseNoteText}>Expense notes: {packet.expenseNotes}</Text>
@@ -662,47 +648,6 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, si
   );
 }
 
-function isPdfSafeSignaturePng(buf: Buffer): boolean {
-  const pngSig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  if (buf.length < 26 || !buf.subarray(0, 8).equals(pngSig)) return false;
-  const colorType = buf[25];
-  return colorType !== 4 && colorType !== 6 && !buf.includes(Buffer.from("tRNS"));
-}
-
-function signatureDataUri(buf: Buffer, source: string): string | null {
-  if (!isPdfSafeSignaturePng(buf)) {
-    console.warn(`[invoice/pdf] signature skipped; PNG may contain transparency source=${source}`);
-    return null;
-  }
-  return `data:image/png;base64,${buf.toString("base64")}`;
-}
-
-async function loadSignatureSrc(): Promise<string | null> {
-  try {
-    console.log(`[invoice/pdf] loading signature from ${SIGNATURE_PUBLIC_PATH}`);
-    const buf = await readFile(SIGNATURE_PUBLIC_PATH);
-    const src = signatureDataUri(buf, SIGNATURE_PUBLIC_PATH);
-    if (src) console.log(`[invoice/pdf] signature embedded from local file (${buf.byteLength} bytes)`);
-    return src;
-  } catch (e) {
-    console.warn(`[invoice/pdf] local signature load failed: ${e instanceof Error ? e.message : String(e)}`);
-  }
-
-  try {
-    console.log(`[invoice/pdf] fetching signature from ${SIGNATURE_PDF_URL}`);
-    const res = await fetch(SIGNATURE_PDF_URL);
-    console.log(`[invoice/pdf] signature fetch status=${res.status} ok=${res.ok}`);
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    const src = signatureDataUri(buf, SIGNATURE_PDF_URL);
-    if (src) console.log(`[invoice/pdf] signature embedded from URL (${buf.byteLength} bytes)`);
-    return src;
-  } catch (e) {
-    console.warn(`[invoice/pdf] signature fetch failed: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Public render function
 // ---------------------------------------------------------------------------
@@ -717,10 +662,9 @@ export interface RenderInvoicePDFOptions {
 export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<Buffer> {
   const issuedDate = opts.issuedDate ?? new Date().toISOString().slice(0, 10);
 
-  // Embed brand assets as base64 so react-pdf renders them without a second network round-trip.
-  // The logo uses the CDN; the signature tries the local public file first, then falls back to CDN.
+  // Fetch the logo from the CDN and embed as base64 so react-pdf renders it without
+  // a second network round-trip. Falls back to text branding on any error or 404.
   let logoSrc: string | null = null;
-  let signatureSrc: string | null = null;
   try {
     console.log(`[invoice/pdf] fetching logo from ${LOGO_PDF_URL}`);
     const res = await fetch(LOGO_PDF_URL);
@@ -733,7 +677,6 @@ export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<B
   } catch (e) {
     console.warn(`[invoice/pdf] logo fetch failed: ${e instanceof Error ? e.message : String(e)}`);
   }
-  signatureSrc = await loadSignatureSrc();
 
   const element = React.createElement(InvoicePDF, {
     packet:        opts.packet,
@@ -741,7 +684,6 @@ export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<B
     gigSummary:    opts.gigSummary,
     issuedDate,
     logoSrc,
-    signatureSrc,
   });
   return renderToBuffer(element as React.ReactElement);
 }
