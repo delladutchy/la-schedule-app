@@ -315,7 +315,18 @@ export async function POST(
 
   const sentAt = new Date().toISOString();
   const sentTo = [...toAddresses, ...ccAddresses].join(", ");
-  await markInvoiceSent(params.eventId, sentAt, sentTo);
+  const sentSubject = subject;
+  await markInvoiceSent(params.eventId, sentAt, sentTo, sentSubject);
+
+  // Re-sync Google Sheet with invoice_status = "sent" and sent date.
+  // The earlier upsertSheetRow used status from packet (sheet_synced); this corrects it.
+  try {
+    const sentPacket = calculateInvoicePacket({ ...invoiceData, invoice_status: "sent", invoice_sent_at: sentAt });
+    const sentSheetRow = generateSheetRow(sentPacket, gigSummary, invoiceNumber);
+    await upsertSheetRow(sentSheetRow);
+  } catch (sheetErr) {
+    console.error(`[invoice/email] post-send sheet re-sync failed (non-fatal): ${sheetErr instanceof Error ? sheetErr.message : sheetErr}`);
+  }
 
   return NextResponse.json({
     ok: true,
@@ -323,6 +334,7 @@ export async function POST(
     cc: ccAddresses,
     sentAt,
     sentTo,
+    sentSubject,
     subject,
     attachmentFilename,
     invoice_number: updatedInvoiceData.invoice_number,

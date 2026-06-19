@@ -107,7 +107,8 @@ export interface InvoiceData {
   invoice_pdf_url: string | null;
   invoice_created_at: string | null;
   invoice_sent_at: string | null;
-  invoice_sent_to: string | null;  // comma-separated recipients (To + CC); see invoice-sent-to-migration.sql
+  invoice_sent_to: string | null;      // comma-separated recipients; see invoice-sent-to-migration.sql
+  invoice_sent_subject: string | null; // email subject from last send; see invoice-sent-subject-migration.sql
   invoice_total: number | null;
   amount_paid: number;
   remaining_balance: number | null;

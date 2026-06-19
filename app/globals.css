@@ -5313,6 +5313,13 @@ html.modal-open body {
   border-bottom: 1px solid var(--border);
 }
 
+.invoice-card-saving {
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
 .invoice-pdf-number {
   font-size: 1rem;
   font-weight: 700;

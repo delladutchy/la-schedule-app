@@ -649,7 +649,7 @@ function EmailDialog({ dialog, onChange, onSend, onClose, subject, body, filenam
             </div>
             <div className="invoice-email-review-row">
               <span className="invoice-email-review-label">Message</span>
-              <pre className="invoice-email-review-body">{body}</pre>
+              <p className="invoice-email-review-body">{body}</p>
             </div>
             <div className="invoice-email-review-row">
               <span className="invoice-email-review-label">Attachment</span>
@@ -1164,7 +1164,10 @@ export function InvoiceSection({
         credentials: "same-origin",
         body: JSON.stringify({ to: toAddresses, cc: ccAddresses, gigSummary }),
       });
-      const json = await res.json() as { ok?: boolean; error?: string; detail?: string; sentAt?: string };
+      const json = await res.json() as {
+        ok?: boolean; error?: string; detail?: string;
+        sentAt?: string; sentTo?: string; sentSubject?: string; subject?: string;
+      };
       if (!res.ok || !json.ok) {
         setEmailDialog((prev) => ({
           ...prev,
@@ -1173,16 +1176,25 @@ export function InvoiceSection({
         }));
         return;
       }
-      // Refresh to pick up updated invoice_status = "sent"
-      const refreshRes = await fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
+      // Optimistically patch sent fields so the card updates immediately without waiting for refresh.
+      setInvoiceData((prev) => prev ? {
+        ...prev,
+        invoice_status: "sent",
+        invoice_sent_at: json.sentAt ?? prev.invoice_sent_at,
+        invoice_sent_to: json.sentTo ?? prev.invoice_sent_to,
+        invoice_sent_subject: json.sentSubject ?? json.subject ?? prev.invoice_sent_subject,
+      } : prev);
+      // Background refresh to pick up any other server-side changes.
+      void fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
         headers: buildAuthHeaders(editorToken),
         credentials: "same-origin",
         cache: "no-store",
-      });
-      if (refreshRes.ok) {
-        const j = await refreshRes.json() as { invoiceData: InvoiceData | null; packet: InvoicePacket | null };
-        if (j.invoiceData) { setInvoiceData(j.invoiceData); setPacket(j.packet); }
-      }
+      }).then(async (refreshRes) => {
+        if (refreshRes.ok) {
+          const j = await refreshRes.json() as { invoiceData: InvoiceData | null; packet: InvoicePacket | null };
+          if (j.invoiceData) { setInvoiceData(j.invoiceData); setPacket(j.packet); }
+        }
+      }).catch(() => { /* non-fatal */ });
       setEmailDialog((prev) => ({ ...prev, status: "success", error: null }));
     } catch {
       setEmailDialog((prev) => ({ ...prev, status: "error", error: "Network error — try again" }));
@@ -1246,13 +1258,16 @@ export function InvoiceSection({
   const invoiceTotal = invoiceData?.invoice_total ?? null;
   const amountPaid = invoiceData?.amount_paid ?? 0;
   const remainingBalance = invoiceData?.remaining_balance ?? null;
-  const displayedInvoiceTotal = invoiceTotal ?? p?.estimatedTotal ?? null;
-  const displayedBalanceDue = remainingBalance ?? (
-    displayedInvoiceTotal != null ? Math.max(displayedInvoiceTotal - amountPaid, 0) : null
-  );
+  // Always show the live calculated total so the card stays in sync with Invoice Preview.
+  // invoice_total is only updated when a PDF is generated; p.estimatedTotal reflects every save.
+  const displayedInvoiceTotal = p?.estimatedTotal ?? invoiceTotal ?? null;
+  const displayedBalanceDue = displayedInvoiceTotal != null
+    ? Math.max(displayedInvoiceTotal - amountPaid, 0)
+    : (remainingBalance ?? null);
   const invoiceStatusLabel = currentStatus ? INVOICE_STATUS_LABELS[currentStatus] : "Not sent";
   const invoiceSentAt = invoiceData?.invoice_sent_at ?? null;
   const invoiceSentTo = invoiceData?.invoice_sent_to ?? null;
+  const invoiceSentSubject = invoiceData?.invoice_sent_subject ?? null;
 
   // Email preview — computed client-side to match what the server will send
   const previewJobTitle = emailStripLaPrefix(gigSummary, laNumber);
@@ -1499,7 +1514,10 @@ export function InvoiceSection({
                   ) : null}
                   <div className="invoice-status-grid-row">
                     <dt>Total</dt>
-                    <dd>{displayedInvoiceTotal != null ? fmtCurrency(displayedInvoiceTotal) : "—"}</dd>
+                    <dd>
+                      {displayedInvoiceTotal != null ? fmtCurrency(displayedInvoiceTotal) : "—"}
+                      {isSaving ? <span className="invoice-card-saving"> Saving…</span> : null}
+                    </dd>
                   </div>
                   <div className="invoice-status-grid-row">
                     <dt>Amount Paid</dt>
@@ -1510,7 +1528,7 @@ export function InvoiceSection({
                     <dd>{displayedBalanceDue != null ? fmtCurrency(displayedBalanceDue) : "—"}</dd>
                   </div>
                 </dl>
-                {(invoiceSentAt || invoiceSentTo) ? (
+                {(invoiceSentAt || invoiceSentTo || invoiceSentSubject) ? (
                   <div className="invoice-sent-summary">
                     <button
                       type="button"
@@ -1544,6 +1562,12 @@ export function InvoiceSection({
                                 return `${m}/${dy}/${yr} ${h12}:${min} ${ampm}`;
                               } catch { return invoiceSentAt; }
                             })()}</span>
+                          </div>
+                        ) : null}
+                        {invoiceSentSubject ? (
+                          <div className="invoice-sent-detail-row">
+                            <span className="invoice-label-sm">Subject</span>
+                            <span>{invoiceSentSubject}</span>
                           </div>
                         ) : null}
                       </div>

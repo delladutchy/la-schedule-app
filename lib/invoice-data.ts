@@ -35,6 +35,7 @@ function coerceInvoiceData(row: Record<string, unknown>): InvoiceData {
     invoice_created_at: row.invoice_created_at != null ? String(row.invoice_created_at) : null,
     invoice_sent_at: row.invoice_sent_at != null ? String(row.invoice_sent_at) : null,
     invoice_sent_to: row.invoice_sent_to != null ? String(row.invoice_sent_to) : null,
+    invoice_sent_subject: row.invoice_sent_subject != null ? String(row.invoice_sent_subject) : null,
     invoice_total: row.invoice_total != null ? Number(row.invoice_total) : null,
     amount_paid: Number(row.amount_paid ?? 0),
     remaining_balance: row.remaining_balance != null ? Number(row.remaining_balance) : null,
@@ -147,6 +148,7 @@ export interface InvoiceDataPatch {
   invoice_created_at?: string | null;
   invoice_sent_at?: string | null;
   invoice_sent_to?: string | null;
+  invoice_sent_subject?: string | null;
   invoice_total?: number | null;
   amount_paid?: number;
   remaining_balance?: number | null;
@@ -273,6 +275,7 @@ export async function markInvoiceSent(
   googleEventId: string,
   sentAt: string,
   sentTo?: string | null,
+  sentSubject?: string | null,
 ): Promise<void> {
   const client = getSupabaseServerClient();
   const patch: Record<string, unknown> = {
@@ -281,6 +284,7 @@ export async function markInvoiceSent(
     updated_at: sentAt,
   };
   if (sentTo != null) patch.invoice_sent_to = sentTo;
+  if (sentSubject != null) patch.invoice_sent_subject = sentSubject;
 
   const { error } = await client
     .from("invoice_data")
