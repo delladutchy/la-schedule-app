@@ -223,6 +223,14 @@ function makeInvoiceData(overrides: Partial<InvoiceData> = {}): InvoiceData {
     sheet_synced_at: null,
     sheet_sync_error: null,
     paid_date: null,
+    // Native invoicing fields
+    invoice_number: null,
+    invoice_pdf_url: null,
+    invoice_created_at: null,
+    invoice_sent_at: null,
+    invoice_total: null,
+    amount_paid: 0,
+    remaining_balance: null,
     quickbooks_invoice_id: null,
     quickbooks_invoice_link: null,
     quickbooks_synced_at: null,
@@ -518,5 +526,77 @@ describe("initWorkdayEntries — default time behavior", () => {
     const original = JSON.stringify(saved);
     initWorkdayEntries(saved, DATES, DEFAULT_START, DEFAULT_END);
     expect(JSON.stringify(saved)).toBe(original);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Balance due: estimatedTotal drives balance, not stale remainingBalance
+// ---------------------------------------------------------------------------
+
+describe("balance due — fresh calculation", () => {
+  it("unpaid invoice: balance = total (amount_paid = 0)", () => {
+    const data = makeInvoiceData({
+      day_rate: 800,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const balanceDue = Math.max(0, Number((p.estimatedTotal - p.amountPaid).toFixed(2)));
+    expect(balanceDue).toBe(p.estimatedTotal);
+  });
+
+  it("adding an expense increases estimatedTotal", () => {
+    const base = makeInvoiceData({
+      day_rate: 800,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const withUber = makeInvoiceData({
+      day_rate: 800,
+      uber: 5000,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const pBase = calculateInvoicePacket(base);
+    const pUber = calculateInvoicePacket(withUber);
+    expect(pUber.estimatedTotal).toBe(pBase.estimatedTotal + 5000);
+  });
+
+  it("stale remaining_balance is ignored: balance = estimatedTotal - amountPaid", () => {
+    // Simulate: DB has stale remaining_balance from before Uber was added
+    const data = makeInvoiceData({
+      day_rate: 800,
+      uber: 5000,
+      amount_paid: 0,
+      remaining_balance: 800, // stale — doesn't include Uber
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    // Fresh balance ignores packet.remainingBalance and uses estimatedTotal - amountPaid
+    const freshBalance = Math.max(0, Number((p.estimatedTotal - p.amountPaid).toFixed(2)));
+    expect(freshBalance).toBe(p.estimatedTotal); // = 800 + 5000 = 5800
+    expect(freshBalance).not.toBe(p.remainingBalance); // 5800 ≠ stale 800
+  });
+
+  it("partially paid: balance = total - amountPaid", () => {
+    const data = makeInvoiceData({
+      day_rate: 800,
+      uber: 5000,
+      amount_paid: 2598.75,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const freshBalance = Math.max(0, Number((p.estimatedTotal - p.amountPaid).toFixed(2)));
+    expect(freshBalance).toBeCloseTo(p.estimatedTotal - 2598.75);
+  });
+
+  it("generateSheetRow uses fresh balance, not stale remainingBalance", () => {
+    const data = makeInvoiceData({
+      day_rate: 800,
+      uber: 5000,
+      amount_paid: 0,
+      remaining_balance: 800, // stale
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "Test Gig");
+    expect(row.remainingBalance).toBe(p.estimatedTotal); // 5800, not stale 800
   });
 });

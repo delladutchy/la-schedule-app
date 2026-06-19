@@ -237,7 +237,6 @@ export async function markInvoicePdfCreated(
   const currentStatus = ((existing as Record<string, unknown> | null)?.invoice_status as InvoiceStatus | undefined) ?? "none";
   const amountPaid = Number((existing as Record<string, unknown> | null)?.amount_paid ?? 0);
   const resetWorkflow = ["none", "ready", "sheet_synced"].includes(currentStatus);
-  const recalculateBalance = ["sent", "draft_created", "partially_paid"].includes(currentStatus);
 
   const patch: Record<string, unknown> = {
     invoice_number: opts.invoiceNumber,
@@ -251,7 +250,8 @@ export async function markInvoicePdfCreated(
     patch.amount_paid = 0;
     patch.remaining_balance = opts.total;
     patch.invoice_status = "sheet_synced";
-  } else if (recalculateBalance) {
+  } else {
+    // Always recalculate balance when total changes (sent/partially_paid/paid/draft_created)
     patch.remaining_balance = Math.max(Number((opts.total - amountPaid).toFixed(2)), 0);
   }
 

@@ -59,9 +59,9 @@ function cleanLaNumber(laNumber: string | null): string {
   return (laNumber ?? "").replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
 }
 
-function formatClientInvoiceNumber(laNumber: string | null, fallbackInvoiceNumber: string): string {
+function formatClientInvoiceNumber(laNumber: string | null, invoiceNumber: string): string {
   const cleanLa = cleanLaNumber(laNumber);
-  return cleanLa ? `LA #${cleanLa}` : fallbackInvoiceNumber;
+  return cleanLa ? `${invoiceNumber} - LA #${cleanLa}` : invoiceNumber;
 }
 
 function buildAttachmentFilename(clientInvoiceNumber: string): string {
@@ -282,7 +282,7 @@ export async function POST(
     console.error(`[invoice/email] sheet sync failed after PDF regeneration (non-fatal): ${sheetErr instanceof Error ? sheetErr.message : sheetErr}`);
   }
 
-  const balanceDue = updatedInvoiceData.remaining_balance ?? packet.estimatedTotal;
+  const balanceDue = Math.max(0, Number((packet.estimatedTotal - packet.amountPaid).toFixed(2)));
   const attachmentFilename = buildAttachmentFilename(clientInvoiceNumber);
   const subject = buildSubject(clientInvoiceNumber, jobTitle);
   const emailParams: EmailParams = {

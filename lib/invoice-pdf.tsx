@@ -331,6 +331,11 @@ function fmtDate(isoDate: string): string {
   return `${String(mo).padStart(2, "0")}/${String(d).padStart(2, "0")}/${y}`;
 }
 
+function fmtCompactDate(isoDate: string): string {
+  const [y, mo, d] = isoDate.split("-").map(Number);
+  return `${mo}/${d}/${String(y).slice(2)}`;
+}
+
 function fmtShortDate(isoDate: string, includeYear = false): string {
   const [y, mo, d] = isoDate.split("-").map(Number);
   return includeYear ? `${mo}/${d}/${y}` : `${mo}/${d}`;
@@ -435,7 +440,9 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
   const workDateStr = fmtWorkDates(packet.workdays);
   const workedDateTimes = fmtWorkedDateTimes(packet.workdays);
   const formattedLaJob = formatLaJobNumber(packet.laNumber);
-  const clientInvoiceNumber = formattedLaJob ?? invoiceNumber;
+  const clientInvoiceNumber = formattedLaJob
+    ? `${invoiceNumber} - ${formattedLaJob}`
+    : invoiceNumber;
   const jobTitle = formatJobTitle(gigSummary, packet.laNumber);
   const billToAddress = CLIENT_INFO_BY_NAME[packet.client]?.addressLines ?? [];
   const dueDate = addDaysIso(issuedDate, 15);
@@ -447,9 +454,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
       : 0;
   const balanceDue = packet.invoiceStatus === "paid"
     ? 0
-    : packet.remainingBalance != null
-      ? packet.remainingBalance
-      : Math.max(Number((invoiceTotal - paidAmount).toFixed(2)), 0);
+    : Math.max(Number((invoiceTotal - paidAmount).toFixed(2)), 0);
   const showPaymentRow = paidAmount > 0;
   const showPaidInFull = balanceDue <= 0;
 
@@ -554,10 +559,6 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
                 <Text style={styles.detailLabel}>Invoice no.:</Text>
                 <Text style={styles.detailValue}>{clientInvoiceNumber}</Text>
               </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Terms:</Text>
-                <Text style={styles.detailValue}>Net 15</Text>
-              </View>
               {jobTitle ? (
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Job:</Text>
@@ -566,11 +567,11 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
               ) : null}
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Invoice date:</Text>
-                <Text style={styles.detailValue}>{fmtDate(issuedDate)}</Text>
+                <Text style={styles.detailValue}>{fmtCompactDate(issuedDate)}</Text>
               </View>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Due date:</Text>
-                <Text style={styles.detailValue}>{fmtDate(dueDate)}</Text>
+                <Text style={styles.detailValue}>{fmtCompactDate(dueDate)}</Text>
               </View>
               {workDateStr ? (
                 <View style={styles.detailRow}>
@@ -578,10 +579,6 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc }: 
                   <Text style={styles.detailValue}>{workDateStr}</Text>
                 </View>
               ) : null}
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Payment:</Text>
-                <Text style={styles.detailValue}>Direct Deposit</Text>
-              </View>
             </View>
           </View>
         </View>

@@ -281,7 +281,7 @@ export function generateSheetRow(
     invoicePdfUrl:        packet.invoicePdfUrl       ?? "",
     invoiceSentDate:      packet.invoiceSentAt        ? packet.invoiceSentAt.slice(0, 10)  : "",
     amountPaid:           packet.amountPaid           ?? 0,
-    remainingBalance:     packet.remainingBalance     ?? packet.estimatedTotal,
+    remainingBalance:     Math.max(0, Number((packet.estimatedTotal - (packet.amountPaid ?? 0)).toFixed(2))),
     paymentMethod:        pm.paymentMethod            ?? "",
     paymentReceivedDate:  pm.paymentReceivedDate      ?? "",
     paymentBatchRef:      pm.paymentBatchRef          ?? "",

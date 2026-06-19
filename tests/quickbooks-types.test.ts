@@ -63,6 +63,14 @@ function makePacket(overrides: Partial<InvoicePacket> = {}): InvoicePacket {
     otherExpenses:      0,
     expenseNotes:       null,
     estimatedTotal:     1180,
+    // Native invoicing fields
+    invoiceNumber:      null,
+    invoicePdfUrl:      null,
+    invoiceCreatedAt:   null,
+    invoiceSentAt:      null,
+    invoiceTotal:       null,
+    amountPaid:         0,
+    remainingBalance:   null,
     ...overrides,
   };
 }
