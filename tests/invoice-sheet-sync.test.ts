@@ -575,7 +575,11 @@ describe("normalizeLA — strips prefix for dedup matching", () => {
 // M. isInvoiceDataRow — totals/summary row detection
 // ---------------------------------------------------------------------------
 
-function isInvoiceDataRow(cellA: string, cellC: string): boolean {
+// Mirror of the VOID_STATUS constant exported from lib/google-sheets.ts
+const VOID_STATUS = "VOID_DUPLICATE";
+
+function isInvoiceDataRow(cellA: string, cellC: string, cellT?: string): boolean {
+  if (cellT?.trim() === VOID_STATUS) return false; // voided — skip
   if (cellC.trim()) return true;
   const a = cellA.trim();
   if (!a) return false;
@@ -957,5 +961,398 @@ describe("classifySheetsError — new patterns", () => {
   it("No grid with id (insertDimension numeric tab mismatch) → tab not found message", () => {
     const msg = classify("No grid with id: 123456789", undefined, "LA PAY (2026)");
     expect(msg).toContain("Sheet tab not found");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T. isInvoiceDataRow — VOID_STATUS cellT parameter
+// ---------------------------------------------------------------------------
+
+describe("isInvoiceDataRow — skips VOID_DUPLICATE rows (optional cellT param)", () => {
+  it("VOID_DUPLICATE row with LA# in col C is NOT a data row", () => {
+    expect(isInvoiceDataRow("1001", "5555", VOID_STATUS)).toBe(false);
+  });
+  it("VOID_DUPLICATE row with numeric invoice# in col A is NOT a data row", () => {
+    expect(isInvoiceDataRow("1001", "", VOID_STATUS)).toBe(false);
+  });
+  it("VOID_DUPLICATE row that would otherwise be a totals row is also NOT a data row", () => {
+    expect(isInvoiceDataRow("TOTAL", "", VOID_STATUS)).toBe(false);
+  });
+  it("active row with STATUS = 'sheet_synced' IS a data row", () => {
+    expect(isInvoiceDataRow("1001", "5555", "sheet_synced")).toBe(true);
+  });
+  it("active row with STATUS = '' IS a data row", () => {
+    expect(isInvoiceDataRow("1001", "5555", "")).toBe(true);
+  });
+  it("cellT = undefined (row predates STATUS column) IS a data row", () => {
+    expect(isInvoiceDataRow("1001", "5555", undefined)).toBe(true);
+  });
+  it("two-arg calls still work unchanged (backward compatible)", () => {
+    expect(isInvoiceDataRow("1001", "5555")).toBe(true);
+    expect(isInvoiceDataRow("TOTAL", "")).toBe(false);
+  });
+  it("VOID_STATUS constant equals 'VOID_DUPLICATE'", () => {
+    expect(VOID_STATUS).toBe("VOID_DUPLICATE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U. buildVoidRowValues — 33-column void row structure
+// ---------------------------------------------------------------------------
+
+// Mirror of buildVoidRowValues exported from lib/google-sheets.ts
+// Keep in sync with COLUMN_ORDER (33 columns: A=0 through AG=32).
+function buildVoidRowValues(
+  cellA: string,
+  cellB: string,
+  cellC: string,
+  cellD: string,
+): (string | number)[] {
+  const ncols = 33; // COLUMN_ORDER.length
+  const row: (string | number)[] = new Array(ncols).fill("");
+  row[0] = cellA; // A: INV# (kept)
+  row[1] = cellB; // B: DATE (kept)
+  row[2] = cellC; // C: LA# (kept)
+  row[3] = cellD; // D: GIG (kept)
+  for (let i = 4; i <= 18; i++) row[i] = 0; // E–S: money columns → 0
+  row[19] = VOID_STATUS;                      // T: STATUS
+  return row;
+}
+
+describe("buildVoidRowValues — void row structure", () => {
+  it("returns exactly 33 values (matches COLUMN_ORDER length)", () => {
+    expect(buildVoidRowValues("1001", "2026-01-15", "5555", "Corporate Shoot")).toHaveLength(33);
+  });
+
+  it("keeps identifying columns A–D at indices 0–3", () => {
+    const row = buildVoidRowValues("1001", "2026-01-15", "5555", "Corporate Shoot");
+    expect(row[0]).toBe("1001");
+    expect(row[1]).toBe("2026-01-15");
+    expect(row[2]).toBe("5555");
+    expect(row[3]).toBe("Corporate Shoot");
+  });
+
+  it("zeros all 15 money columns E–S (indices 4–18)", () => {
+    const row = buildVoidRowValues("1001", "2026-01-15", "5555", "Corporate Shoot");
+    for (let i = 4; i <= 18; i++) {
+      expect(row[i]).toBe(0);
+    }
+  });
+
+  it("sets STATUS column T (index 19) to VOID_STATUS", () => {
+    const row = buildVoidRowValues("1001", "2026-01-15", "5555", "Corporate Shoot");
+    expect(row[19]).toBe(VOID_STATUS);
+  });
+
+  it("clears all payment/extended columns U–AG (indices 20–32)", () => {
+    const row = buildVoidRowValues("1001", "2026-01-15", "5555", "Corporate Shoot");
+    for (let i = 20; i <= 32; i++) {
+      expect(row[i]).toBe("");
+    }
+  });
+
+  it("void row fails isInvoiceDataRow check — confirmed excluded by scan loops", () => {
+    const row = buildVoidRowValues("1001", "2026-01-15", "5555", "Corporate Shoot");
+    const cellA = String(row[0]);
+    const cellC = String(row[2]);
+    const cellT = String(row[19]);
+    expect(isInvoiceDataRow(cellA, cellC, cellT)).toBe(false);
+  });
+
+  it("empty GIG works — void row still has correct structure", () => {
+    const row = buildVoidRowValues("1001", "2026-01-15", "5555", "");
+    expect(row[3]).toBe("");
+    expect(row[19]).toBe(VOID_STATUS);
+    expect(row).toHaveLength(33);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V. scoreKeepRow — keep-row selection priority order
+// ---------------------------------------------------------------------------
+
+// Mirror of the private scoreKeepRow function in lib/google-sheets.ts
+function scoreKeepRow(
+  cellA: string,
+  cellB: string,
+  cellC: string,
+  cellE: string,
+  rowNumber: number,
+  incomingLa: string,
+  incomingInv: string,
+  incomingTotal: number | string | null | undefined,
+): number {
+  let score = 0;
+  if (incomingLa && normalizeLA(cellC) === incomingLa) score += 200;
+  if (incomingInv && cellA.trim() === incomingInv) score += 100;
+  const dateMs = parseSheetDateValue(cellB);
+  if (dateMs !== null) score += dateMs / 1e13;
+  if (incomingTotal != null) {
+    const tIn = typeof incomingTotal === "number" ? incomingTotal : parseFloat(String(incomingTotal));
+    const tEx = parseFloat(cellE.replace(/[$,\s]/g, ""));
+    if (!isNaN(tIn) && !isNaN(tEx) && Math.abs(tEx - tIn) < 0.01) score += 50;
+  }
+  score += rowNumber * 0.0001;
+  return score;
+}
+
+describe("scoreKeepRow — keep-row selection priority", () => {
+  const la = "5555";
+  const inv = "1001";
+
+  it("LA# match outweighs invoice# match alone (200 > 100)", () => {
+    const scoreWithLa  = scoreKeepRow("1001", "2026-01-15", "5555", "2500", 3, la, inv, null);
+    const scoreInvOnly = scoreKeepRow("1001", "2026-01-15", "",     "2500", 3, la, inv, null);
+    expect(scoreWithLa).toBeGreaterThan(scoreInvOnly);
+  });
+
+  it("invoice# match adds score on top of LA# match", () => {
+    const bothMatch = scoreKeepRow("1001", "2026-01-15", "5555", "2500", 3, la, inv, null);
+    const laOnly    = scoreKeepRow("9999", "2026-01-15", "5555", "2500", 3, la, inv, null);
+    expect(bothMatch).toBeGreaterThan(laOnly);
+  });
+
+  it("total match adds +50 when within $0.01", () => {
+    const withTotal    = scoreKeepRow("1001", "2026-01-15", "5555", "2598.75", 3, la, inv, 2598.75);
+    const withoutTotal = scoreKeepRow("1001", "2026-01-15", "5555", "1000.00", 3, la, inv, 2598.75);
+    expect(withTotal - withoutTotal).toBeCloseTo(50, 0);
+  });
+
+  it("total match requires within 0.01 — larger diff gets no bonus", () => {
+    const exact = scoreKeepRow("1001", "2026-01-15", "5555", "2598.75", 3, la, inv, 2598.75);
+    const close = scoreKeepRow("1001", "2026-01-15", "5555", "2598.80", 3, la, inv, 2598.75);
+    expect(exact).toBeGreaterThan(close);
+  });
+
+  it("higher row number wins as final tiebreaker (most recently inserted)", () => {
+    const rowLow  = scoreKeepRow("1001", "2026-01-15", "5555", "2500", 5,  la, inv, null);
+    const rowHigh = scoreKeepRow("1001", "2026-01-15", "5555", "2500", 10, la, inv, null);
+    expect(rowHigh).toBeGreaterThan(rowLow);
+  });
+
+  it("row priority ordering: LA# > inv# > total > row number", () => {
+    // Best: LA# + inv# + total match at row 2
+    const best = scoreKeepRow("1001", "2026-01-15", "5555", "2598.75", 2, la, inv, 2598.75);
+    // Good: inv# + total match at row 10 (no LA# → missing 200pts)
+    const good = scoreKeepRow("1001", "2026-01-15", "",     "2598.75", 10, la, inv, 2598.75);
+    // Weak: only inv# match at highest row
+    const weak = scoreKeepRow("1001", "2026-01-15", "",     "999.99",  15, la, inv, 2598.75);
+    expect(best).toBeGreaterThan(good);
+    expect(good).toBeGreaterThan(weak);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W. Void-based duplicate handling — local simulation of upsert logic
+// ---------------------------------------------------------------------------
+
+interface UpsertEntry {
+  rowNumber: number;
+  cellA: string; // INV#
+  cellB: string; // DATE
+  cellC: string; // LA#
+  cellD: string; // GIG
+  cellE: string; // TOTAL
+  cellT: string; // STATUS
+}
+
+interface UpsertResult {
+  action: "updated" | "inserted";
+  keptRow: number;
+  voidedRows: number[];
+  hasDuplicates: boolean;
+}
+
+function simulateUpsertWithVoid(
+  entries: UpsertEntry[],
+  incomingLa: string,
+  incomingInv: string,
+  incomingTotal: number,
+): UpsertResult {
+  const normLa  = normalizeLA(incomingLa);
+  const normInv = incomingInv.trim();
+
+  const matchingRows: Array<{
+    rowNumber: number;
+    score: number;
+    cellA: string; cellB: string; cellC: string; cellD: string;
+  }> = [];
+
+  for (const entry of entries) {
+    if (entry.cellT === VOID_STATUS) continue; // skip void rows
+    const laMatch  = !!(normLa  && normalizeLA(entry.cellC) === normLa);
+    const invMatch = !!(normInv && entry.cellA && entry.cellA === normInv);
+    if (laMatch || invMatch) {
+      const score = scoreKeepRow(
+        entry.cellA, entry.cellB, entry.cellC, entry.cellE,
+        entry.rowNumber, normLa, normInv, incomingTotal,
+      );
+      matchingRows.push({ rowNumber: entry.rowNumber, score, cellA: entry.cellA, cellB: entry.cellB, cellC: entry.cellC, cellD: entry.cellD });
+    }
+  }
+
+  if (matchingRows.length === 0) {
+    const lastDataRow = entries.filter(e => isInvoiceDataRow(e.cellA, e.cellC, e.cellT)).at(-1)?.rowNumber ?? 1;
+    return { action: "inserted", keptRow: lastDataRow + 1, voidedRows: [], hasDuplicates: false };
+  }
+
+  const keepEntry = matchingRows.reduce((best, e) => e.score > best.score ? e : best);
+  const stale = matchingRows.filter(m => m.rowNumber !== keepEntry.rowNumber);
+  return {
+    action: "updated",
+    keptRow: keepEntry.rowNumber,
+    voidedRows: stale.map(s => s.rowNumber),
+    hasDuplicates: stale.length > 0,
+  };
+}
+
+describe("Void-based duplicate handling — automatic upsert logic", () => {
+  const base: UpsertEntry = {
+    rowNumber: 2, cellA: "1001", cellB: "2026-01-15",
+    cellC: "5555", cellD: "Corporate Shoot", cellE: "2598.75", cellT: "sheet_synced",
+  };
+
+  it("single match → update that row, no voids, hasDuplicates: false", () => {
+    const result = simulateUpsertWithVoid([base], "5555", "1001", 2598.75);
+    expect(result.action).toBe("updated");
+    expect(result.keptRow).toBe(2);
+    expect(result.voidedRows).toHaveLength(0);
+    expect(result.hasDuplicates).toBe(false);
+  });
+
+  it("two matches → keeps best, voids the other, hasDuplicates: true", () => {
+    const stale: UpsertEntry = { ...base, rowNumber: 5, cellE: "1000.00" }; // lower total, lower row = worse score
+    const result = simulateUpsertWithVoid([base, stale], "5555", "1001", 2598.75);
+    expect(result.action).toBe("updated");
+    expect(result.keptRow).toBe(2); // base wins: LA# + inv# + total match
+    expect(result.voidedRows).toEqual([5]);
+    expect(result.hasDuplicates).toBe(true);
+  });
+
+  it("three matches → keeps best, voids both stale rows", () => {
+    const stale2: UpsertEntry = { ...base, rowNumber: 3, cellC: "", cellE: "999.00" };
+    const stale3: UpsertEntry = { ...base, rowNumber: 4, cellA: "9999", cellC: "5555", cellE: "500.00" };
+    const result = simulateUpsertWithVoid([base, stale2, stale3], "5555", "1001", 2598.75);
+    expect(result.keptRow).toBe(2); // base has highest score (LA# + inv# + total)
+    expect(result.voidedRows.sort()).toEqual([3, 4]);
+    expect(result.hasDuplicates).toBe(true);
+  });
+
+  it("VOID rows in sheet are skipped — already-voided rows not re-voided or re-matched", () => {
+    const alreadyVoided: UpsertEntry = { ...base, rowNumber: 5, cellT: VOID_STATUS };
+    const result = simulateUpsertWithVoid([base, alreadyVoided], "5555", "1001", 2598.75);
+    expect(result.keptRow).toBe(2);
+    expect(result.voidedRows).toHaveLength(0); // void row not counted
+    expect(result.hasDuplicates).toBe(false);  // only 1 active match
+  });
+
+  it("no matches → insert new row after last active data row", () => {
+    const result = simulateUpsertWithVoid([base], "6666", "1002", 500);
+    expect(result.action).toBe("inserted");
+    expect(result.keptRow).toBe(3); // row 2 is last active data row → new row at 3
+    expect(result.voidedRows).toHaveLength(0);
+  });
+
+  it("after voiding, a fresh scan finds only one active row for that key", () => {
+    // Two identical rows, same key. Higher row # wins as tiebreaker (more recently inserted).
+    // Row 2 (earlier) gets voided; row 5 (later/higher) is kept.
+    const earlier: UpsertEntry = { ...base, rowNumber: 2 };
+    const later: UpsertEntry   = { ...base, rowNumber: 5 };
+    const firstSync = simulateUpsertWithVoid([earlier, later], "5555", "1001", 2598.75);
+    expect(firstSync.keptRow).toBe(5);
+    expect(firstSync.voidedRows).toEqual([2]); // lower row (older) gets voided
+
+    // Simulate Sheet state after void: earlier row now has VOID_STATUS
+    const afterVoid: UpsertEntry[] = [
+      { ...earlier, cellT: VOID_STATUS }, // voided
+      later,                              // still active
+    ];
+    const secondSync = simulateUpsertWithVoid(afterVoid, "5555", "1001", 2598.75);
+    expect(secondSync.action).toBe("updated");
+    expect(secondSync.keptRow).toBe(5);
+    expect(secondSync.voidedRows).toHaveLength(0);   // no new stale rows
+    expect(secondSync.hasDuplicates).toBe(false);    // clean
+  });
+
+  it("inv#-only match (no LA#) still correctly picks keep row", () => {
+    const noLa: UpsertEntry = { ...base, cellC: "" }; // LA# not set on row
+    const result = simulateUpsertWithVoid([noLa], "", "1001", 2598.75);
+    expect(result.keptRow).toBe(2);
+    expect(result.hasDuplicates).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// X. findSheetDuplicates — VOID rows excluded from duplicate report
+// ---------------------------------------------------------------------------
+
+interface FakeDuplicateEntryV2 {
+  rowNumber: number;
+  invNumber: string;
+  laNumber: string;
+  date: string;
+  total: string;
+  status: string; // col T
+}
+
+function findDuplicateGroupsV2(entries: FakeDuplicateEntryV2[]) {
+  const groups = new Map<string, FakeDuplicateEntryV2[]>();
+  for (const entry of entries) {
+    if (!isInvoiceDataRow(entry.invNumber, entry.laNumber, entry.status)) continue;
+    const key = normalizeLA(entry.laNumber)
+      ? `la:${normalizeLA(entry.laNumber)}`
+      : entry.invNumber ? `inv:${entry.invNumber}` : null;
+    if (!key) continue;
+    groups.set(key, [...(groups.get(key) ?? []), entry]);
+  }
+  return [...groups.entries()]
+    .filter(([, g]) => g.length > 1)
+    .map(([key, g]) => ({ key, rowNumbers: g.map(e => e.rowNumber) }));
+}
+
+describe("findSheetDuplicates — VOID rows excluded from duplicate report", () => {
+  const active: FakeDuplicateEntryV2 = {
+    rowNumber: 2, invNumber: "1001", laNumber: "5555",
+    date: "2026-01-15", total: "2598.75", status: "sheet_synced",
+  };
+  const voided: FakeDuplicateEntryV2 = {
+    rowNumber: 5, invNumber: "1001", laNumber: "5555",
+    date: "2026-01-10", total: "0", status: VOID_STATUS,
+  };
+  const otherActive: FakeDuplicateEntryV2 = {
+    rowNumber: 3, invNumber: "1002", laNumber: "6666",
+    date: "2026-02-01", total: "1000", status: "sheet_synced",
+  };
+
+  it("two active rows for same LA# → duplicate reported", () => {
+    const twin = { ...active, rowNumber: 7, date: "2026-01-20" };
+    const groups = findDuplicateGroupsV2([active, twin]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.rowNumbers).toContain(2);
+    expect(groups[0]!.rowNumbers).toContain(7);
+  });
+
+  it("one active + one VOID_DUPLICATE for same LA# → NO duplicate reported", () => {
+    const groups = findDuplicateGroupsV2([active, voided]);
+    expect(groups).toHaveLength(0); // void row excluded → only 1 active row
+  });
+
+  it("two VOID rows for same LA# → NO duplicate reported (both excluded)", () => {
+    const voided2 = { ...voided, rowNumber: 6 };
+    const groups = findDuplicateGroupsV2([voided, voided2]);
+    expect(groups).toHaveLength(0);
+  });
+
+  it("mixed sheet: one duplicate group + void rows for another → only real duplicate reported", () => {
+    const twin = { ...active, rowNumber: 8 };
+    const groups = findDuplicateGroupsV2([active, twin, voided, otherActive]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.rowNumbers.sort()).toEqual([2, 8]);
+  });
+
+  it("after auto-void: only active row remains for key → checker reports 0 duplicates", () => {
+    // Simulates state right after upsertSheetRow voids the stale row
+    const groups = findDuplicateGroupsV2([active, { ...voided, rowNumber: 5 }]);
+    expect(groups).toHaveLength(0);
   });
 });

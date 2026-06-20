@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
-import { deleteSheetDuplicateRows, findSheetDuplicates } from "@/lib/google-sheets";
+import { deleteSheetDuplicateRows, deleteSheetDuplicatesForKey, findSheetDuplicates } from "@/lib/google-sheets";
 import { classifySheetsError } from "@/lib/google-error";
 
 export const dynamic = "force-dynamic";
@@ -82,8 +82,10 @@ export async function POST(request: NextRequest) {
   }
 
   let requestedRows: number[] | undefined;
+  let invoiceKey: string | undefined;
   try {
-    const body = await request.json().catch(() => ({})) as { deleteRows?: unknown };
+    const body = await request.json().catch(() => ({})) as { deleteRows?: unknown; invoiceKey?: unknown };
+    invoiceKey = typeof body.invoiceKey === "string" ? body.invoiceKey.trim() : undefined;
     if (Array.isArray(body.deleteRows)) {
       requestedRows = body.deleteRows
         .map((value) => Number(value))
@@ -94,7 +96,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await deleteSheetDuplicateRows(requestedRows);
+    // invoiceKey path: advanced recovery tool — delete only this key's duplicates
+    const result = invoiceKey
+      ? await deleteSheetDuplicatesForKey(invoiceKey)
+      : await deleteSheetDuplicateRows(requestedRows);
     return NextResponse.json({
       ok: true,
       deletedRows: result.deletedRows,

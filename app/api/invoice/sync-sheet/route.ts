@@ -71,8 +71,9 @@ export async function POST(request: NextRequest) {
     noteOverride: invoiceData.invoice_note_override,
   });
 
+  let upsertResult;
   try {
-    await upsertSheetRow(row);
+    upsertResult = await upsertSheetRow(row);
   } catch (err) {
     const rawMsg = err instanceof Error ? err.message : String(err);
     const friendlyMsg = classifySheetsError(err, sheetId, sheetName);
@@ -96,5 +97,12 @@ export async function POST(request: NextRequest) {
     // The row was written — return success so UI doesn't show error
   }
 
-  return NextResponse.json({ success: true, syncedAt, sheetTarget });
+  return NextResponse.json({
+    success: true,
+    syncedAt,
+    sheetTarget,
+    hasDuplicates: upsertResult.hasDuplicates,
+    voidedRows: upsertResult.voidedRows,
+    keptRow: upsertResult.rowNumber,
+  });
 }

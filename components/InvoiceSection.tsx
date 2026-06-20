@@ -113,6 +113,7 @@ interface SyncState {
   status: "idle" | "syncing" | "success" | "error";
   message: string | null;
   syncedAt: string | null;
+  hasDuplicates?: boolean;
 }
 
 interface SheetDuplicateRow {
@@ -1471,10 +1472,19 @@ export function InvoiceSection({
       const json = await res.json().catch(() => ({})) as {
         syncedAt?: string;
         message?: string;
+        hasDuplicates?: boolean;
+        voidedRows?: number[];
+        keptRow?: number;
         sheetTarget?: { sheetId?: string | null; sheetName?: string };
       };
       if (res.ok) {
-        setSyncState({ status: "success", message: null, syncedAt: json.syncedAt ?? null });
+        const voided = json.hasDuplicates === true;
+        setSyncState({
+          status: "success",
+          message: null,
+          syncedAt: json.syncedAt ?? null,
+          hasDuplicates: voided,
+        });
         void handleCheckSheetDuplicates({ silent: true });
       } else {
         // Use the server-classified message (auth error, tab not found, etc.) if available.
@@ -2588,9 +2598,14 @@ export function InvoiceSection({
               ) : syncState.status === "syncing" ? (
                 <p className="invoice-sheet-sync-status">Sheet sync: Syncing…</p>
               ) : null}
+              {syncState.status === "success" && syncState.hasDuplicates ? (
+                <p className="invoice-sheet-sync-status">
+                  Duplicate old rows were marked inactive — totals stay accurate.
+                </p>
+              ) : null}
               {hasCurrentSheetDuplicates ? (
-                <p className="invoice-sheet-sync-status invoice-sheet-sync-status--danger" role="alert">
-                  Duplicate Sheet rows detected for this invoice. Clean before relying on totals.
+                <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn" role="alert">
+                  Sheet has duplicate rows — sync again to auto-fix, or use Advanced to clean up.
                 </p>
               ) : null}
 
