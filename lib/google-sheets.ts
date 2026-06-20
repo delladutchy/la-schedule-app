@@ -389,6 +389,44 @@ export interface SheetDuplicateGroup {
   deleteRows: number[];              // row numbers safe to delete after review
 }
 
+type SheetDuplicateEntry = SheetDuplicateGroup["rows"][number];
+
+function parseSheetDateValue(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function chooseSheetDuplicateRows(entries: SheetDuplicateEntry[]): {
+  keepRow: number;
+  deleteRows: number[];
+} {
+  if (entries.length === 0) return { keepRow: -1, deleteRows: [] };
+
+  const keep = entries.reduce((best, entry) => {
+    const bestDate = parseSheetDateValue(best.date);
+    const entryDate = parseSheetDateValue(entry.date);
+
+    if (entryDate != null && bestDate != null && entryDate !== bestDate) {
+      return entryDate > bestDate ? entry : best;
+    }
+    if (entryDate != null && bestDate == null) return entry;
+    if (entryDate == null && bestDate != null) return best;
+
+    // Same or unparseable date: keep the lower-most row, which is the latest
+    // physical insertion/sync under the current Sheet layout.
+    return entry.rowNumber > best.rowNumber ? entry : best;
+  }, entries[0]!);
+
+  return {
+    keepRow: keep.rowNumber,
+    deleteRows: entries
+      .filter((entry) => entry.rowNumber !== keep.rowNumber)
+      .map((entry) => entry.rowNumber),
+  };
+}
+
 /**
  * Reads the sheet and returns groups of duplicate rows (same invoice# or LA#).
  * READ-ONLY — never modifies the sheet. Use the result to decide which rows
@@ -435,11 +473,76 @@ export async function findSheetDuplicates(): Promise<SheetDuplicateGroup[]> {
   const duplicates: SheetDuplicateGroup[] = [];
   for (const [key, entries] of groups) {
     if (entries.length <= 1) continue;
-    // Keep the last entry (latest sync is most current). All others are candidates for deletion.
-    const keepRow    = entries[entries.length - 1]!.rowNumber;
-    const deleteRows = entries.slice(0, -1).map((e) => e.rowNumber);
+    // Keep latest sync date when available; otherwise keep the lower-most row.
+    const { keepRow, deleteRows } = chooseSheetDuplicateRows(entries);
     duplicates.push({ key, rows: entries, keepRow, deleteRows });
   }
 
   return duplicates;
+}
+
+export interface SheetDuplicateCleanupResult {
+  before: SheetDuplicateGroup[];
+  after: SheetDuplicateGroup[];
+  deletedRows: number[];
+}
+
+async function deleteSheetRows(rowNumbers: number[]): Promise<void> {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
+
+  const safeRows = [...new Set(rowNumbers)]
+    .filter((rowNumber) => Number.isInteger(rowNumber) && rowNumber > 1)
+    .sort((a, b) => b - a);
+  if (safeRows.length === 0) return;
+
+  const auth = await getSheetAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const spreadsheetRes = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
+  const tabMeta = spreadsheetRes.data.sheets?.find(
+    (s) => s.properties?.title === SHEET_NAME,
+  );
+  if (!tabMeta || tabMeta.properties?.sheetId == null) {
+    throw new Error(
+      `[google-sheets] Tab "${SHEET_NAME}" not found in spreadsheet. ` +
+      `Check GOOGLE_SHEET_NAME env var (currently: "${SHEET_NAME}").`,
+    );
+  }
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: sheetId,
+    requestBody: {
+      requests: safeRows.map((rowNumber) => ({
+        deleteDimension: {
+          range: {
+            sheetId: tabMeta.properties!.sheetId!,
+            dimension: "ROWS",
+            startIndex: rowNumber - 1,
+            endIndex: rowNumber,
+          },
+        },
+      })),
+    },
+  });
+}
+
+export async function deleteSheetDuplicateRows(requestedRows?: number[]): Promise<SheetDuplicateCleanupResult> {
+  const before = await findSheetDuplicates();
+  const recommendedRows = new Set(before.flatMap((group) => group.deleteRows));
+  const requestedSet = requestedRows && requestedRows.length > 0
+    ? new Set(requestedRows.filter((rowNumber) => Number.isInteger(rowNumber)))
+    : null;
+  const rowsToDelete = [...recommendedRows]
+    .filter((rowNumber) => (requestedSet ? requestedSet.has(rowNumber) : true))
+    .sort((a, b) => b - a);
+
+  await deleteSheetRows(rowsToDelete);
+  const after = rowsToDelete.length > 0 ? await findSheetDuplicates() : before;
+
+  return {
+    before,
+    after,
+    deletedRows: rowsToDelete,
+  };
 }

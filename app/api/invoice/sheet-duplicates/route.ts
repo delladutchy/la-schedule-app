@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
-import { findSheetDuplicates } from "@/lib/google-sheets";
+import { deleteSheetDuplicateRows, findSheetDuplicates } from "@/lib/google-sheets";
 import { classifySheetsError } from "@/lib/google-error";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +55,60 @@ export async function GET(request: NextRequest) {
     console.error("[sheet-duplicates] read failed:", rawMsg);
     return NextResponse.json(
       { error: "sheet_read_failed", message: friendlyMsg, sheetTarget },
+      { status: 502 },
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  const { env } = getConfig();
+  const auth = authorizeEditorRequest(request, env);
+  if (!auth.ok) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (!isJeffEditorId(auth.editorId)) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  const sheetId   = process.env.GOOGLE_SHEET_ID ?? null;
+  const sheetName = process.env.GOOGLE_SHEET_NAME ?? "LA PAY (2026)";
+  const sheetTarget = { sheetId, sheetName };
+
+  if (!sheetId) {
+    return NextResponse.json(
+      { error: "sheet_not_configured", message: "GOOGLE_SHEET_ID env var not configured", sheetTarget },
+      { status: 503 },
+    );
+  }
+
+  let requestedRows: number[] | undefined;
+  try {
+    const body = await request.json().catch(() => ({})) as { deleteRows?: unknown };
+    if (Array.isArray(body.deleteRows)) {
+      requestedRows = body.deleteRows
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 1);
+    }
+  } catch {
+    requestedRows = undefined;
+  }
+
+  try {
+    const result = await deleteSheetDuplicateRows(requestedRows);
+    return NextResponse.json({
+      ok: true,
+      deletedRows: result.deletedRows,
+      duplicates: result.after,
+      totalDuplicateRows: result.after.reduce((sum, group) => sum + group.deleteRows.length, 0),
+      beforeTotalDuplicateRows: result.before.reduce((sum, group) => sum + group.deleteRows.length, 0),
+      sheetTarget,
+    });
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const friendlyMsg = classifySheetsError(err, sheetId, sheetName);
+    console.error("[sheet-duplicates] cleanup failed:", rawMsg);
+    return NextResponse.json(
+      { error: "sheet_cleanup_failed", message: friendlyMsg, sheetTarget },
       { status: 502 },
     );
   }

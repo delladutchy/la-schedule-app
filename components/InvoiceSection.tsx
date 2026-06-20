@@ -115,6 +115,29 @@ interface SyncState {
   syncedAt: string | null;
 }
 
+interface SheetDuplicateRow {
+  rowNumber: number;
+  invNumber: string;
+  laNumber: string;
+  date: string;
+  total: string;
+}
+
+interface SheetDuplicateGroup {
+  key: string;
+  rows: SheetDuplicateRow[];
+  keepRow: number;
+  deleteRows: number[];
+}
+
+interface SheetDuplicateState {
+  status: "idle" | "checking" | "ready" | "deleting" | "error";
+  message: string | null;
+  duplicates: SheetDuplicateGroup[];
+  totalDuplicateRows: number;
+  deletedRows: number[];
+}
+
 interface PdfState {
   status: "idle" | "generating" | "done" | "error";
   error: string | null;
@@ -592,6 +615,21 @@ function emailCleanLa(laNumber: string | null): string {
   return (laNumber ?? "").replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
 }
 
+function buildCurrentSheetDuplicateKeys(invoiceNumber: string | null, laNumber: string | null): Set<string> {
+  const keys = new Set<string>();
+  const cleanLa = emailCleanLa(laNumber);
+  const cleanInv = (invoiceNumber ?? "").trim();
+  if (cleanLa) keys.add(`la:${cleanLa}`);
+  if (cleanInv) keys.add(`inv:${cleanInv}`);
+  return keys;
+}
+
+function formatSheetDuplicateKey(key: string): string {
+  if (key.startsWith("la:")) return `LA #${key.slice(3)}`;
+  if (key.startsWith("inv:")) return `Invoice #${key.slice(4)}`;
+  return key;
+}
+
 // Parse LA number from a raw calendar event title when la_number is not saved in invoice_data.
 // "LA#5555 — test job" → "LA#5555"    "test job" → null
 function parseLaFromSummary(summary: string): string | null {
@@ -936,6 +974,13 @@ export function InvoiceSection({
     jobLocation ? null : "no_location",
   );
   const [syncState, setSyncState] = useState<SyncState>({ status: "idle", message: null, syncedAt: null });
+  const [sheetDuplicateState, setSheetDuplicateState] = useState<SheetDuplicateState>({
+    status: "idle",
+    message: null,
+    duplicates: [],
+    totalDuplicateRows: 0,
+    deletedRows: [],
+  });
   const [sheetUrl, setSheetUrl] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
@@ -1281,6 +1326,124 @@ export function InvoiceSection({
     applyLineItemOverrides(removeInvoiceLineItemOverride(lineItemOverrides, key));
   }
 
+  async function handleCheckSheetDuplicates(options: { silent?: boolean } = {}) {
+    if (sheetDuplicateState.status === "checking" || sheetDuplicateState.status === "deleting") return;
+    setSheetDuplicateState((prev) => ({
+      ...prev,
+      status: "checking",
+      message: options.silent ? prev.message : null,
+      deletedRows: [],
+    }));
+
+    try {
+      const res = await fetch("/api/invoice/sheet-duplicates", {
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const json = await res.json().catch(() => ({})) as {
+        duplicates?: SheetDuplicateGroup[];
+        totalDuplicateRows?: number;
+        message?: string;
+        error?: string;
+      };
+      if (!res.ok) {
+        setSheetDuplicateState((prev) => ({
+          ...prev,
+          status: "error",
+          message: json.message ?? json.error ?? "Could not check Sheet duplicates.",
+        }));
+        return;
+      }
+
+      const duplicates = Array.isArray(json.duplicates) ? json.duplicates : [];
+      const totalDuplicateRows = typeof json.totalDuplicateRows === "number"
+        ? json.totalDuplicateRows
+        : duplicates.reduce((sum, group) => sum + group.deleteRows.length, 0);
+      setSheetDuplicateState({
+        status: "ready",
+        message: totalDuplicateRows > 0
+          ? "Duplicate Sheet rows found. Review before relying on Sheet totals."
+          : "No duplicate Sheet rows found.",
+        duplicates,
+        totalDuplicateRows,
+        deletedRows: [],
+      });
+    } catch {
+      setSheetDuplicateState((prev) => ({
+        ...prev,
+        status: "error",
+        message: "Could not check Sheet duplicates — network error.",
+      }));
+    }
+  }
+
+  async function handleDeleteSheetDuplicates() {
+    if (sheetDuplicateState.status === "checking" || sheetDuplicateState.status === "deleting") return;
+    const deleteRows = sheetDuplicateState.duplicates.flatMap((group) => group.deleteRows);
+    if (deleteRows.length === 0) return;
+
+    const confirmed = window.confirm(
+      `Delete ${deleteRows.length} duplicate Google Sheet row${deleteRows.length === 1 ? "" : "s"}? ` +
+      "This keeps the recommended row in each duplicate group.",
+    );
+    if (!confirmed) return;
+
+    setSheetDuplicateState((prev) => ({
+      ...prev,
+      status: "deleting",
+      message: "Deleting duplicate Sheet rows…",
+      deletedRows: [],
+    }));
+
+    try {
+      const res = await fetch("/api/invoice/sheet-duplicates", {
+        method: "POST",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        body: JSON.stringify({ deleteRows }),
+      });
+      const json = await res.json().catch(() => ({})) as {
+        ok?: boolean;
+        duplicates?: SheetDuplicateGroup[];
+        totalDuplicateRows?: number;
+        deletedRows?: number[];
+        message?: string;
+        error?: string;
+      };
+      if (!res.ok || !json.ok) {
+        setSheetDuplicateState((prev) => ({
+          ...prev,
+          status: "error",
+          message: json.message ?? json.error ?? "Could not delete duplicate Sheet rows.",
+        }));
+        return;
+      }
+
+      const duplicates = Array.isArray(json.duplicates) ? json.duplicates : [];
+      const deletedRows = Array.isArray(json.deletedRows) ? json.deletedRows : [];
+      const totalDuplicateRows = typeof json.totalDuplicateRows === "number"
+        ? json.totalDuplicateRows
+        : duplicates.reduce((sum, group) => sum + group.deleteRows.length, 0);
+
+      setSheetDuplicateState({
+        status: "ready",
+        message: deletedRows.length > 0
+          ? `Deleted duplicate Sheet row${deletedRows.length === 1 ? "" : "s"} ${deletedRows.sort((a, b) => a - b).join(", ")}.`
+          : "No duplicate rows were deleted.",
+        duplicates,
+        totalDuplicateRows,
+        deletedRows,
+      });
+    } catch {
+      setSheetDuplicateState((prev) => ({
+        ...prev,
+        status: "error",
+        message: "Could not delete duplicate Sheet rows — network error.",
+      }));
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Sheet sync
   // ---------------------------------------------------------------------------
@@ -1312,6 +1475,7 @@ export function InvoiceSection({
       };
       if (res.ok) {
         setSyncState({ status: "success", message: null, syncedAt: json.syncedAt ?? null });
+        void handleCheckSheetDuplicates({ silent: true });
       } else {
         // Use the server-classified message (auth error, tab not found, etc.) if available.
         setSyncState({
@@ -1611,13 +1775,17 @@ export function InvoiceSection({
       })()
     : null;
 
-  const hasPreviouslySynced = syncState.syncedAt != null;
   const currentStatus = invoiceData?.invoice_status;
   const isTerminal = !!(currentStatus && TERMINAL_STATUSES.has(currentStatus));
   const pdfUrl = invoiceData?.invoice_pdf_url ?? null;
   const hasPdf = !!pdfUrl;
   const invoiceNumber = invoiceData?.invoice_number ?? null;
   const laNumber = invoiceData?.la_number ?? null;
+  const currentSheetDuplicateKeys = buildCurrentSheetDuplicateKeys(invoiceNumber, laNumber);
+  const currentSheetDuplicateGroups = sheetDuplicateState.duplicates.filter((group) =>
+    currentSheetDuplicateKeys.has(group.key),
+  );
+  const hasCurrentSheetDuplicates = currentSheetDuplicateGroups.length > 0;
   const pdfVersion = invoiceData?.updated_at ?? invoiceData?.invoice_created_at ?? null;
   const pdfActionUrl = buildPdfActionUrl(pdfUrl, pdfVersion);
   const invoiceTotal = invoiceData?.invoice_total ?? null;
@@ -2415,10 +2583,15 @@ export function InvoiceSection({
                 <p className="invoice-sheet-sync-status">Sheet sync: Updated {syncedLabel}</p>
               ) : syncState.status === "error" ? (
                 <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn">
-                  Sheet sync warning — use Advanced → Sync to retry
+                  Sheet sync warning — use Advanced → Sync / Update to retry
                 </p>
               ) : syncState.status === "syncing" ? (
                 <p className="invoice-sheet-sync-status">Sheet sync: Syncing…</p>
+              ) : null}
+              {hasCurrentSheetDuplicates ? (
+                <p className="invoice-sheet-sync-status invoice-sheet-sync-status--danger" role="alert">
+                  Duplicate Sheet rows detected for this invoice. Clean before relying on totals.
+                </p>
               ) : null}
 
               {/* Advanced — collapsed by default; Download PDF / Regenerate / Sync live here */}
@@ -2462,11 +2635,12 @@ export function InvoiceSection({
                       >
                         {syncState.status === "syncing"
                           ? "Syncing…"
-                          : hasPreviouslySynced
-                            ? "Update Google Sheet"
-                            : "Sync to Google Sheet"}
+                          : "Sync / Update Google Sheet"}
                       </button>
                     </div>
+                    <p className="invoice-sheet-helper">
+                      This updates the existing Sheet row. It should not create duplicates.
+                    </p>
                     {sheetUrl ? (
                       <a
                         href={sheetUrl}
@@ -2486,6 +2660,87 @@ export function InvoiceSection({
                     ) : syncState.status === "error" ? (
                       <p className="invoice-error" role="alert">{syncState.message ?? "Sheet sync failed — retry"}</p>
                     ) : null}
+
+                    <div className="invoice-sheet-duplicates">
+                      <div className="invoice-sheet-duplicates-head">
+                        <div>
+                          <p className="invoice-sheet-duplicates-title">Sheet duplicate cleanup</p>
+                          <p className="invoice-sheet-helper">
+                            Check first, review rows, then delete only confirmed duplicate rows.
+                          </p>
+                        </div>
+                        <div className="invoice-sheet-duplicate-actions">
+                          <button
+                            type="button"
+                            className="invoice-pdf-regen-btn"
+                            onClick={() => { void handleCheckSheetDuplicates(); }}
+                            disabled={sheetDuplicateState.status === "checking" || sheetDuplicateState.status === "deleting"}
+                          >
+                            {sheetDuplicateState.status === "checking" ? "Checking…" : "Check Sheet Duplicates"}
+                          </button>
+                          {sheetDuplicateState.totalDuplicateRows > 0 ? (
+                            <button
+                              type="button"
+                              className="invoice-sheet-delete-duplicates-btn"
+                              onClick={() => { void handleDeleteSheetDuplicates(); }}
+                              disabled={sheetDuplicateState.status === "checking" || sheetDuplicateState.status === "deleting"}
+                            >
+                              {sheetDuplicateState.status === "deleting" ? "Deleting…" : "Delete duplicate rows"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      {sheetDuplicateState.message ? (
+                        <p
+                          className={`invoice-sheet-duplicate-message${
+                            sheetDuplicateState.status === "error"
+                              ? " is-error"
+                              : sheetDuplicateState.totalDuplicateRows > 0
+                                ? " is-warning"
+                                : ""
+                          }`}
+                          role={sheetDuplicateState.status === "error" || sheetDuplicateState.totalDuplicateRows > 0 ? "alert" : undefined}
+                        >
+                          {sheetDuplicateState.message}
+                        </p>
+                      ) : null}
+
+                      {sheetDuplicateState.duplicates.length > 0 ? (
+                        <div className="invoice-sheet-duplicate-groups">
+                          {sheetDuplicateState.duplicates.map((group) => (
+                            <div
+                              className={`invoice-sheet-duplicate-group${
+                                currentSheetDuplicateKeys.has(group.key) ? " is-current" : ""
+                              }`}
+                              key={group.key}
+                            >
+                              <div className="invoice-sheet-duplicate-group-head">
+                                <span>{formatSheetDuplicateKey(group.key)}</span>
+                                <span>Keep row {group.keepRow}</span>
+                              </div>
+                              <div className="invoice-sheet-duplicate-rows">
+                                {group.rows.map((row) => {
+                                  const willDelete = group.deleteRows.includes(row.rowNumber);
+                                  return (
+                                    <div
+                                      className={`invoice-sheet-duplicate-row${willDelete ? " is-delete" : " is-keep"}`}
+                                      key={`${group.key}-${row.rowNumber}`}
+                                    >
+                                      <span>Row {row.rowNumber}</span>
+                                      <span>Invoice {row.invNumber || "—"} / LA {row.laNumber || "—"}</span>
+                                      <span>{row.date || "No date"}</span>
+                                      <span>{row.total || "No total"}</span>
+                                      <strong>{willDelete ? "Duplicate" : "Keep"}</strong>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
               </div>

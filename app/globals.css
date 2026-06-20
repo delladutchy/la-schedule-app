@@ -5539,6 +5539,153 @@ html.modal-open body {
   align-items: center;
 }
 
+.invoice-sheet-helper {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.invoice-sheet-sync-status--danger {
+  color: var(--danger, #dc2626);
+  font-weight: 700;
+}
+
+.invoice-sheet-duplicates {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.invoice-sheet-duplicates-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.invoice-sheet-duplicates-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 2px;
+}
+
+.invoice-sheet-duplicate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.invoice-sheet-delete-duplicates-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--danger, #dc2626);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--danger, #dc2626);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 7px 12px;
+}
+
+.invoice-sheet-delete-duplicates-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger, #dc2626) 8%, transparent);
+}
+
+.invoice-sheet-delete-duplicates-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.invoice-sheet-duplicate-message {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: var(--surface, var(--bg));
+  font-size: 0.76rem;
+  margin: 0;
+  padding: 8px 10px;
+  line-height: 1.4;
+}
+
+.invoice-sheet-duplicate-message.is-warning {
+  color: #92400e;
+  border-color: #f1d394;
+  background: #fff7ed;
+}
+
+.invoice-sheet-duplicate-message.is-error {
+  color: var(--danger, #dc2626);
+  border-color: color-mix(in srgb, var(--danger, #dc2626) 35%, transparent);
+  background: color-mix(in srgb, var(--danger, #dc2626) 8%, transparent);
+}
+
+.invoice-sheet-duplicate-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.invoice-sheet-duplicate-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface, var(--bg));
+  overflow: hidden;
+}
+
+.invoice-sheet-duplicate-group.is-current {
+  border-color: #f1d394;
+  box-shadow: 0 0 0 1px rgba(241, 211, 148, 0.35);
+}
+
+.invoice-sheet-duplicate-group-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface-dim, rgba(0,0,0,0.025));
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.invoice-sheet-duplicate-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.invoice-sheet-duplicate-row {
+  display: grid;
+  grid-template-columns: 72px minmax(150px, 1fr) 80px 80px 74px;
+  gap: 8px;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  padding: 7px 10px;
+}
+
+.invoice-sheet-duplicate-row strong {
+  color: var(--text);
+  text-align: right;
+}
+
+.invoice-sheet-duplicate-row.is-delete strong {
+  color: var(--danger, #dc2626);
+}
+
+.invoice-sheet-duplicate-row.is-keep strong {
+  color: #16803a;
+}
+
 .invoice-email-dialog {
   display: flex;
   flex-direction: column;
@@ -5918,6 +6065,11 @@ html.modal-open body {
   color: #b45309;
 }
 
+.invoice-sheet-sync-status--danger {
+  color: var(--danger, #dc2626);
+  font-weight: 700;
+}
+
 .invoice-sheet-link {
   font-size: 0.82rem;
   color: var(--color-accent, #4f7df7);
@@ -6115,6 +6267,32 @@ html.modal-open body {
     flex: 1 1 150px;
     min-height: 44px;
     font-size: 16px;
+  }
+
+  .invoice-sheet-duplicates-head,
+  .invoice-sheet-duplicate-group-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .invoice-sheet-duplicate-actions {
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .invoice-sheet-delete-duplicates-btn {
+    flex: 1 1 150px;
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .invoice-sheet-duplicate-row {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .invoice-sheet-duplicate-row strong {
+    text-align: left;
   }
 
   .invoice-sync-row--secondary .invoice-sync-button {

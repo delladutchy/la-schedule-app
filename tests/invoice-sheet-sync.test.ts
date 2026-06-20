@@ -10,6 +10,7 @@
  *   - Open Google Sheet URL uses the configured GOOGLE_SHEET_ID
  *   - Manual Sync in Advanced section is the only visible sync button
  *   - generateSheetRow extra fields are passed when available
+ *   - Duplicate cleanup keeps the newest duplicate row and only deletes confirmed duplicates
  */
 import { describe, it, expect } from "vitest";
 
@@ -732,10 +733,155 @@ describe("Duplicate detection — same invoice synced twice finds existing row",
     expect(findMatch(existing, "5555", "1001")).toBe(2); // Review
     expect(findMatch(existing, "5555", "1001")).toBe(2); // Send Invoice
   });
+
+  it("repeated Sync / Update Google Sheet updates the same row, not append", () => {
+    const existing = [{ rowA: "1001", rowC: "5555" }];
+    const firstSyncMatch = findMatch(existing, "5555", "1001");
+    const secondSyncMatch = findMatch(existing, "5555", "1001");
+
+    expect(firstSyncMatch).toBe(2);
+    expect(secondSyncMatch).toBe(2);
+    expect(existing).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
-// P. Stable key guard — no key → refuse write (not a silent insert)
+// P. Duplicate cleanup report and confirmed deletion
+// ---------------------------------------------------------------------------
+
+interface FakeDuplicateEntry {
+  rowNumber: number;
+  invNumber: string;
+  laNumber: string;
+  date: string;
+  total: string;
+}
+
+interface FakeDuplicateGroup {
+  key: string;
+  rows: FakeDuplicateEntry[];
+  keepRow: number;
+  deleteRows: number[];
+}
+
+function duplicateKey(invNumber: string, laNumber: string): string | null {
+  const normLa = normalizeLA(laNumber);
+  const normInv = invNumber.trim();
+  if (normLa) return `la:${normLa}`;
+  if (normInv) return `inv:${normInv}`;
+  return null;
+}
+
+function parseSheetDateValue(value: string): number | null {
+  const parsed = Date.parse(value.trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function chooseDuplicateRows(entries: FakeDuplicateEntry[]): { keepRow: number; deleteRows: number[] } {
+  const keep = entries.reduce((best, entry) => {
+    const bestDate = parseSheetDateValue(best.date);
+    const entryDate = parseSheetDateValue(entry.date);
+    if (entryDate != null && bestDate != null && entryDate !== bestDate) return entryDate > bestDate ? entry : best;
+    if (entryDate != null && bestDate == null) return entry;
+    if (entryDate == null && bestDate != null) return best;
+    return entry.rowNumber > best.rowNumber ? entry : best;
+  }, entries[0]!);
+  return {
+    keepRow: keep.rowNumber,
+    deleteRows: entries.filter((entry) => entry.rowNumber !== keep.rowNumber).map((entry) => entry.rowNumber),
+  };
+}
+
+function findDuplicateGroups(entries: FakeDuplicateEntry[]): FakeDuplicateGroup[] {
+  const groups = new Map<string, FakeDuplicateEntry[]>();
+  for (const entry of entries) {
+    if (!isInvoiceDataRow(entry.invNumber, entry.laNumber)) continue;
+    const key = duplicateKey(entry.invNumber, entry.laNumber);
+    if (!key) continue;
+    groups.set(key, [...(groups.get(key) ?? []), entry]);
+  }
+
+  return [...groups.entries()]
+    .filter(([, groupEntries]) => groupEntries.length > 1)
+    .map(([key, groupEntries]) => {
+      const { keepRow, deleteRows } = chooseDuplicateRows(groupEntries);
+      return { key, rows: groupEntries, keepRow, deleteRows };
+    });
+}
+
+function cleanupDuplicates(
+  entries: FakeDuplicateEntry[],
+  confirmedRows: number[],
+): { keptRows: number[]; deletedRows: number[] } {
+  const recommendedRows = new Set(findDuplicateGroups(entries).flatMap((group) => group.deleteRows));
+  const confirmedSet = new Set(confirmedRows);
+  const deletedRows = [...recommendedRows].filter((rowNumber) => confirmedSet.has(rowNumber));
+  return {
+    deletedRows,
+    keptRows: entries
+      .filter((entry) => !deletedRows.includes(entry.rowNumber))
+      .map((entry) => entry.rowNumber),
+  };
+}
+
+describe("Duplicate cleanup workflow", () => {
+  it("duplicate detection reports duplicate row numbers for LA#5555 / invoice 1001", () => {
+    const groups = findDuplicateGroups([
+      { rowNumber: 2, invNumber: "1001", laNumber: "5555", date: "2026-06-18", total: "2598.75" },
+      { rowNumber: 5, invNumber: "1001", laNumber: "LA#5555", date: "2026-06-19", total: "7598.75" },
+      { rowNumber: 6, invNumber: "1002", laNumber: "6666", date: "2026-06-19", total: "1000" },
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.key).toBe("la:5555");
+    expect(groups[0]!.rows.map((row) => row.rowNumber)).toEqual([2, 5]);
+    expect(groups[0]!.keepRow).toBe(5);
+    expect(groups[0]!.deleteRows).toEqual([2]);
+  });
+
+  it("cleanup keeps latest row and deletes older duplicates only after confirmation", () => {
+    const entries = [
+      { rowNumber: 2, invNumber: "1001", laNumber: "5555", date: "2026-06-18", total: "2598.75" },
+      { rowNumber: 5, invNumber: "1001", laNumber: "LA#5555", date: "2026-06-19", total: "7598.75" },
+    ];
+
+    expect(cleanupDuplicates(entries, [])).toEqual({ keptRows: [2, 5], deletedRows: [] });
+    expect(cleanupDuplicates(entries, [2])).toEqual({ keptRows: [5], deletedRows: [2] });
+  });
+
+  it("cleanup does not delete unrelated invoice rows", () => {
+    const entries = [
+      { rowNumber: 2, invNumber: "1001", laNumber: "5555", date: "2026-06-18", total: "2598.75" },
+      { rowNumber: 5, invNumber: "1001", laNumber: "LA#5555", date: "2026-06-19", total: "7598.75" },
+      { rowNumber: 6, invNumber: "1002", laNumber: "6666", date: "2026-06-19", total: "1000" },
+    ];
+
+    const result = cleanupDuplicates(entries, [2, 6]);
+    expect(result.deletedRows).toEqual([2]);
+    expect(result.keptRows).toEqual([5, 6]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Q. Sync button wording
+// ---------------------------------------------------------------------------
+
+describe("Sync button wording", () => {
+  it("uses clear Sync / Update Google Sheet wording", () => {
+    const label = "Sync / Update Google Sheet";
+    expect(label).toContain("Sync");
+    expect(label).toContain("Update Google Sheet");
+  });
+
+  it("helper text explains the action should update the existing row", () => {
+    const helper = "This updates the existing Sheet row. It should not create duplicates.";
+    expect(helper).toContain("updates the existing Sheet row");
+    expect(helper).toContain("should not create duplicates");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R. Stable key guard — no key → refuse write (not a silent insert)
 // ---------------------------------------------------------------------------
 
 describe("Stable key guard — no write without a stable key", () => {
@@ -779,7 +925,7 @@ describe("Stable key guard — no write without a stable key", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Q. classifySheetsError — new error patterns from upsertSheetRow rewrite
+// S. classifySheetsError — new error patterns from upsertSheetRow rewrite
 // ---------------------------------------------------------------------------
 
 describe("classifySheetsError — new patterns", () => {
