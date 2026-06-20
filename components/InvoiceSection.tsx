@@ -17,6 +17,14 @@ import {
   initWorkdayEntries,
   round2,
 } from "@/lib/invoice-calculations";
+import {
+  countInvoiceLineItemOverrides,
+  hasInvoiceLineItemOverride,
+  removeInvoiceLineItemOverride,
+  sanitizeInvoiceLineItemOverrides,
+  type InvoiceLineItemKey,
+  type InvoiceLineItemOverrides,
+} from "@/lib/invoice-line-item-overrides";
 import { isNumericInvoiceNumber } from "@/lib/invoice-number";
 import { isEditableKeyboardTarget } from "@/lib/keyboard";
 
@@ -251,6 +259,23 @@ function hasOverrideText(overrides: OverrideFields): boolean {
 interface AutoMileage {
   oneWayMiles: number;
   roundTripMiles: number;
+}
+
+type AdjustmentDraftFields = Partial<Record<"qty" | "rate" | "amount", string>>;
+type AdjustmentDrafts = Partial<Record<InvoiceLineItemKey, AdjustmentDraftFields>>;
+
+interface AdjustmentRow {
+  key: InvoiceLineItemKey;
+  label: string;
+  mode: "qtyRate" | "amount";
+  autoQty?: number;
+  autoRate?: number;
+  autoAmount: number;
+  qty?: number;
+  rate?: number;
+  amount: number;
+  visible: boolean;
+  isCustom: boolean;
 }
 
 // Reason why auto-mileage is unavailable (shown inside the per-day mileage editor).
@@ -631,6 +656,50 @@ function resolveOverrideInputValue(value: string, fallback = ""): string {
   return value === "" ? fallback : value;
 }
 
+function formatAdjustmentInputValue(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  return Number(value.toFixed(2)).toString();
+}
+
+function parseAdjustmentInputValue(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const num = Number(trimmed);
+  if (!Number.isFinite(num) || num < 0) return null;
+  return round2(num);
+}
+
+function mergeAdjustmentLine(
+  overrides: InvoiceLineItemOverrides,
+  key: InvoiceLineItemKey,
+  patch: Partial<Record<"qty" | "rate" | "amount", number | null>>,
+): InvoiceLineItemOverrides {
+  const current = { ...(overrides[key] ?? {}) };
+  for (const [field, value] of Object.entries(patch) as Array<["qty" | "rate" | "amount", number | null]>) {
+    if (value == null) {
+      delete current[field];
+    } else {
+      current[field] = value;
+    }
+  }
+
+  const next = { ...overrides };
+  if (current.qty == null && current.rate == null && current.amount == null) {
+    delete next[key];
+  } else {
+    next[key] = current;
+  }
+  return next;
+}
+
+function buildAutoInvoiceData(data: InvoiceData, workdayEntries: WorkdayEntry[]): InvoiceData {
+  return {
+    ...data,
+    workday_entries: workdayEntries,
+    invoice_line_item_overrides: {},
+  };
+}
+
 function buildPreviewSubject(laNumber: string | null, jobTitle: string): string {
   const cleanLa = emailCleanLa(laNumber);
   if (cleanLa) return `Jeff Ulsh - Invoice LA #${cleanLa}`;
@@ -859,6 +928,9 @@ export function InvoiceSection({
   const [expensesExpanded, setExpensesExpanded] = useState(false);
   const [overrides, setOverrides] = useState<OverrideFields>({ ...EMPTY_OVERRIDE_FIELDS });
   const [overridesExpanded, setOverridesExpanded] = useState(false);
+  const [lineItemOverrides, setLineItemOverrides] = useState<InvoiceLineItemOverrides>({});
+  const [adjustmentDrafts, setAdjustmentDrafts] = useState<AdjustmentDrafts>({});
+  const [adjustmentsExpanded, setAdjustmentsExpanded] = useState(false);
   const [autoMileage, setAutoMileage] = useState<AutoMileage | null>(null);
   const [autoMileageNote, setAutoMileageNote] = useState<AutoMileageNote | null>(
     jobLocation ? null : "no_location",
@@ -920,6 +992,10 @@ export function InvoiceSection({
             expense_notes: data.expense_notes ?? "",
           };
           setExpenses(exp);
+          const hydratedLineItemOverrides = sanitizeInvoiceLineItemOverrides(data.invoice_line_item_overrides);
+          setLineItemOverrides(hydratedLineItemOverrides);
+          setAdjustmentDrafts({});
+          setAdjustmentsExpanded(countInvoiceLineItemOverrides(hydratedLineItemOverrides) > 0);
           const hydratedOverrides = hydrateOverrideFields(data);
           setOverrides(hydratedOverrides);
           setOverridesExpanded(hasOverrideText(hydratedOverrides));
@@ -937,6 +1013,9 @@ export function InvoiceSection({
           setWorkdayEntries(initWorkdayEntries([], workDates, defaultStartTime, defaultEndTime));
           setInvoiceData(null);
           setPacket(null);
+          setLineItemOverrides({});
+          setAdjustmentDrafts({});
+          setAdjustmentsExpanded(false);
           setOverrides({ ...EMPTY_OVERRIDE_FIELDS });
           setOverridesExpanded(false);
         }
@@ -1028,9 +1107,12 @@ export function InvoiceSection({
         return;
       }
       const json = await res.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
-      setInvoiceData(json.invoiceData);
-      setPacket(json.packet);
-      markSaveSucceeded(version);
+      if (version === saveVersionRef.current) {
+        setInvoiceData(json.invoiceData);
+        setPacket(json.packet);
+        setLineItemOverrides(sanitizeInvoiceLineItemOverrides(json.invoiceData.invoice_line_item_overrides));
+        markSaveSucceeded(version);
+      }
       // Do NOT optimistically mark sheet as synced here. The background Sheets API
       // call fires after this response returns, and may fail silently (e.g. in
       // serverless where the Lambda terminates after the response). syncState is
@@ -1039,7 +1121,9 @@ export function InvoiceSection({
     } catch {
       markSaveFailed(version, "Could not save invoice data — try again");
     } finally {
-      setIsSaving(false);
+      if (version === saveVersionRef.current) {
+        setIsSaving(false);
+      }
     }
   }
 
@@ -1061,6 +1145,7 @@ export function InvoiceSection({
       uber: parseExpenseInput(expenses.uber),
       other_expenses: parseExpenseInput(expenses.other_expenses),
       expense_notes: expenses.expense_notes.trim() ? expenses.expense_notes : null,
+      invoice_line_item_overrides: lineItemOverrides,
       ...buildOverridePatch(overrides),
     };
   }
@@ -1088,13 +1173,16 @@ export function InvoiceSection({
       const json = await res.json() as { invoiceData: InvoiceData; packet: InvoicePacket };
       setInvoiceData(json.invoiceData);
       setPacket(json.packet);
+      setLineItemOverrides(sanitizeInvoiceLineItemOverrides(json.invoiceData.invoice_line_item_overrides));
       markSaveSucceeded(version);
       return json;
     } catch {
       markSaveFailed(version, "Could not save invoice data — try again");
       return null;
     } finally {
-      setIsSaving(false);
+      if (version === saveVersionRef.current) {
+        setIsSaving(false);
+      }
     }
   }
 
@@ -1138,6 +1226,59 @@ export function InvoiceSection({
   function handleOverrideChange(field: keyof OverrideFields, value: string) {
     setOverrides((prev) => ({ ...prev, [field]: value }));
     scheduleSave({ [field]: value.trim() || null });
+  }
+
+  function applyLineItemOverrides(nextOverrides: InvoiceLineItemOverrides) {
+    const sanitized = sanitizeInvoiceLineItemOverrides(nextOverrides);
+    setLineItemOverrides(sanitized);
+    if (invoiceData) {
+      const optimisticData = {
+        ...invoiceData,
+        workday_entries: workdayEntries,
+        invoice_line_item_overrides: sanitized,
+      };
+      setInvoiceData(optimisticData);
+      setPacket(calculateInvoicePacket(optimisticData));
+    }
+    scheduleSave({ invoice_line_item_overrides: sanitized });
+  }
+
+  function handleLineItemAdjustmentChange(
+    row: AdjustmentRow,
+    field: "qty" | "rate" | "amount",
+    value: string,
+  ) {
+    setAdjustmentDrafts((prev) => ({
+      ...prev,
+      [row.key]: {
+        ...(prev[row.key] ?? {}),
+        [field]: value,
+      },
+    }));
+
+    const parsed = parseAdjustmentInputValue(value);
+    let nextOverrides = mergeAdjustmentLine(lineItemOverrides, row.key, { [field]: parsed });
+
+    if (row.mode === "qtyRate") {
+      const line = nextOverrides[row.key] ?? {};
+      const qty = line.qty ?? row.autoQty ?? 0;
+      const rate = line.rate ?? row.autoRate ?? 0;
+      const hasQtyRateOverride = line.qty != null || line.rate != null;
+      nextOverrides = mergeAdjustmentLine(nextOverrides, row.key, {
+        amount: hasQtyRateOverride ? round2(qty * rate) : null,
+      });
+    }
+
+    applyLineItemOverrides(nextOverrides);
+  }
+
+  function handleResetLineItemAdjustment(key: InvoiceLineItemKey) {
+    setAdjustmentDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    applyLineItemOverrides(removeInvoiceLineItemOverride(lineItemOverrides, key));
   }
 
   // ---------------------------------------------------------------------------
@@ -1505,6 +1646,107 @@ export function InvoiceSection({
   const emailSubject = buildPreviewSubject(effectiveEmailLaNumber, autoPreviewJobTitle);
   const emailBody = buildPreviewBody(effectiveEmailLaNumber, previewJobTitle, previewWorkDates);
   const emailFilename = buildPreviewFilename(effectiveEmailLaNumber, autoPreviewJobTitle, invoiceNumber);
+  const autoPacket = invoiceData
+    ? calculateInvoicePacket(buildAutoInvoiceData(invoiceData, workdayEntries))
+    : null;
+  const customAdjustmentCount = countInvoiceLineItemOverrides(lineItemOverrides);
+  const adjustmentRows: AdjustmentRow[] = p && autoPacket
+    ? [
+        {
+          key: "day_rate" as const,
+          label: "Day Rate",
+          mode: "qtyRate" as const,
+          autoQty: autoPacket.dayRateQty,
+          autoRate: autoPacket.dayRate,
+          autoAmount: autoPacket.dayRateTotal,
+          qty: p.dayRateQty,
+          rate: p.dayRate,
+          amount: p.dayRateTotal,
+          visible: autoPacket.dayRateQty > 0 || hasInvoiceLineItemOverride(lineItemOverrides, "day_rate"),
+          isCustom: hasInvoiceLineItemOverride(lineItemOverrides, "day_rate"),
+        },
+        {
+          key: "ot" as const,
+          label: "OT",
+          mode: "qtyRate" as const,
+          autoQty: autoPacket.totalOvertimeHours,
+          autoRate: autoPacket.overtimeRate,
+          autoAmount: autoPacket.overtimeTotal,
+          qty: p.totalOvertimeHours,
+          rate: p.overtimeRate,
+          amount: p.overtimeTotal,
+          visible: autoPacket.overtimeTotal > 0 || hasInvoiceLineItemOverride(lineItemOverrides, "ot"),
+          isCustom: hasInvoiceLineItemOverride(lineItemOverrides, "ot"),
+        },
+        {
+          key: "per_diem" as const,
+          label: "Per Diem",
+          mode: "qtyRate" as const,
+          autoQty: autoPacket.perDiemQty,
+          autoRate: autoPacket.perDiemRate,
+          autoAmount: autoPacket.perDiemTotal,
+          qty: p.perDiemQty,
+          rate: p.perDiemRate,
+          amount: p.perDiemTotal,
+          visible: autoPacket.perDiemTotal > 0 || hasInvoiceLineItemOverride(lineItemOverrides, "per_diem"),
+          isCustom: hasInvoiceLineItemOverride(lineItemOverrides, "per_diem"),
+        },
+        {
+          key: "bag_fees" as const,
+          label: "Bag Fees",
+          mode: "amount" as const,
+          autoAmount: autoPacket.bagFees,
+          amount: p.bagFees,
+          visible: autoPacket.bagFees > 0 || hasInvoiceLineItemOverride(lineItemOverrides, "bag_fees"),
+          isCustom: hasInvoiceLineItemOverride(lineItemOverrides, "bag_fees"),
+        },
+        {
+          key: "parking" as const,
+          label: "Parking",
+          mode: "amount" as const,
+          autoAmount: autoPacket.parking,
+          amount: p.parking,
+          visible: autoPacket.parking > 0 || hasInvoiceLineItemOverride(lineItemOverrides, "parking"),
+          isCustom: hasInvoiceLineItemOverride(lineItemOverrides, "parking"),
+        },
+        {
+          key: "uber" as const,
+          label: "Uber",
+          mode: "amount" as const,
+          autoAmount: autoPacket.uber,
+          amount: p.uber,
+          visible: autoPacket.uber > 0 || hasInvoiceLineItemOverride(lineItemOverrides, "uber"),
+          isCustom: hasInvoiceLineItemOverride(lineItemOverrides, "uber"),
+        },
+        {
+          key: "tolls" as const,
+          label: "Tolls",
+          mode: "amount" as const,
+          autoAmount: autoPacket.tolls,
+          amount: p.tolls,
+          visible: autoPacket.tolls > 0 || hasInvoiceLineItemOverride(lineItemOverrides, "tolls"),
+          isCustom: hasInvoiceLineItemOverride(lineItemOverrides, "tolls"),
+        },
+        {
+          key: "hotel" as const,
+          label: "Hotel",
+          mode: "amount" as const,
+          autoAmount: autoPacket.hotel,
+          amount: p.hotel,
+          visible: autoPacket.hotel > 0 || hasInvoiceLineItemOverride(lineItemOverrides, "hotel"),
+          isCustom: hasInvoiceLineItemOverride(lineItemOverrides, "hotel"),
+        },
+        {
+          key: "other" as const,
+          label: "Other",
+          mode: "amount" as const,
+          autoAmount: autoPacket.otherExpenses,
+          amount: p.otherExpenses,
+          visible: autoPacket.otherExpenses > 0 || hasInvoiceLineItemOverride(lineItemOverrides, "other"),
+          isCustom: hasInvoiceLineItemOverride(lineItemOverrides, "other"),
+        },
+      ].filter((row) => row.visible)
+    : [];
   const defaultDayRateDescription = p ? buildWorkedDateTimeLines(p.workdays) : "";
   const resolveLineItemDescription = (field: LineItemDescriptionField, fallback = "") =>
     resolveOverrideText(overrides[field], fallback);
@@ -1783,6 +2025,116 @@ export function InvoiceSection({
           </div>
         ) : null}
       </div>
+
+      {/* ── Advanced invoice adjustments (manual qty/rate/amount overrides) ── */}
+      {p ? (
+        <div className="invoice-block">
+          <button
+            type="button"
+            className="invoice-collapsible-toggle"
+            onClick={() => setAdjustmentsExpanded((prev) => !prev)}
+            aria-expanded={adjustmentsExpanded}
+          >
+            <span className="invoice-block-label">Advanced invoice adjustments</span>
+            <span className="invoice-collapsible-meta">
+              {customAdjustmentCount > 0 ? (
+                <span className="invoice-adjustment-alert">{customAdjustmentCount} custom</span>
+              ) : null}
+              <span className="invoice-collapsible-chevron">{adjustmentsExpanded ? "▲" : "▼"}</span>
+            </span>
+          </button>
+          {adjustmentsExpanded ? (
+            <div className="invoice-collapsible-content invoice-adjustments-content">
+              <p className="invoice-overrides-hint">
+                Leave rows on Auto for normal calculations. Edit only when an invoice needs a manual client-facing adjustment.
+              </p>
+              {adjustmentRows.length > 0 ? (
+                <div className="invoice-adjustment-list">
+                  {adjustmentRows.map((row) => {
+                    const draft = adjustmentDrafts[row.key] ?? {};
+                    const qtyValue = draft.qty ?? formatAdjustmentInputValue(row.qty);
+                    const rateValue = draft.rate ?? formatAdjustmentInputValue(row.rate);
+                    const amountValue = draft.amount ?? formatAdjustmentInputValue(row.amount);
+                    return (
+                      <div className="invoice-adjustment-row" key={row.key}>
+                        <div className="invoice-adjustment-row-head">
+                          <div>
+                            <span className="invoice-adjustment-label">{row.label}</span>
+                            <span className="invoice-adjustment-auto">
+                              Auto {fmtCurrency(row.autoAmount)}
+                            </span>
+                          </div>
+                          <span className={`invoice-adjustment-status${row.isCustom ? " is-custom" : ""}`}>
+                            {row.isCustom ? "Custom" : "Auto"}
+                          </span>
+                        </div>
+                        {row.mode === "qtyRate" ? (
+                          <div className="invoice-adjustment-grid invoice-adjustment-grid--qty-rate">
+                            <label className="invoice-label-sm" htmlFor={`inv-adjust-${row.key}-qty`}>
+                              Qty
+                              <input
+                                id={`inv-adjust-${row.key}-qty`}
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                className="invoice-input-sm"
+                                value={qtyValue}
+                                onChange={(e) => handleLineItemAdjustmentChange(row, "qty", e.target.value)}
+                              />
+                            </label>
+                            <label className="invoice-label-sm" htmlFor={`inv-adjust-${row.key}-rate`}>
+                              Rate
+                              <input
+                                id={`inv-adjust-${row.key}-rate`}
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                className="invoice-input-sm"
+                                value={rateValue}
+                                onChange={(e) => handleLineItemAdjustmentChange(row, "rate", e.target.value)}
+                              />
+                            </label>
+                            <div className="invoice-adjustment-amount">
+                              <span className="invoice-label-sm">Amount</span>
+                              <strong>{fmtCurrency(row.amount)}</strong>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="invoice-adjustment-grid invoice-adjustment-grid--amount">
+                            <label className="invoice-label-sm" htmlFor={`inv-adjust-${row.key}-amount`}>
+                              Amount
+                              <input
+                                id={`inv-adjust-${row.key}-amount`}
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                className="invoice-input-sm"
+                                value={amountValue}
+                                onChange={(e) => handleLineItemAdjustmentChange(row, "amount", e.target.value)}
+                              />
+                            </label>
+                          </div>
+                        )}
+                        {row.isCustom ? (
+                          <button
+                            type="button"
+                            className="invoice-adjustment-reset"
+                            onClick={() => handleResetLineItemAdjustment(row.key)}
+                          >
+                            Reset to Auto
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="invoice-overrides-hint">No current invoice lines are available to adjust.</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* ── Invoice Preview ────────────────────────────────────── */}
       {p ? (

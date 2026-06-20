@@ -3,6 +3,8 @@
  * Stored in Supabase invoice_data table; visible to Jeff/admin only.
  */
 
+import type { InvoiceLineItemOverrides } from "./invoice-line-item-overrides";
+
 export type InvoiceStatus =
   | "none"
   | "ready"
@@ -122,6 +124,7 @@ export interface InvoiceData {
   invoice_hotel_description_override: string | null;
   invoice_other_description_override: string | null;
   invoice_note_override: string | null;
+  invoice_line_item_overrides: InvoiceLineItemOverrides;
   amount_paid: number;
   remaining_balance: number | null;
 

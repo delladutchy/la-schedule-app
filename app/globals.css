@@ -5781,6 +5781,132 @@ html.modal-open body {
   line-height: 1.35;
 }
 
+.invoice-adjustments-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.invoice-adjustment-alert {
+  color: #9a5a00;
+  background: #fff5df;
+  border: 1px solid #f1d394;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.invoice-adjustment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.invoice-adjustment-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: var(--surface, var(--bg));
+}
+
+.invoice-adjustment-row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.invoice-adjustment-label {
+  display: block;
+  font-weight: 700;
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.invoice-adjustment-auto {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  margin-top: 2px;
+}
+
+.invoice-adjustment-status {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--muted-bg, rgba(148, 163, 184, 0.15));
+}
+
+.invoice-adjustment-status.is-custom {
+  color: #9a5a00;
+  background: #fff5df;
+}
+
+.invoice-adjustment-grid {
+  display: grid;
+  gap: 8px;
+  align-items: end;
+}
+
+.invoice-adjustment-grid--qty-rate {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.invoice-adjustment-grid--amount {
+  grid-template-columns: minmax(140px, 220px);
+}
+
+.invoice-adjustment-grid .invoice-label-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.invoice-adjustment-amount {
+  display: flex;
+  min-width: 92px;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+  color: var(--text);
+}
+
+.invoice-adjustment-reset {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 9px;
+}
+
+.invoice-adjustment-reset:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+@media (max-width: 520px) {
+  .invoice-adjustment-grid--qty-rate {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .invoice-adjustment-amount {
+    grid-column: 1 / -1;
+    align-items: flex-start;
+  }
+}
+
 .invoice-sheet-sync-status {
   font-size: 0.75rem;
   color: var(--text-muted);

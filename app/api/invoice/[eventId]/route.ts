@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
+import { sanitizeInvoiceLineItemOverrides } from "@/lib/invoice-line-item-overrides";
 import { getInvoiceData, upsertInvoiceData, markSheetSynced, markSheetSyncError } from "@/lib/invoice-data";
 import { calculateInvoicePacket, generateSheetRow } from "@/lib/invoice-calculations";
 import { upsertSheetRow } from "@/lib/google-sheets";
@@ -159,6 +160,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     patch.mileage_deduction_miles = b.mileage_deduction_miles;
   }
   if ("paid_date" in b) patch.paid_date = b.paid_date != null ? String(b.paid_date) : null;
+  if ("invoice_line_item_overrides" in b) {
+    patch.invoice_line_item_overrides = sanitizeInvoiceLineItemOverrides(b.invoice_line_item_overrides);
+  }
   for (const field of INVOICE_TEXT_OVERRIDE_FIELDS) {
     if (field in b) {
       patch[field as InvoiceTextOverrideField] = b[field] != null ? String(b[field]) : null;

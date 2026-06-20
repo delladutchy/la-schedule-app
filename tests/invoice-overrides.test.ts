@@ -10,9 +10,15 @@
  *   - Invoice note override affects PDF Note to customer section
  *   - Override autosave includes all override fields in the patch
  *   - Text editor values preserve spaces/newlines while autosave status is honest
+ *   - Manual amount overrides flush with description overrides before PDF/email actions
  *   - No invoice math changes
  */
 import { describe, it, expect } from "vitest";
+import {
+  removeInvoiceLineItemOverride,
+  sanitizeInvoiceLineItemOverrides,
+} from "@/lib/invoice-line-item-overrides";
+import type { InvoiceLineItemOverrides } from "@/lib/invoice-line-item-overrides";
 
 // ---------------------------------------------------------------------------
 // Mirrors of pure helper logic from InvoiceSection.tsx / email route
@@ -117,6 +123,40 @@ function buildOverridePatch(overrides: Partial<InvoiceTextOverrides>): Record<ke
     acc[field] = merged[field].trim() || null;
     return acc;
   }, {} as Record<keyof InvoiceTextOverrides, string | null>);
+}
+
+function buildFullInvoiceInputPatch(
+  overrides: Partial<InvoiceTextOverrides>,
+  lineItemOverrides: InvoiceLineItemOverrides = {},
+): Record<string, unknown> {
+  return {
+    workday_entries: [],
+    bag_fees: null,
+    hotel: null,
+    parking: null,
+    tolls: null,
+    uber: null,
+    other_expenses: null,
+    expense_notes: null,
+    invoice_line_item_overrides: sanitizeInvoiceLineItemOverrides(lineItemOverrides),
+    ...buildOverridePatch(overrides),
+  };
+}
+
+function customAdjustmentLabels(overrides: InvoiceLineItemOverrides): string[] {
+  const labels: Record<string, string> = {
+    day_rate: "Day Rate — Custom",
+    ot: "OT — Custom",
+    per_diem: "Per Diem — Custom",
+    bag_fees: "Bag Fees — Custom",
+    parking: "Parking — Custom",
+    uber: "Uber — Custom",
+    tolls: "Tolls — Custom",
+    hotel: "Hotel — Custom",
+    other: "Other — Custom",
+  };
+  const sanitized = sanitizeInvoiceLineItemOverrides(overrides);
+  return Object.keys(sanitized).map((key) => labels[key] ?? `${key} — Custom`);
 }
 
 function resolveOverrideInputValue(value: string, fallback = ""): string {
@@ -572,23 +612,13 @@ describe("Invoice math unchanged by overrides", () => {
 describe("Override values in flush before PDF", () => {
   it("flushCurrentInvoiceInputPatch includes override fields", () => {
     // Mirrors what buildCurrentInvoiceInputPatch returns — override fields must be present
-    const fullPatch = {
-      workday_entries: [],
-      bag_fees: null,
-      hotel: null,
-      parking: null,
-      tolls: null,
-      uber: null,
-      other_expenses: null,
-      expense_notes: null,
-      ...buildOverridePatch({
-        invoice_job_name_override: "Wilm U Grad",
-        invoice_day_rate_description_override: "6/18 - 7:30am-11:30pm",
-        invoice_ot_description_override: "Over 10hrs",
-        invoice_parking_description_override: "Fenwick venue parking",
-        invoice_bag_fees_description_override: "Checked console package",
-      }),
-    };
+    const fullPatch = buildFullInvoiceInputPatch({
+      invoice_job_name_override: "Wilm U Grad",
+      invoice_day_rate_description_override: "6/18 - 7:30am-11:30pm",
+      invoice_ot_description_override: "Over 10hrs",
+      invoice_parking_description_override: "Fenwick venue parking",
+      invoice_bag_fees_description_override: "Checked console package",
+    });
     expect("invoice_job_name_override" in fullPatch).toBe(true);
     expect(fullPatch.invoice_job_name_override).toBe("Wilm U Grad");
     expect(fullPatch.invoice_day_rate_description_override).toBe("6/18 - 7:30am-11:30pm");
@@ -600,19 +630,62 @@ describe("Override values in flush before PDF", () => {
 
   it("Open PDF flush includes pending description edits before PDF generation", () => {
     const steps = ["flush-current-inputs", "generate-pdf"];
-    const patch = buildOverridePatch({ invoice_parking_description_override: "Fenwick venue parking" });
+    const patch = buildFullInvoiceInputPatch(
+      { invoice_parking_description_override: "Fenwick venue parking" },
+      { parking: { amount: 175 } },
+    );
     expect(steps).toEqual(["flush-current-inputs", "generate-pdf"]);
     expect(patch.invoice_parking_description_override).toBe("Fenwick venue parking");
+    expect(patch.invoice_line_item_overrides).toEqual({ parking: { amount: 175 } });
   });
 
   it("Review and Send flush pending description edits before email/PDF", () => {
     const steps = ["flush-current-inputs", "post-email-route"];
-    const patch = buildOverridePatch({
-      invoice_bag_fees_description_override: "Checked console package",
-      invoice_ot_description_override: "Over 10hrs",
-    });
+    const patch = buildFullInvoiceInputPatch(
+      {
+        invoice_bag_fees_description_override: "Checked console package",
+        invoice_ot_description_override: "Over 10hrs",
+      },
+      {
+        day_rate: { qty: 2.5, rate: 600, amount: 1500 },
+        bag_fees: { amount: 250 },
+      },
+    );
     expect(steps).toEqual(["flush-current-inputs", "post-email-route"]);
     expect(patch.invoice_bag_fees_description_override).toBe("Checked console package");
     expect(patch.invoice_ot_description_override).toBe("Over 10hrs");
+    expect(patch.invoice_line_item_overrides).toEqual({
+      day_rate: { qty: 2.5, rate: 600, amount: 1500 },
+      bag_fees: { amount: 250 },
+    });
+  });
+
+  it("description overrides still work with amount overrides", () => {
+    const patch = buildFullInvoiceInputPatch(
+      { invoice_parking_description_override: "Fenwick venue parking" },
+      { parking: { amount: 175 } },
+    );
+
+    expect(patch.invoice_parking_description_override).toBe("Fenwick venue parking");
+    expect(patch.invoice_line_item_overrides).toEqual({ parking: { amount: 175 } });
+  });
+
+  it("Reset to Auto removes only the selected custom line", () => {
+    const before = sanitizeInvoiceLineItemOverrides({
+      parking: { amount: 175 },
+      day_rate: { qty: 2.5, rate: 600, amount: 1500 },
+    });
+    const after = removeInvoiceLineItemOverride(before, "parking");
+
+    expect(after).toEqual({ day_rate: { qty: 2.5, rate: 600, amount: 1500 } });
+  });
+
+  it("manual amount overrides are visibly marked Custom", () => {
+    const labels = customAdjustmentLabels({
+      day_rate: { qty: 2.5, rate: 600, amount: 1500 },
+      parking: { amount: 175 },
+    });
+
+    expect(labels).toEqual(["Day Rate — Custom", "Parking — Custom"]);
   });
 });

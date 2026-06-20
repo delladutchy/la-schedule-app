@@ -1,6 +1,8 @@
 import "server-only";
 import { getSupabaseServerClient } from "./supabase";
+import { sanitizeInvoiceLineItemOverrides } from "./invoice-line-item-overrides";
 import type { InvoiceData, InvoiceStatus, WorkdayEntry } from "./invoice-types";
+import type { InvoiceLineItemOverrides } from "./invoice-line-item-overrides";
 
 export type { InvoiceData };
 
@@ -48,6 +50,7 @@ function coerceInvoiceData(row: Record<string, unknown>): InvoiceData {
     invoice_hotel_description_override: row.invoice_hotel_description_override != null ? String(row.invoice_hotel_description_override) : null,
     invoice_other_description_override: row.invoice_other_description_override != null ? String(row.invoice_other_description_override) : null,
     invoice_note_override: row.invoice_note_override != null ? String(row.invoice_note_override) : null,
+    invoice_line_item_overrides: sanitizeInvoiceLineItemOverrides(row.invoice_line_item_overrides),
     amount_paid: Number(row.amount_paid ?? 0),
     remaining_balance: row.remaining_balance != null ? Number(row.remaining_balance) : null,
     // QuickBooks fields (require scripts/qb-migration.sql)
@@ -172,6 +175,7 @@ export interface InvoiceDataPatch {
   invoice_hotel_description_override?: string | null;
   invoice_other_description_override?: string | null;
   invoice_note_override?: string | null;
+  invoice_line_item_overrides?: InvoiceLineItemOverrides;
   amount_paid?: number;
   remaining_balance?: number | null;
   // QB fields (require scripts/qb-migration.sql applied)

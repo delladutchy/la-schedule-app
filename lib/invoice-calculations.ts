@@ -18,6 +18,8 @@ import type {
   WorkdayEntry,
   WorkdayMileageCalc,
 } from "./invoice-types";
+import { sanitizeInvoiceLineItemOverrides } from "./invoice-line-item-overrides";
+import type { InvoiceLineItemKey } from "./invoice-line-item-overrides";
 
 const TIME_12_RE = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i;
 const TIME_24_RE = /^(\d{1,2}):(\d{2})$/;
@@ -224,17 +226,36 @@ export function calculateWorkdays(entries: WorkdayEntry[]): WorkdayCalculated[] 
 /** Derive a complete InvoicePacket from stored InvoiceData. */
 export function calculateInvoicePacket(data: InvoiceData): InvoicePacket {
   const workdays = calculateWorkdays(data.workday_entries);
-  const dayRateQty = workdays.length;
-  const dayRate = data.day_rate;
-  const dayRateTotal = round2(dayRateQty * dayRate);
+  const lineItemOverrides = sanitizeInvoiceLineItemOverrides(data.invoice_line_item_overrides);
+  const resolveQtyRateLine = (
+    key: InvoiceLineItemKey,
+    autoQty: number,
+    autoRate: number,
+  ): { qty: number; rate: number; total: number } => {
+    const override = lineItemOverrides[key];
+    const qty = override?.qty ?? autoQty;
+    const rate = override?.rate ?? autoRate;
+    return { qty, rate, total: round2(qty * rate) };
+  };
+  const resolveAmountLine = (key: InvoiceLineItemKey, autoAmount: number): number => {
+    return round2(lineItemOverrides[key]?.amount ?? autoAmount);
+  };
+
+  const dayRateLine = resolveQtyRateLine("day_rate", workdays.length, data.day_rate);
+  const dayRateQty = dayRateLine.qty;
+  const dayRate = dayRateLine.rate;
+  const dayRateTotal = dayRateLine.total;
 
   const totalOvertimeHours = round2(workdays.reduce((sum, w) => sum + w.overtimeHours, 0));
-  const overtimeRate = data.overtime_rate;
-  const overtimeTotal = round2(totalOvertimeHours * overtimeRate);
+  const overtimeLine = resolveQtyRateLine("ot", totalOvertimeHours, data.overtime_rate);
+  const adjustedOvertimeHours = overtimeLine.qty;
+  const overtimeRate = overtimeLine.rate;
+  const overtimeTotal = overtimeLine.total;
 
-  const perDiemQty = dayRateQty;
-  const perDiemRate = data.per_diem_rate;
-  const perDiemTotal = round2(perDiemQty * perDiemRate);
+  const perDiemLine = resolveQtyRateLine("per_diem", workdays.length, data.per_diem_rate);
+  const perDiemQty = perDiemLine.qty;
+  const perDiemRate = perDiemLine.rate;
+  const perDiemTotal = perDiemLine.total;
 
   // Per-day mileage takes precedence; fall back to legacy job-level total_miles.
   const perDayMileage = data.workday_entries
@@ -261,12 +282,12 @@ export function calculateInvoicePacket(data: InvoiceData): InvoicePacket {
     mileage = calculateMileage(data.total_miles, data.mileage_deduction_miles, data.mileage_rate);
   }
 
-  const bagFees = data.bag_fees ?? 0;
-  const hotel = data.hotel ?? 0;
-  const parking = data.parking ?? 0;
-  const tolls = data.tolls ?? 0;
-  const uber = data.uber ?? 0;
-  const otherExpenses = data.other_expenses ?? 0;
+  const bagFees = resolveAmountLine("bag_fees", data.bag_fees ?? 0);
+  const hotel = resolveAmountLine("hotel", data.hotel ?? 0);
+  const parking = resolveAmountLine("parking", data.parking ?? 0);
+  const tolls = resolveAmountLine("tolls", data.tolls ?? 0);
+  const uber = resolveAmountLine("uber", data.uber ?? 0);
+  const otherExpenses = resolveAmountLine("other", data.other_expenses ?? 0);
 
   const estimatedTotal = round2(
     dayRateTotal
@@ -290,7 +311,7 @@ export function calculateInvoicePacket(data: InvoiceData): InvoicePacket {
     dayRateQty,
     dayRate,
     dayRateTotal,
-    totalOvertimeHours,
+    totalOvertimeHours: adjustedOvertimeHours,
     overtimeRate,
     overtimeTotal,
     perDiemQty,

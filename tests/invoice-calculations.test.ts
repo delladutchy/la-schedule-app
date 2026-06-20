@@ -250,6 +250,7 @@ function makeInvoiceData(overrides: Partial<InvoiceData> = {}): InvoiceData {
     invoice_hotel_description_override: null,
     invoice_other_description_override: null,
     invoice_note_override: null,
+    invoice_line_item_overrides: {},
     amount_paid: 0,
     remaining_balance: null,
     quickbooks_invoice_id: null,
@@ -625,6 +626,246 @@ describe("complete multi-day invoice workdays", () => {
     expect(row.perDiem).toBe(120);
     expect(row.totalPay).toBe(3620);
     expect(row.remainingBalance).toBe(3620);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Manual line-item quantity/rate/amount overrides
+// ---------------------------------------------------------------------------
+
+describe("calculateInvoicePacket — manual line-item overrides", () => {
+  const WORKDAYS_3: WorkdayEntry[] = [
+    { date: "2026-06-18", startTime: "8:00 AM", endTime: "6:00 PM" },
+    { date: "2026-06-19", startTime: "8:00 AM", endTime: "6:00 PM" },
+    { date: "2026-06-20", startTime: "8:00 AM", endTime: "6:00 PM" },
+  ];
+
+  it("editing Day Rate qty recalculates amount and total", () => {
+    const p = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      workday_entries: WORKDAYS_3,
+      invoice_line_item_overrides: {
+        day_rate: { qty: 2.5 },
+      },
+    }));
+
+    expect(p.dayRateQty).toBe(2.5);
+    expect(p.dayRate).toBe(550);
+    expect(p.dayRateTotal).toBe(1375);
+    expect(p.estimatedTotal).toBe(1375);
+  });
+
+  it("editing Day Rate rate recalculates amount and total", () => {
+    const p = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      workday_entries: WORKDAYS_3,
+      invoice_line_item_overrides: {
+        day_rate: { rate: 600 },
+      },
+    }));
+
+    expect(p.dayRateQty).toBe(3);
+    expect(p.dayRate).toBe(600);
+    expect(p.dayRateTotal).toBe(1800);
+    expect(p.estimatedTotal).toBe(1800);
+  });
+
+  it("editing OT qty recalculates amount and total", () => {
+    const p = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      overtime_rate: 82.5,
+      workday_entries: [
+        { date: "2026-06-18", startTime: "8:00 AM", endTime: "8:00 PM" },
+      ],
+      invoice_line_item_overrides: {
+        ot: { qty: 7.5 },
+      },
+    }));
+
+    expect(p.dayRateTotal).toBe(550);
+    expect(p.totalOvertimeHours).toBe(7.5);
+    expect(p.overtimeRate).toBe(82.5);
+    expect(p.overtimeTotal).toBe(618.75);
+    expect(p.estimatedTotal).toBe(1168.75);
+  });
+
+  it("editing Per Diem qty/rate recalculates amount and total", () => {
+    const p = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      per_diem_rate: 40,
+      workday_entries: WORKDAYS_3,
+      invoice_line_item_overrides: {
+        per_diem: { qty: 2.5, rate: 45 },
+      },
+    }));
+
+    expect(p.dayRateTotal).toBe(1650);
+    expect(p.perDiemQty).toBe(2.5);
+    expect(p.perDiemRate).toBe(45);
+    expect(p.perDiemTotal).toBe(112.5);
+    expect(p.estimatedTotal).toBe(1762.5);
+  });
+
+  it("editing Bag Fees amount updates total", () => {
+    const p = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      bag_fees: 100,
+      workday_entries: [WORKDAYS_3[0]!],
+      invoice_line_item_overrides: {
+        bag_fees: { amount: 250 },
+      },
+    }));
+
+    expect(p.bagFees).toBe(250);
+    expect(p.estimatedTotal).toBe(800);
+  });
+
+  it("editing Parking amount updates total", () => {
+    const p = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      parking: 110,
+      workday_entries: [WORKDAYS_3[0]!],
+      invoice_line_item_overrides: {
+        parking: { amount: 175 },
+      },
+    }));
+
+    expect(p.parking).toBe(175);
+    expect(p.estimatedTotal).toBe(725);
+  });
+
+  it("editing Uber/Tolls/Hotel/Other amounts update total", () => {
+    const p = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      uber: 10,
+      tolls: 20,
+      hotel: 30,
+      other_expenses: 40,
+      workday_entries: [WORKDAYS_3[0]!],
+      invoice_line_item_overrides: {
+        uber: { amount: 100 },
+        tolls: { amount: 200 },
+        hotel: { amount: 300 },
+        other: { amount: 400 },
+      },
+    }));
+
+    expect(p.uber).toBe(100);
+    expect(p.tolls).toBe(200);
+    expect(p.hotel).toBe(300);
+    expect(p.otherExpenses).toBe(400);
+    expect(p.estimatedTotal).toBe(1550);
+  });
+
+  it("resetting a line returns to auto-calculated value", () => {
+    const auto = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      parking: 110,
+      workday_entries: WORKDAYS_3,
+      invoice_line_item_overrides: {},
+    }));
+    const custom = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      parking: 110,
+      workday_entries: WORKDAYS_3,
+      invoice_line_item_overrides: {
+        day_rate: { qty: 2.5, rate: 600 },
+        parking: { amount: 175 },
+      },
+    }));
+    const reset = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      parking: 110,
+      workday_entries: WORKDAYS_3,
+      invoice_line_item_overrides: {},
+    }));
+
+    expect(custom.estimatedTotal).not.toBe(auto.estimatedTotal);
+    expect(reset.dayRateQty).toBe(auto.dayRateQty);
+    expect(reset.dayRate).toBe(auto.dayRate);
+    expect(reset.parking).toBe(auto.parking);
+    expect(reset.estimatedTotal).toBe(auto.estimatedTotal);
+  });
+
+  it("PDF inputs can use edited qty/rate/amount values from the packet", () => {
+    const p = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      overtime_rate: 82.5,
+      parking: 110,
+      workday_entries: WORKDAYS_3,
+      invoice_line_item_overrides: {
+        day_rate: { qty: 2.5, rate: 600 },
+        ot: { qty: 7.5 },
+        parking: { amount: 175 },
+      },
+    }));
+
+    expect({
+      qty: p.dayRateQty,
+      rate: p.dayRate,
+      amount: p.dayRateTotal,
+      otQty: p.totalOvertimeHours,
+      otAmount: p.overtimeTotal,
+      parking: p.parking,
+    }).toEqual({
+      qty: 2.5,
+      rate: 600,
+      amount: 1500,
+      otQty: 7.5,
+      otAmount: 618.75,
+      parking: 175,
+    });
+  });
+
+  it("Google Sheet sync uses edited invoice total and line amounts", () => {
+    const p = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      parking: 110,
+      workday_entries: WORKDAYS_3,
+      invoice_line_item_overrides: {
+        day_rate: { qty: 2.5, rate: 600 },
+        parking: { amount: 175 },
+      },
+    }));
+    const row = generateSheetRow(p, "LA#5555 — Test Job");
+
+    expect(row.labor).toBe(1500);
+    expect(row.parking).toBe(175);
+    expect(row.totalPay).toBe(1675);
+    expect(row.remainingBalance).toBe(1675);
+  });
+
+  it("payment balance uses edited invoice total", () => {
+    const p = calculateInvoicePacket(makeInvoiceData({
+      day_rate: 550,
+      amount_paid: 500,
+      workday_entries: WORKDAYS_3,
+      invoice_line_item_overrides: {
+        day_rate: { qty: 2.5, rate: 600 },
+      },
+    }));
+    const balanceDue = Math.max(0, Number((p.estimatedTotal - p.amountPaid).toFixed(2)));
+
+    expect(p.estimatedTotal).toBe(1500);
+    expect(balanceDue).toBe(1000);
+  });
+
+  it("closing/reopening preserves amount overrides from stored invoice data", () => {
+    const stored = makeInvoiceData({
+      day_rate: 550,
+      parking: 110,
+      workday_entries: WORKDAYS_3,
+      invoice_line_item_overrides: {
+        day_rate: { qty: 2.5, rate: 600 },
+        parking: { amount: 175 },
+      },
+    });
+    const reopened = makeInvoiceData(stored);
+    const p = calculateInvoicePacket(reopened);
+
+    expect(p.dayRateTotal).toBe(1500);
+    expect(p.parking).toBe(175);
+    expect(p.estimatedTotal).toBe(1675);
   });
 });
 
