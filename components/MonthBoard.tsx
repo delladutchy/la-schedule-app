@@ -411,6 +411,7 @@ export function MonthBoard({
     startY: 0,
     moved: false,
   });
+  const invoicePendingRef = useRef(false);
   const dayNoteInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const bookingJobNameInputRef = useRef<HTMLInputElement | null>(null);
   const bookingNotesInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -506,6 +507,9 @@ export function MonthBoard({
       if (!shouldHandleKeyboardShortcut(event.target)) return;
       if (event.key === "Escape") {
         if (isBookingSavePending || isDeletePending) return;
+        if (invoicePendingRef.current) {
+          if (!window.confirm("Invoice has unsaved changes. Close anyway?")) return;
+        }
         setActiveDetailPanel(null);
         closeBookingPanel();
       }
@@ -564,7 +568,12 @@ export function MonthBoard({
     setResolvedEditorId(initialResolvedEditorId);
   }, [initialResolvedEditorId]);
 
-  const closeDetailPanel = () => setActiveDetailPanel(null);
+  const closeDetailPanel = () => {
+    if (invoicePendingRef.current) {
+      if (!window.confirm("Invoice has unsaved changes. Close anyway?")) return;
+    }
+    setActiveDetailPanel(null);
+  };
   const closeBookingPanel = () => {
     setActiveBookingPanel(null);
     setBookingLaNumber("");
@@ -1576,6 +1585,7 @@ export function MonthBoard({
                     defaultStartTime={activeJobTimeDetail.startUtc ? snapUtcToTimeOption(activeJobTimeDetail.startUtc) : undefined}
                     defaultEndTime={activeJobTimeDetail.endUtc ? snapUtcToTimeOption(activeJobTimeDetail.endUtc) : undefined}
                     jobLocation={activeDetailLocation ?? undefined}
+                    onPendingChange={(hasPending) => { invoicePendingRef.current = hasPending; }}
                   />
                 ) : null}
               </div>

@@ -139,13 +139,44 @@ interface SheetDuplicateState {
   deletedRows: number[];
 }
 
+interface SheetHealthEntryUI {
+  rowNumber: number;
+  invNumber: string;
+  laNumber: string;
+  date: string;
+  total: string;
+  status: string;
+}
+
+interface SheetHealthGroupUI {
+  key: string;
+  activeRows: SheetHealthEntryUI[];
+  voidedRows: SheetHealthEntryUI[];
+  syncRow: number | null;
+  hasOneActiveRow: boolean;
+  voidedRowsHaveZeroTotal: boolean;
+}
+
+interface SheetHealthState {
+  status: "idle" | "checking" | "ready" | "error";
+  message: string | null;
+  totalActiveRows: number;
+  totalVoidedRows: number;
+  totalUniqueKeys: number;
+  activeDuplicateCount: number;
+  voidedRowsWithMoneyCount: number;
+  isClean: boolean;
+  activeDuplicateGroups: SheetHealthGroupUI[];
+  scannedAt: string | null;
+}
+
 interface PdfState {
   status: "idle" | "generating" | "done" | "error";
   error: string | null;
   action: "open" | "download" | "review" | "manual" | null;
 }
 
-type SaveStatus = "idle" | "saving" | "saved" | "error";
+type SaveStatus = "idle" | "unsaved" | "saving" | "saved" | "error";
 
 interface RenumberState {
   status: "idle" | "renumbering" | "error";
@@ -320,6 +351,7 @@ interface Props {
   defaultStartTime?: string; // snapped 12h time from job startUtc
   defaultEndTime?: string;   // snapped 12h time from job endUtc
   jobLocation?: string;      // Google Calendar location field
+  onPendingChange?: (hasPending: boolean) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -950,6 +982,7 @@ export function InvoiceSection({
   defaultStartTime,
   defaultEndTime,
   jobLocation,
+  onPendingChange,
 }: Props) {
   const [fetchState, setFetchState] = useState<FetchState>({ status: "loading" });
   const [invoiceData, setInvoiceData] = useState<InvoiceData | null>(null);
@@ -966,10 +999,9 @@ export function InvoiceSection({
   });
   const [expensesExpanded, setExpensesExpanded] = useState(false);
   const [overrides, setOverrides] = useState<OverrideFields>({ ...EMPTY_OVERRIDE_FIELDS });
-  const [overridesExpanded, setOverridesExpanded] = useState(false);
+  const [editInvoiceExpanded, setEditInvoiceExpanded] = useState(false);
   const [lineItemOverrides, setLineItemOverrides] = useState<InvoiceLineItemOverrides>({});
   const [adjustmentDrafts, setAdjustmentDrafts] = useState<AdjustmentDrafts>({});
-  const [adjustmentsExpanded, setAdjustmentsExpanded] = useState(false);
   const [autoMileage, setAutoMileage] = useState<AutoMileage | null>(null);
   const [autoMileageNote, setAutoMileageNote] = useState<AutoMileageNote | null>(
     jobLocation ? null : "no_location",
@@ -983,6 +1015,18 @@ export function InvoiceSection({
     deletedRows: [],
   });
   const [sheetUrl, setSheetUrl] = useState<string | null>(null);
+  const [sheetHealthState, setSheetHealthState] = useState<SheetHealthState>({
+    status: "idle",
+    message: null,
+    totalActiveRows: 0,
+    totalVoidedRows: 0,
+    totalUniqueKeys: 0,
+    activeDuplicateCount: 0,
+    voidedRowsWithMoneyCount: 0,
+    isClean: true,
+    activeDuplicateGroups: [],
+    scannedAt: null,
+  });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [isSaving, setIsSaving] = useState(false);
@@ -1041,10 +1085,11 @@ export function InvoiceSection({
           const hydratedLineItemOverrides = sanitizeInvoiceLineItemOverrides(data.invoice_line_item_overrides);
           setLineItemOverrides(hydratedLineItemOverrides);
           setAdjustmentDrafts({});
-          setAdjustmentsExpanded(countInvoiceLineItemOverrides(hydratedLineItemOverrides) > 0);
           const hydratedOverrides = hydrateOverrideFields(data);
           setOverrides(hydratedOverrides);
-          setOverridesExpanded(hasOverrideText(hydratedOverrides));
+          setEditInvoiceExpanded(
+            hasOverrideText(hydratedOverrides) || countInvoiceLineItemOverrides(hydratedLineItemOverrides) > 0,
+          );
           setExpensesExpanded(
             data.bag_fees != null || data.hotel != null || data.parking != null ||
             data.tolls != null || data.uber != null || data.other_expenses != null ||
@@ -1061,9 +1106,8 @@ export function InvoiceSection({
           setPacket(null);
           setLineItemOverrides({});
           setAdjustmentDrafts({});
-          setAdjustmentsExpanded(false);
+          setEditInvoiceExpanded(false);
           setOverrides({ ...EMPTY_OVERRIDE_FIELDS });
-          setOverridesExpanded(false);
         }
         setFetchState({ status: "ready" });
       })
@@ -1234,7 +1278,10 @@ export function InvoiceSection({
 
   function scheduleSave(patch: Record<string, unknown>) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    const version = markSavePending();
+    saveVersionRef.current += 1;
+    const version = saveVersionRef.current;
+    setSaveError(null);
+    setSaveStatus("unsaved");
     // Always include gigSummary so the server-side background sheet sync has the full job title.
     // Always include the current merged workday list so past/missing invoice days cannot be
     // dropped by an expense/text-only autosave.
@@ -1326,6 +1373,11 @@ export function InvoiceSection({
     });
     applyLineItemOverrides(removeInvoiceLineItemOverride(lineItemOverrides, key));
   }
+
+  useEffect(() => {
+    const hasPending = saveStatus === "unsaved" || isSaving;
+    onPendingChange?.(hasPending);
+  }, [saveStatus, isSaving, onPendingChange]);
 
   async function handleCheckSheetDuplicates(options: { silent?: boolean } = {}) {
     if (sheetDuplicateState.status === "checking" || sheetDuplicateState.status === "deleting") return;
@@ -1441,6 +1493,67 @@ export function InvoiceSection({
         ...prev,
         status: "error",
         message: "Could not delete duplicate Sheet rows — network error.",
+      }));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sheet health check
+  // ---------------------------------------------------------------------------
+
+  async function handleSheetHealthCheck() {
+    if (sheetHealthState.status === "checking") return;
+    setSheetHealthState((prev) => ({ ...prev, status: "checking", message: null }));
+    try {
+      const res = await fetch("/api/invoice/sheet-health", {
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+      });
+      const json = await res.json().catch(() => ({})) as {
+        isClean?: boolean;
+        totalActiveRows?: number;
+        totalVoidedRows?: number;
+        totalUniqueKeys?: number;
+        activeDuplicateCount?: number;
+        voidedRowsWithMoneyCount?: number;
+        activeDuplicateGroups?: SheetHealthGroupUI[];
+        scannedAt?: string;
+        message?: string;
+      };
+      if (!res.ok) {
+        setSheetHealthState((prev) => ({
+          ...prev,
+          status: "error",
+          message: json.message ?? "Sheet health check failed — retry",
+        }));
+        return;
+      }
+      const isClean = json.isClean ?? true;
+      const dupeCount = json.activeDuplicateCount ?? 0;
+      const badVoidCount = json.voidedRowsWithMoneyCount ?? 0;
+      const summary = isClean
+        ? `Sheet is clean — ${json.totalActiveRows ?? 0} active rows, ${json.totalUniqueKeys ?? 0} unique keys, ${json.totalVoidedRows ?? 0} voided rows.`
+        : [
+            dupeCount > 0 ? `${dupeCount} key${dupeCount > 1 ? "s" : ""} with active duplicates.` : null,
+            badVoidCount > 0 ? `${badVoidCount} voided row${badVoidCount > 1 ? "s" : ""} still have money (Sheet totals may be overstated).` : null,
+          ].filter(Boolean).join(" ");
+      setSheetHealthState({
+        status: "ready",
+        message: summary,
+        totalActiveRows: json.totalActiveRows ?? 0,
+        totalVoidedRows: json.totalVoidedRows ?? 0,
+        totalUniqueKeys: json.totalUniqueKeys ?? 0,
+        activeDuplicateCount: dupeCount,
+        voidedRowsWithMoneyCount: badVoidCount,
+        isClean,
+        activeDuplicateGroups: json.activeDuplicateGroups ?? [],
+        scannedAt: json.scannedAt ?? null,
+      });
+    } catch {
+      setSheetHealthState((prev) => ({
+        ...prev,
+        status: "error",
+        message: "Sheet health check failed — network error.",
       }));
     }
   }
@@ -2132,30 +2245,36 @@ export function InvoiceSection({
         ) : null}
       </div>
 
-      {/* ── Edit Invoice Text (optional overrides, collapsed by default) ── */}
+      {/* ── Edit Invoice (text overrides + line item adjustments, collapsed by default) ── */}
       <div className="invoice-block">
         <button
           type="button"
           className="invoice-collapsible-toggle"
-          onClick={() => setOverridesExpanded((prev) => !prev)}
-          aria-expanded={overridesExpanded}
+          onClick={() => setEditInvoiceExpanded((prev) => !prev)}
+          aria-expanded={editInvoiceExpanded}
         >
-          <span className="invoice-block-label">Edit invoice text</span>
+          <span className="invoice-block-label">Edit Invoice</span>
           <span className="invoice-collapsible-meta">
             {saveStatus !== "idle" ? (
               <span className="invoice-save-status" data-status={saveStatus}>
-                {saveStatus === "saving"
-                  ? "Saving…"
-                  : saveStatus === "saved"
-                    ? "Saved"
-                    : "Could not save invoice data — try again"}
+                {saveStatus === "unsaved"
+                  ? "Unsaved changes"
+                  : saveStatus === "saving"
+                    ? "Saving…"
+                    : saveStatus === "saved"
+                      ? "Saved"
+                      : "Save failed"}
               </span>
             ) : null}
-            <span className="invoice-collapsible-chevron">{overridesExpanded ? "▲" : "▼"}</span>
+            {customAdjustmentCount > 0 ? (
+              <span className="invoice-adjustment-alert">{customAdjustmentCount} custom</span>
+            ) : null}
+            <span className="invoice-collapsible-chevron">{editInvoiceExpanded ? "▲" : "▼"}</span>
           </span>
         </button>
-        {overridesExpanded ? (
-          <div className="invoice-collapsible-content invoice-overrides-content">
+        {editInvoiceExpanded ? (
+          <div className="invoice-collapsible-content">
+            {/* ── Invoice text overrides ── */}
             <p className="invoice-overrides-hint">
               Clear any generated/default text to return to the automatic invoice wording.
             </p>
@@ -2200,33 +2319,13 @@ export function InvoiceSection({
               />
               <p className="invoice-override-hint-sm">Affects: PDF "Note to customer" section. Leave blank for default.</p>
             </div>
-          </div>
-        ) : null}
-      </div>
 
-      {/* ── Advanced invoice adjustments (manual qty/rate/amount overrides) ── */}
-      {p ? (
-        <div className="invoice-block">
-          <button
-            type="button"
-            className="invoice-collapsible-toggle"
-            onClick={() => setAdjustmentsExpanded((prev) => !prev)}
-            aria-expanded={adjustmentsExpanded}
-          >
-            <span className="invoice-block-label">Advanced invoice adjustments</span>
-            <span className="invoice-collapsible-meta">
-              {customAdjustmentCount > 0 ? (
-                <span className="invoice-adjustment-alert">{customAdjustmentCount} custom</span>
-              ) : null}
-              <span className="invoice-collapsible-chevron">{adjustmentsExpanded ? "▲" : "▼"}</span>
-            </span>
-          </button>
-          {adjustmentsExpanded ? (
-            <div className="invoice-collapsible-content invoice-adjustments-content">
-              <p className="invoice-overrides-hint">
-                Leave rows on Auto for normal calculations. Edit only when an invoice needs a manual client-facing adjustment.
-              </p>
-              {adjustmentRows.length > 0 ? (
+            {/* ── Line item adjustments ── */}
+            {p && adjustmentRows.length > 0 ? (
+              <>
+                <p className="invoice-overrides-hint" style={{marginTop: "1rem"}}>
+                  Leave rows on Auto for normal calculations. Edit only when an invoice needs a manual adjustment.
+                </p>
                 <div className="invoice-adjustment-list">
                   {adjustmentRows.map((row) => {
                     const draft = adjustmentDrafts[row.key] ?? {};
@@ -2236,12 +2335,7 @@ export function InvoiceSection({
                     return (
                       <div className="invoice-adjustment-row" key={row.key}>
                         <div className="invoice-adjustment-row-head">
-                          <div>
-                            <span className="invoice-adjustment-label">{row.label}</span>
-                            <span className="invoice-adjustment-auto">
-                              Auto {fmtCurrency(row.autoAmount)}
-                            </span>
-                          </div>
+                          <span className="invoice-adjustment-label">{row.label}</span>
                           <span className={`invoice-adjustment-status${row.isCustom ? " is-custom" : ""}`}>
                             {row.isCustom ? "Custom" : "Auto"}
                           </span>
@@ -2306,13 +2400,11 @@ export function InvoiceSection({
                     );
                   })}
                 </div>
-              ) : (
-                <p className="invoice-overrides-hint">No current invoice lines are available to adjust.</p>
-              )}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+              </>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
 
       {/* ── Invoice Preview ────────────────────────────────────── */}
       {p ? (
@@ -2593,7 +2685,7 @@ export function InvoiceSection({
                 <p className="invoice-sheet-sync-status">Sheet sync: Updated {syncedLabel}</p>
               ) : syncState.status === "error" ? (
                 <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn">
-                  Sheet sync warning — use Advanced → Sync / Update to retry
+                  Sheet sync warning — use Admin Tools to retry
                 </p>
               ) : syncState.status === "syncing" ? (
                 <p className="invoice-sheet-sync-status">Sheet sync: Syncing…</p>
@@ -2605,11 +2697,11 @@ export function InvoiceSection({
               ) : null}
               {hasCurrentSheetDuplicates ? (
                 <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn" role="alert">
-                  Sheet has duplicate rows — sync again to auto-fix, or use Advanced to clean up.
+                  Sheet has duplicate rows — sync again to auto-fix, or use Admin Tools to clean up.
                 </p>
               ) : null}
 
-              {/* Advanced — collapsed by default; Download PDF / Regenerate / Sync live here */}
+              {/* Admin Tools — collapsed by default; Download PDF / Regenerate / Sync live here */}
               <div className="invoice-advanced">
                 <button
                   type="button"
@@ -2617,7 +2709,7 @@ export function InvoiceSection({
                   onClick={() => setAdvancedOpen((v) => !v)}
                   aria-expanded={advancedOpen}
                 >
-                  Advanced {advancedOpen ? "▾" : "▸"}
+                  Admin Tools {advancedOpen ? "▾" : "▸"}
                 </button>
                 {advancedOpen ? (
                   <div className="invoice-advanced-content">
@@ -2676,12 +2768,92 @@ export function InvoiceSection({
                       <p className="invoice-error" role="alert">{syncState.message ?? "Sheet sync failed — retry"}</p>
                     ) : null}
 
+                    {/* Sheet Health Check */}
+                    <div className="invoice-sheet-health">
+                      <div className="invoice-sheet-duplicates-head">
+                        <div>
+                          <p className="invoice-sheet-duplicates-title">Sheet Health Check</p>
+                          <p className="invoice-sheet-helper">
+                            Confirms one active row per invoice/job. Voided duplicates are not counted.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="invoice-pdf-regen-btn"
+                          onClick={() => { void handleSheetHealthCheck(); }}
+                          disabled={sheetHealthState.status === "checking"}
+                        >
+                          {sheetHealthState.status === "checking" ? "Scanning…" : "Check Sheet Health"}
+                        </button>
+                      </div>
+                      {sheetHealthState.status === "ready" || sheetHealthState.status === "error" ? (
+                        <>
+                          <p
+                            className={`invoice-sheet-duplicate-message${
+                              sheetHealthState.status === "error" || !sheetHealthState.isClean
+                                ? " is-warning"
+                                : ""
+                            }`}
+                            role={!sheetHealthState.isClean || sheetHealthState.status === "error" ? "alert" : undefined}
+                          >
+                            {sheetHealthState.isClean ? "✓ " : "⚠ "}{sheetHealthState.message}
+                          </p>
+                          {sheetHealthState.status === "ready" ? (
+                            <div className="invoice-sheet-helper" style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+                              <span>Active rows: {sheetHealthState.totalActiveRows}</span>
+                              <span>Unique keys: {sheetHealthState.totalUniqueKeys}</span>
+                              <span>Voided rows: {sheetHealthState.totalVoidedRows}</span>
+                            </div>
+                          ) : null}
+                          {sheetHealthState.activeDuplicateGroups.length > 0 ? (
+                            <div className="invoice-sheet-duplicate-groups">
+                              {sheetHealthState.activeDuplicateGroups.map((group) => (
+                                <div className="invoice-sheet-duplicate-group is-current" key={group.key}>
+                                  <div className="invoice-sheet-duplicate-group-head">
+                                    <span>{group.key}</span>
+                                    <span>{group.activeRows.length} active rows — sync would use row {group.syncRow ?? "?"}</span>
+                                  </div>
+                                  <div className="invoice-sheet-duplicate-rows">
+                                    {group.activeRows.map((row) => (
+                                      <div
+                                        className={`invoice-sheet-duplicate-row${row.rowNumber === group.syncRow ? " is-keep" : " is-delete"}`}
+                                        key={`health-active-${group.key}-${row.rowNumber}`}
+                                      >
+                                        <span>Row {row.rowNumber}</span>
+                                        <span>Inv {row.invNumber || "—"} / LA {row.laNumber || "—"}</span>
+                                        <span>{row.date || "No date"}</span>
+                                        <span>{row.total || "No total"}</span>
+                                        <strong>{row.rowNumber === group.syncRow ? "Sync target" : "Active duplicate"}</strong>
+                                      </div>
+                                    ))}
+                                    {group.voidedRows.map((row) => (
+                                      <div
+                                        className="invoice-sheet-duplicate-row is-keep"
+                                        key={`health-void-${group.key}-${row.rowNumber}`}
+                                        style={{ opacity: 0.5 }}
+                                      >
+                                        <span>Row {row.rowNumber}</span>
+                                        <span>Inv {row.invNumber || "—"} / LA {row.laNumber || "—"}</span>
+                                        <span>{row.date || "No date"}</span>
+                                        <span>{row.total || "—"}</span>
+                                        <strong>VOIDED</strong>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+
                     <div className="invoice-sheet-duplicates">
                       <div className="invoice-sheet-duplicates-head">
                         <div>
                           <p className="invoice-sheet-duplicates-title">Sheet duplicate cleanup</p>
                           <p className="invoice-sheet-helper">
-                            Check first, review rows, then delete only confirmed duplicate rows.
+                            Recovery tool: delete active duplicate rows after review.
                           </p>
                         </div>
                         <div className="invoice-sheet-duplicate-actions">

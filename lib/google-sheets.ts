@@ -687,3 +687,150 @@ export async function deleteSheetDuplicatesForKey(invoiceKey: string): Promise<S
     deletedRows: group.deleteRows,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Sheet health report (read-only, no side effects)
+// ---------------------------------------------------------------------------
+
+export interface SheetHealthEntry {
+  rowNumber: number;
+  invNumber: string;
+  laNumber: string;
+  date: string;
+  total: string;   // raw col E value
+  status: string;  // col T
+}
+
+export interface SheetHealthGroup {
+  key: string;
+  activeRows: SheetHealthEntry[];
+  voidedRows: SheetHealthEntry[];
+  /** Active row that sync would update (highest row# = final tiebreaker). */
+  syncRow: number | null;
+  hasOneActiveRow: boolean;
+  /** True when all voided rows have zero or empty total — confirms SUM formulas are safe. */
+  voidedRowsHaveZeroTotal: boolean;
+}
+
+export interface SheetHealthReport {
+  totalActiveRows: number;
+  totalVoidedRows: number;
+  totalUniqueKeys: number;
+  activeDuplicateCount: number;
+  /** Number of voided rows that still have a non-zero total — should always be 0. */
+  voidedRowsWithMoneyCount: number;
+  groups: SheetHealthGroup[];
+  activeDuplicateGroups: SheetHealthGroup[];
+  /** True when no active duplicates AND no void rows with money remaining. */
+  isClean: boolean;
+}
+
+/**
+ * Read-only sheet health scan. Reads every row through col T and reports:
+ *   - total active invoice rows
+ *   - total VOID_DUPLICATE rows
+ *   - any keys with more than one active row (active duplicates)
+ *   - whether voided rows have been correctly zeroed
+ *
+ * Never writes to the sheet. Throws on auth/API failure.
+ */
+export async function getSheetHealthReport(): Promise<SheetHealthReport> {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
+
+  const auth = await getSheetAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const readRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_SHEET_NAME}!A:T`,
+  });
+
+  const rows = readRes.data.values ?? [];
+  const groupMap = new Map<string, { activeRows: SheetHealthEntry[]; voidedRows: SheetHealthEntry[] }>();
+
+  for (let i = 1; i < rows.length; i++) {
+    const cellA = String(rows[i]?.[0]  ?? "").trim(); // A: INV#
+    const cellB = String(rows[i]?.[1]  ?? "").trim(); // B: DATE
+    const cellC = String(rows[i]?.[2]  ?? "").trim(); // C: LA#
+    const cellE = String(rows[i]?.[4]  ?? "").trim(); // E: TOTAL
+    const cellT = String(rows[i]?.[19] ?? "").trim(); // T: STATUS
+    const sheetsRow = i + 1;
+
+    const isVoid = cellT === VOID_STATUS;
+
+    // Build key using same logic as the upsert/duplicate scan
+    const normLa  = normalizeLA(cellC);
+    const normInv = cellA;
+    const key     = normLa ? `la:${normLa}` : normInv ? `inv:${normInv}` : null;
+
+    // Include active invoice rows and void rows that have a recognisable key
+    const include = isVoid ? !!key : isInvoiceDataRow(cellA, cellC, cellT);
+    if (!include || !key) continue;
+
+    const entry: SheetHealthEntry = {
+      rowNumber: sheetsRow,
+      invNumber: cellA,
+      laNumber: cellC,
+      date: cellB,
+      total: cellE,
+      status: cellT,
+    };
+
+    const group = groupMap.get(key) ?? { activeRows: [], voidedRows: [] };
+    if (isVoid) {
+      group.voidedRows.push(entry);
+    } else {
+      group.activeRows.push(entry);
+    }
+    groupMap.set(key, group);
+  }
+
+  let totalActiveRows = 0;
+  let totalVoidedRows = 0;
+  let voidedRowsWithMoneyCount = 0;
+
+  const groups: SheetHealthGroup[] = [];
+
+  for (const [key, { activeRows, voidedRows }] of groupMap) {
+    // Skip keys with no rows at all (shouldn't happen, but guard)
+    if (activeRows.length === 0 && voidedRows.length === 0) continue;
+
+    // syncRow: highest row number among active rows (final tiebreaker in scoreKeepRow)
+    const syncRow = activeRows.length > 0
+      ? activeRows.reduce((best, e) => e.rowNumber > best.rowNumber ? e : best).rowNumber
+      : null;
+
+    // Voided rows must have total = 0 or empty for SUM formulas to ignore them
+    const voidedWithMoney = voidedRows.filter((e) => {
+      const v = parseFloat(e.total.replace(/[$,\s]/g, ""));
+      return !isNaN(v) && v !== 0;
+    });
+
+    groups.push({
+      key,
+      activeRows,
+      voidedRows,
+      syncRow,
+      hasOneActiveRow: activeRows.length === 1,
+      voidedRowsHaveZeroTotal: voidedWithMoney.length === 0,
+    });
+
+    totalActiveRows += activeRows.length;
+    totalVoidedRows += voidedRows.length;
+    voidedRowsWithMoneyCount += voidedWithMoney.length;
+  }
+
+  const activeDuplicateGroups = groups.filter((g) => g.activeRows.length > 1);
+
+  return {
+    totalActiveRows,
+    totalVoidedRows,
+    totalUniqueKeys: groups.filter((g) => g.activeRows.length > 0).length,
+    activeDuplicateCount: activeDuplicateGroups.length,
+    voidedRowsWithMoneyCount,
+    groups,
+    activeDuplicateGroups,
+    isClean: activeDuplicateGroups.length === 0 && voidedRowsWithMoneyCount === 0,
+  };
+}

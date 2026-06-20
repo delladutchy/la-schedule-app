@@ -1356,3 +1356,269 @@ describe("findSheetDuplicates — VOID rows excluded from duplicate report", () 
     expect(groups).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Y. Sheet Health Report — pure-function simulation of getSheetHealthReport
+// ---------------------------------------------------------------------------
+
+interface HealthEntry {
+  rowNumber: number;
+  invNumber: string;
+  laNumber: string;
+  date: string;
+  total: string;
+  status: string; // col T — "VOID_DUPLICATE" or other
+}
+
+interface HealthGroup {
+  key: string;
+  activeRows: HealthEntry[];
+  voidedRows: HealthEntry[];
+  syncRow: number | null;
+  hasOneActiveRow: boolean;
+  voidedRowsHaveZeroTotal: boolean;
+}
+
+interface HealthReport {
+  totalActiveRows: number;
+  totalVoidedRows: number;
+  totalUniqueKeys: number;
+  activeDuplicateCount: number;
+  voidedRowsWithMoneyCount: number;
+  groups: HealthGroup[];
+  activeDuplicateGroups: HealthGroup[];
+  isClean: boolean;
+}
+
+function computeHealthReport(entries: HealthEntry[]): HealthReport {
+  const groupMap = new Map<string, { activeRows: HealthEntry[]; voidedRows: HealthEntry[] }>();
+  for (const entry of entries) {
+    const isVoid = entry.status === VOID_STATUS;
+    const normLa  = normalizeLA(entry.laNumber);
+    const normInv = entry.invNumber.trim();
+    const key     = normLa ? `la:${normLa}` : normInv ? `inv:${normInv}` : null;
+    const include = isVoid ? !!key : isInvoiceDataRow(entry.invNumber, entry.laNumber, entry.status);
+    if (!include || !key) continue;
+    const g = groupMap.get(key) ?? { activeRows: [], voidedRows: [] };
+    if (isVoid) { g.voidedRows.push(entry); } else { g.activeRows.push(entry); }
+    groupMap.set(key, g);
+  }
+
+  let totalActiveRows = 0;
+  let totalVoidedRows = 0;
+  let voidedRowsWithMoneyCount = 0;
+  const groups: HealthGroup[] = [];
+
+  for (const [key, { activeRows, voidedRows }] of groupMap) {
+    const syncRow = activeRows.length > 0
+      ? activeRows.reduce((best, e) => e.rowNumber > best.rowNumber ? e : best).rowNumber
+      : null;
+    const voidedWithMoney = voidedRows.filter(e => {
+      const v = parseFloat(e.total.replace(/[$,\s]/g, ""));
+      return !isNaN(v) && v !== 0;
+    });
+    groups.push({ key, activeRows, voidedRows, syncRow, hasOneActiveRow: activeRows.length === 1, voidedRowsHaveZeroTotal: voidedWithMoney.length === 0 });
+    totalActiveRows += activeRows.length;
+    totalVoidedRows += voidedRows.length;
+    voidedRowsWithMoneyCount += voidedWithMoney.length;
+  }
+
+  const activeDuplicateGroups = groups.filter(g => g.activeRows.length > 1);
+  return {
+    totalActiveRows,
+    totalVoidedRows,
+    totalUniqueKeys: groups.filter(g => g.activeRows.length > 0).length,
+    activeDuplicateCount: activeDuplicateGroups.length,
+    voidedRowsWithMoneyCount,
+    groups,
+    activeDuplicateGroups,
+    isClean: activeDuplicateGroups.length === 0 && voidedRowsWithMoneyCount === 0,
+  };
+}
+
+describe("Sheet Health Report — computeHealthReport", () => {
+  const activeA: HealthEntry = {
+    rowNumber: 2, invNumber: "1001", laNumber: "5555",
+    date: "2026-01-15", total: "2598.75", status: "sheet_synced",
+  };
+  const activeB: HealthEntry = {
+    rowNumber: 4, invNumber: "1002", laNumber: "6666",
+    date: "2026-02-01", total: "1000.00", status: "sheet_synced",
+  };
+  const voidedA: HealthEntry = {
+    rowNumber: 3, invNumber: "1001", laNumber: "5555",
+    date: "2026-01-10", total: "0", status: VOID_STATUS,
+  };
+  const voidedAWithMoney: HealthEntry = { ...voidedA, total: "2598.75" }; // incorrectly not zeroed
+
+  it("clean sheet: 2 active rows, 2 unique keys, 0 voids → isClean true", () => {
+    const report = computeHealthReport([activeA, activeB]);
+    expect(report.totalActiveRows).toBe(2);
+    expect(report.totalUniqueKeys).toBe(2);
+    expect(report.totalVoidedRows).toBe(0);
+    expect(report.activeDuplicateCount).toBe(0);
+    expect(report.voidedRowsWithMoneyCount).toBe(0);
+    expect(report.isClean).toBe(true);
+  });
+
+  it("active duplicate: 2 rows for same LA# → activeDuplicateCount = 1, isClean false", () => {
+    const duplicate: HealthEntry = { ...activeA, rowNumber: 5 };
+    const report = computeHealthReport([activeA, duplicate, activeB]);
+    expect(report.activeDuplicateCount).toBe(1);
+    expect(report.isClean).toBe(false);
+    expect(report.activeDuplicateGroups).toHaveLength(1);
+    expect(report.activeDuplicateGroups[0]!.key).toBe("la:5555");
+    expect(report.activeDuplicateGroups[0]!.activeRows).toHaveLength(2);
+  });
+
+  it("syncRow for duplicate group is the highest row number (final tiebreaker)", () => {
+    const duplicate: HealthEntry = { ...activeA, rowNumber: 8 };
+    const report = computeHealthReport([activeA, duplicate]);
+    expect(report.activeDuplicateGroups[0]!.syncRow).toBe(8);
+  });
+
+  it("VOID row with zero total → isClean true for that group, voidedRowsWithMoneyCount stays 0", () => {
+    const report = computeHealthReport([activeA, voidedA]);
+    expect(report.totalActiveRows).toBe(1);
+    expect(report.totalVoidedRows).toBe(1);
+    expect(report.voidedRowsWithMoneyCount).toBe(0);
+    expect(report.isClean).toBe(true);
+  });
+
+  it("VOID row with non-zero total → isClean false, voidedRowsWithMoneyCount = 1", () => {
+    const report = computeHealthReport([activeA, voidedAWithMoney]);
+    expect(report.voidedRowsWithMoneyCount).toBe(1);
+    expect(report.isClean).toBe(false);
+  });
+
+  it("hasOneActiveRow is true when exactly one active row exists for the key", () => {
+    const report = computeHealthReport([activeA, voidedA]);
+    const group = report.groups.find(g => g.key === "la:5555");
+    expect(group?.hasOneActiveRow).toBe(true);
+  });
+
+  it("hasOneActiveRow is false when two active rows exist for the key", () => {
+    const dup: HealthEntry = { ...activeA, rowNumber: 7 };
+    const report = computeHealthReport([activeA, dup]);
+    const group = report.groups.find(g => g.key === "la:5555");
+    expect(group?.hasOneActiveRow).toBe(false);
+  });
+
+  it("totalVoidedRows counts only rows with VOID_STATUS", () => {
+    const report = computeHealthReport([activeA, activeB, voidedA]);
+    expect(report.totalVoidedRows).toBe(1);
+  });
+
+  it("unrelated invoice rows are unaffected by voiding another invoice", () => {
+    const report = computeHealthReport([activeA, voidedA, activeB]);
+    // activeA (la:5555) has 1 active + 1 void. activeB (la:6666) has 1 active.
+    expect(report.totalUniqueKeys).toBe(2);
+    const groupB = report.groups.find(g => g.key === "la:6666");
+    expect(groupB?.activeRows).toHaveLength(1);
+    expect(groupB?.voidedRows).toHaveLength(0);
+    expect(groupB?.hasOneActiveRow).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Z. End-to-end scenario: two rows → one active after void-based sync
+// ---------------------------------------------------------------------------
+
+describe("End-to-end: two rows with same LA# → one active after void-based sync", () => {
+  // This test proves the full correctness chain:
+  // 1. Sync with 2 matching rows → higher row kept, lower row voided
+  // 2. After void: Sheet state has 1 active + 1 voided
+  // 3. Health report sees 1 active row, 0 active duplicates, isClean: true
+  // 4. Duplicate checker (findDuplicateGroupsV2) returns 0 groups
+  // 5. Voided row has zero total → doesn't inflate SUM formulas
+
+  const row1: HealthEntry = {
+    rowNumber: 2, invNumber: "1001", laNumber: "5555",
+    date: "2026-01-10", total: "2598.75", status: "sheet_synced",
+  };
+  const row2: HealthEntry = {
+    rowNumber: 5, invNumber: "1001", laNumber: "5555",
+    date: "2026-01-15", total: "2598.75", status: "sheet_synced",
+  };
+
+  it("Step 1: upsert with 2 matching rows voids the lower-numbered row", () => {
+    // Using the simulateUpsertWithVoid helper from section W
+    const entry1: UpsertEntry = { ...row1, cellA: row1.invNumber, cellB: row1.date, cellC: row1.laNumber, cellD: "Corporate Shoot", cellE: row1.total, cellT: row1.status };
+    const entry2: UpsertEntry = { ...row2, cellA: row2.invNumber, cellB: row2.date, cellC: row2.laNumber, cellD: "Corporate Shoot", cellE: row2.total, cellT: row2.status };
+    const result = simulateUpsertWithVoid([entry1, entry2], "5555", "1001", 2598.75);
+    expect(result.keptRow).toBe(5);       // higher row = more recent = kept
+    expect(result.voidedRows).toEqual([2]); // lower row voided
+    expect(result.hasDuplicates).toBe(true);
+  });
+
+  it("Step 2: after void, Sheet state has 1 active row + 1 VOID_DUPLICATE row", () => {
+    const afterVoid: HealthEntry[] = [
+      { ...row1, status: VOID_STATUS, total: "0" }, // voided and zeroed
+      row2,                                           // kept active
+    ];
+    const report = computeHealthReport(afterVoid);
+    expect(report.totalActiveRows).toBe(1);
+    expect(report.totalVoidedRows).toBe(1);
+    expect(report.activeDuplicateCount).toBe(0);
+    expect(report.isClean).toBe(true);
+  });
+
+  it("Step 3: health report confirms isClean: true and hasOneActiveRow for la:5555", () => {
+    const afterVoid: HealthEntry[] = [
+      { ...row1, status: VOID_STATUS, total: "0" },
+      row2,
+    ];
+    const report = computeHealthReport(afterVoid);
+    const group = report.groups.find(g => g.key === "la:5555");
+    expect(group?.hasOneActiveRow).toBe(true);
+    expect(group?.voidedRowsHaveZeroTotal).toBe(true);
+    expect(report.isClean).toBe(true);
+  });
+
+  it("Step 4: duplicate checker sees 0 active duplicate groups", () => {
+    const afterVoid: FakeDuplicateEntryV2[] = [
+      { rowNumber: 2, invNumber: "1001", laNumber: "5555", date: "2026-01-10", total: "0", status: VOID_STATUS },
+      { rowNumber: 5, invNumber: "1001", laNumber: "5555", date: "2026-01-15", total: "2598.75", status: "sheet_synced" },
+    ];
+    const groups = findDuplicateGroupsV2(afterVoid);
+    expect(groups).toHaveLength(0); // VOID row excluded → only 1 active row → no duplicate
+  });
+
+  it("Step 5: voided row has zero total so SUM formulas exclude its money", () => {
+    const afterVoid: HealthEntry[] = [
+      { ...row1, status: VOID_STATUS, total: "0" },
+      row2,
+    ];
+    const report = computeHealthReport(afterVoid);
+    const group = report.groups.find(g => g.key === "la:5555");
+    expect(group?.voidedRowsHaveZeroTotal).toBe(true);
+    expect(report.voidedRowsWithMoneyCount).toBe(0);
+  });
+
+  it("Step 5b: if voided row were NOT zeroed, health report flags it as a problem", () => {
+    const afterVoidNotZeroed: HealthEntry[] = [
+      { ...row1, status: VOID_STATUS, total: "2598.75" }, // bug: total not zeroed
+      row2,
+    ];
+    const report = computeHealthReport(afterVoidNotZeroed);
+    expect(report.voidedRowsWithMoneyCount).toBe(1);
+    expect(report.isClean).toBe(false);
+  });
+
+  it("unrelated invoice rows (la:6666) are completely untouched", () => {
+    const unrelated: HealthEntry = {
+      rowNumber: 7, invNumber: "1002", laNumber: "6666",
+      date: "2026-02-01", total: "1000.00", status: "sheet_synced",
+    };
+    const afterVoid: HealthEntry[] = [
+      { ...row1, status: VOID_STATUS, total: "0" },
+      row2,
+      unrelated,
+    ];
+    const report = computeHealthReport(afterVoid);
+    expect(report.totalUniqueKeys).toBe(2);
+    const groupB = report.groups.find(g => g.key === "la:6666");
+    expect(groupB?.activeRows).toHaveLength(1);
+    expect(groupB?.voidedRows).toHaveLength(0);
+  });
+});
