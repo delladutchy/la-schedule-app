@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
     syncedAt,
     sheetTarget,
     hasDuplicates: upsertResult.hasDuplicates,
-    voidedRows: upsertResult.voidedRows,
+    archivedRows: upsertResult.archivedRows,
     keptRow: upsertResult.rowNumber,
   });
 }

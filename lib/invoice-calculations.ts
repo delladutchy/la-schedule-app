@@ -25,6 +25,9 @@ const TIME_12_RE = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i;
 const TIME_24_RE = /^(\d{1,2}):(\d{2})$/;
 const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+/** IRS standard business mileage deduction rate for 2026. */
+export const IRS_MILEAGE_RATE_2026 = 0.725;
+
 /** Convert a human time string to minutes-since-midnight. Returns null on parse failure. */
 export function parseTimeToMinutes(raw: string): number | null {
   const s = raw.trim();
@@ -395,5 +398,7 @@ export function generateSheetRow(
     jobNameOverride:            extras?.jobNameOverride            ?? "",
     dayRateDescriptionOverride: extras?.dayRateDescriptionOverride ?? "",
     noteOverride:               extras?.noteOverride               ?? "",
+    // Tax column AH: unreimbursed miles × IRS rate = Schedule C deduction value
+    unreimbursedMileageValue: Math.round((m?.unreimbursedMiles ?? 0) * IRS_MILEAGE_RATE_2026 * 100) / 100,
   };
 }

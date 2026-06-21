@@ -25,54 +25,62 @@ const SHEET_NAME = process.env.GOOGLE_SHEET_NAME ?? "LA PAY (2026)";
 // Sheet names with spaces or parens must be single-quoted in A1 notation.
 const QUOTED_SHEET_NAME = `'${SHEET_NAME}'`;
 
-// Columns 1–21: original layout (never change position — existing data depends on it)
-// INV#, DATE, LA#, GIG, TOTAL, LABOR, OT, PER DIEM, MILEAGE, PARKING,
-// HOTEL, TOLLS, BAG FEES, UBER, OTHER, TOTAL MILES, LA PAID MILES,
-// UNREIMBURSED MILES, MILEAGE PAID, STATUS, PAID DATE
+// Tax-row column layout (A–U, indices 0–20 — NEVER REORDER):
+//   A  INV#            B  DATE           C  LA JOB#        D  GIG
+//   E  TOTAL PAY       F  LABOR          G  OT             H  PER DIEM
+//   I  MILEAGE ($)     J  PARKING        K  HOTEL          L  TOLLS
+//   M  BAG FEES        N  UBER           O  OTHER EXPENSES
+//   P  TOTAL MILES     Q  LA PAID MILES  R  UNREIMBURSED MILEAGE (miles)
+//   S  MILEAGE PAID$   T  STATUS         U  PAID DATE
 //
-// Columns 22–28: native invoicing / payment metadata (appended to the right)
-// PDF LINK, SENT DATE, AMOUNT PAID, REMAINING BALANCE,
-// PAYMENT METHOD, PAYMENT RECEIVED DATE, PAYMENT BATCH REF
+// Native invoicing columns (V–AB, indices 21–27):
+//   V  PDF LINK   W  SENT DATE   X  AMOUNT PAID   Y  REMAINING BALANCE
+//   Z  PAYMENT METHOD   AA  PAYMENT RECEIVED DATE   AB  PAYMENT BATCH REF
 //
-// Columns 29–33 (optional AC–AG): extended sync fields
-// SENT TO, SENT SUBJECT, JOB NAME OVERRIDE, DAY RATE DESC OVERRIDE, INVOICE NOTE OVERRIDE
+// Optional extended columns (AC–AG, indices 28–32):
+//   AC  SENT TO   AD  SENT SUBJECT   AE  JOB NAME OVERRIDE
+//   AF  DAY RATE DESC OVERRIDE   AG  INVOICE NOTE OVERRIDE
+//
+// Tax deduction column (AH, index 33 — optional, added after existing columns):
+//   AH  UNREIMBURSED MILEAGE VALUE (unreimbursed miles × IRS standard rate)
 const COLUMN_ORDER: Array<keyof SheetRow> = [
-  "invoiceNumber",
-  "date",
-  "laJobNumber",
-  "gigEvent",
-  "totalPay",
-  "labor",
-  "ot",
-  "perDiem",
-  "mileage",
-  "parking",
-  "hotel",
-  "tolls",
-  "bagFees",
-  "uber",
-  "otherExpenses",
-  "totalBusinessMiles",
-  "laPaidMiles",
-  "unreimbursedMiles",
-  "mileagePaid",
-  "status",
-  "paidDate",
+  "invoiceNumber",       // A
+  "date",               // B
+  "laJobNumber",        // C
+  "gigEvent",           // D
+  "totalPay",           // E
+  "labor",              // F
+  "ot",                 // G
+  "perDiem",            // H
+  "mileage",            // I — mileage dollars charged to LA
+  "parking",            // J
+  "hotel",              // K
+  "tolls",              // L
+  "bagFees",            // M
+  "uber",               // N
+  "otherExpenses",      // O
+  "totalBusinessMiles", // P — total miles driven (miles, not dollars)
+  "laPaidMiles",        // Q — miles LA reimbursed (miles, not dollars)
+  "unreimbursedMiles",  // R — totalMiles − laPaidMiles (miles, NOT dollars)
+  "mileagePaid",        // S — mileage dollars LA paid (same as col I)
+  "status",             // T
+  "paidDate",           // U
   // Native invoicing columns — appended at right; existing rows leave them blank.
-  "invoicePdfUrl",
-  "invoiceSentDate",
-  "amountPaid",
-  "remainingBalance",
-  "paymentMethod",
-  "paymentReceivedDate",
-  "paymentBatchRef",
-  // Optional extended columns (AC–AG). Add matching headers in the Sheet to label them.
-  // Recommended: SENT TO | SENT SUBJECT | JOB NAME OVERRIDE | DAY RATE DESC OVERRIDE | INVOICE NOTE OVERRIDE
-  "sentTo",
-  "sentSubject",
-  "jobNameOverride",
-  "dayRateDescriptionOverride",
-  "noteOverride",
+  "invoicePdfUrl",          // V
+  "invoiceSentDate",        // W
+  "amountPaid",             // X
+  "remainingBalance",       // Y
+  "paymentMethod",          // Z
+  "paymentReceivedDate",    // AA
+  "paymentBatchRef",        // AB
+  // Optional extended columns (AC–AG).
+  "sentTo",                        // AC
+  "sentSubject",                   // AD
+  "jobNameOverride",               // AE
+  "dayRateDescriptionOverride",    // AF
+  "noteOverride",                  // AG
+  // Tax deduction column (AH) — unreimbursed miles × IRS standard mileage rate.
+  "unreimbursedMileageValue",      // AH
 ];
 
 // ---------------------------------------------------------------------------
@@ -96,6 +104,13 @@ export function normalizeLA(la: string): string {
 export const VOID_STATUS = "VOID_DUPLICATE";
 
 /**
+ * Name of the archive tab where stale duplicate rows are moved during sync.
+ * Rows land here instead of cluttering the main Sheet with VOID_DUPLICATE markers.
+ */
+export const ARCHIVE_SHEET_NAME = "Voided Duplicates";
+const QUOTED_ARCHIVE_SHEET_NAME = `'${ARCHIVE_SHEET_NAME}'`;
+
+/**
  * True if a sheet row looks like an active invoice data row rather than a
  * totals/summary row or an auto-voided duplicate.
  *
@@ -112,11 +127,20 @@ export function isInvoiceDataRow(cellA: string, cellC: string, cellT?: string): 
 }
 
 /**
- * Build the 33-column value array written to a stale duplicate row to neutralise it.
+ * Returns true when col A of a row is the TOTALS summary line.
+ * Matches "TOTALS:", "TOTALS", "TOTAL", etc. (case-insensitive).
+ */
+export function isTotalsRow(cellA: string): boolean {
+  const t = cellA.trim().toUpperCase();
+  return t.startsWith("TOTALS") || t === "TOTAL";
+}
+
+/**
+ * Build the 34-column value array written to a stale duplicate row to neutralise it.
  * - Keeps cols A–D (INV#, DATE, LA#, GIG) so the row is still identifiable.
  * - Zeros all money columns E–S so SUM formulas exclude this row automatically.
  * - Sets col T (STATUS) = VOID_STATUS.
- * - Clears cols U–AG (payment tracking, extended fields).
+ * - Clears cols U–AH (payment tracking, extended fields, tax column).
  */
 export function buildVoidRowValues(
   cellA: string,
@@ -124,7 +148,7 @@ export function buildVoidRowValues(
   cellC: string,
   cellD: string,
 ): (string | number)[] {
-  const ncols = COLUMN_ORDER.length; // 33
+  const ncols = COLUMN_ORDER.length; // 34
   const row: (string | number)[] = new Array(ncols).fill("");
   row[0] = cellA; // A: INV# (kept for identification)
   row[1] = cellB; // B: DATE (kept)
@@ -132,7 +156,7 @@ export function buildVoidRowValues(
   row[3] = cellD; // D: GIG (kept)
   for (let i = 4; i <= 18; i++) row[i] = 0; // E–S: all money columns → 0
   row[19] = VOID_STATUS;                      // T: STATUS = "VOID_DUPLICATE"
-  // U–AG (indices 20–32): already "" from fill — dates and text stay empty
+  // U–AH (indices 20–33): already "" from fill — dates and text stay empty
   return row;
 }
 
@@ -188,10 +212,10 @@ function rowToValues(row: SheetRow): (string | number)[] {
 export interface UpsertSheetRowResult {
   action: "updated" | "inserted";
   rowNumber: number;
-  /** True when stale duplicate rows were found and automatically voided during sync. */
+  /** True when stale duplicate rows were found and archived during sync. */
   hasDuplicates: boolean;
-  /** Row numbers that were voided (money zeroed, STATUS set to VOID_DUPLICATE). */
-  voidedRows: number[];
+  /** Row numbers that were archived to "Voided Duplicates" tab and removed from main sheet. */
+  archivedRows: number[];
 }
 
 // Score a candidate sheet row for selection as the "keep" row when multiple
@@ -281,52 +305,64 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
   const numericTabId = tabMeta.properties.sheetId;
 
   const existingRows = readRes.data.values ?? [];
-  // matchingRows: all non-void rows that share this invoice's key, with cell data
-  // so we can build void rows for the stale ones after choosing the keeper.
+
+  // Pass 1: Locate the TOTALS row so all active data rows are guaranteed to land above it.
+  let totalsRowNum = -1;
+  for (let i = 1; i < existingRows.length; i++) {
+    if (isTotalsRow(String(existingRows[i]?.[0] ?? "").trim())) { totalsRowNum = i + 1; break; }
+  }
+
+  // Active rows matching this invoice's key → candidates for the "keep" selection.
   const matchingRows: Array<{
     rowNumber: number;
-    score: number;
-    cellA: string;
-    cellB: string;
-    cellC: string;
-    cellD: string;
+    score:     number;
+    cellA: string; cellB: string; cellC: string; cellD: string;
+    cellE: string; cellT: string;
   }> = [];
+
+  // Old VOID_DUPLICATE rows on the main sheet for this key → clean them up too.
+  const oldVoidRows: ArchiveEntry[] = [];
+
+  // lastDataRow tracks only rows ABOVE the TOTALS line for INSERT placement.
   let lastDataRow = 1;
 
   for (let i = 1; i < existingRows.length; i++) {
     const cellA = String(existingRows[i]?.[0]  ?? "").trim(); // A: INV#
     const cellB = String(existingRows[i]?.[1]  ?? "").trim(); // B: DATE
     const cellC = String(existingRows[i]?.[2]  ?? "").trim(); // C: LA Job #
-    const cellD = String(existingRows[i]?.[3]  ?? "").trim(); // D: GIG (needed for void row)
-    const cellE = String(existingRows[i]?.[4]  ?? "").trim(); // E: TOTAL (for scoring)
+    const cellD = String(existingRows[i]?.[3]  ?? "").trim(); // D: GIG
+    const cellE = String(existingRows[i]?.[4]  ?? "").trim(); // E: TOTAL
     const cellT = String(existingRows[i]?.[19] ?? "").trim(); // T: STATUS
     const sheetsRow = i + 1;
 
-    // Track the last active invoice-data row for insert placement.
-    // Void rows and totals rows are excluded from this counter.
-    if (isInvoiceDataRow(cellA, cellC, cellT)) {
+    // Only advance lastDataRow for rows strictly above TOTALS.
+    if (isInvoiceDataRow(cellA, cellC, cellT) && (totalsRowNum < 0 || sheetsRow < totalsRowNum)) {
       lastDataRow = sheetsRow;
     }
 
-    // Skip void rows — they are already neutralised and should not be re-matched.
-    if (cellT === VOID_STATUS) continue;
-
     const laMatch  = !!(incomingLa  && normalizeLA(cellC) === incomingLa);
     const invMatch = !!(incomingInv && cellA && cellA === incomingInv);
+
+    if (cellT === VOID_STATUS) {
+      // Collect old void rows for the same key so they are cleaned off the main sheet.
+      if (laMatch || invMatch) {
+        oldVoidRows.push({ rowNumber: sheetsRow, invNumber: cellA, date: cellB, laNumber: cellC, gigEvent: cellD, total: cellE, originalStatus: cellT });
+      }
+      continue;
+    }
+
     if (laMatch || invMatch) {
       const score = scoreKeepRow(cellA, cellB, cellC, cellE, sheetsRow, incomingLa, incomingInv, row.totalPay);
-      matchingRows.push({ rowNumber: sheetsRow, score, cellA, cellB, cellC, cellD });
+      matchingRows.push({ rowNumber: sheetsRow, score, cellA, cellB, cellC, cellD, cellE, cellT });
     }
   }
 
   const values = [rowToValues(row)];
 
   if (matchingRows.length > 0) {
-    // ── UPDATE the best matching row ──────────────────────────────────────────
-    const keepEntry = matchingRows.reduce((best, entry) =>
-      entry.score > best.score ? entry : best,
-    );
-    const staleEntries = matchingRows.filter((m) => m.rowNumber !== keepEntry.rowNumber);
+    // ── UPDATE the best-scored matching row ──────────────────────────────────
+    const keepEntry = matchingRows.reduce((best, e) => e.score > best.score ? e : best);
+    const staleActive = matchingRows.filter((m) => m.rowNumber !== keepEntry.rowNumber);
 
     // Write current invoice data to the kept row.
     await sheets.spreadsheets.values.update({
@@ -336,59 +372,73 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
       requestBody: { values },
     });
 
-    // ── VOID all stale duplicates in one batch call ───────────────────────────
-    // Zero every money column so SUM formulas stop including these rows.
-    // Identifying info (INV#, DATE, LA#, GIG) is preserved for audit trail.
-    if (staleEntries.length > 0) {
-      await sheets.spreadsheets.values.batchUpdate({
-        spreadsheetId: sheetId,
-        requestBody: {
-          valueInputOption: "USER_ENTERED",
-          data: staleEntries.map((entry) => ({
-            range: `${QUOTED_SHEET_NAME}!A${entry.rowNumber}`,
-            values: [buildVoidRowValues(entry.cellA, entry.cellB, entry.cellC, entry.cellD)],
-          })),
-        },
-      });
+    // ── ARCHIVE + DELETE all stale rows (active duplicates + old void rows) ──
+    // Rows are moved to "Voided Duplicates" tab and deleted from the main sheet
+    // so the main sheet stays clean and SUM formulas are never inflated.
+    const allStale: ArchiveEntry[] = [
+      ...staleActive.map((e) => ({ rowNumber: e.rowNumber, invNumber: e.cellA, date: e.cellB, laNumber: e.cellC, gigEvent: e.cellD, total: e.cellE, originalStatus: e.cellT })),
+      ...oldVoidRows,
+    ];
+    if (allStale.length > 0) {
+      await archiveAndDeleteRows(sheets, sheetId, numericTabId, allStale, spreadsheetRes.data.sheets);
     }
 
     return {
-      action: "updated",
-      rowNumber: keepEntry.rowNumber,
-      hasDuplicates: staleEntries.length > 0,
-      voidedRows: staleEntries.map((e) => e.rowNumber),
+      action:        "updated",
+      rowNumber:     keepEntry.rowNumber,
+      hasDuplicates: staleActive.length > 0,
+      archivedRows:  allStale.map((e) => e.rowNumber),
     };
   }
 
-  // ── INSERT new row after the last active invoice-data row ─────────────────
+  // ── INSERT new row — always above the TOTALS line ────────────────────────
   //
-  // insertDimension uses 0-indexed positions:
-  //   startIndex = lastDataRow  → inserts before 0-indexed row lastDataRow,
-  //   which is after 1-indexed row lastDataRow (the last active data row).
-  //
-  // Example: lastDataRow = 10  →  startIndex = 10
-  //   New row lands at 1-indexed row 11.
-  //   Old row 11 (first totals row) shifts to row 12.  ✓
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: sheetId,
-    requestBody: {
-      requests: [
-        {
+  // First clean any old void rows for this key that are still on the main sheet.
+  if (oldVoidRows.length > 0) {
+    await archiveAndDeleteRows(sheets, sheetId, numericTabId, oldVoidRows, spreadsheetRes.data.sheets);
+    // lastDataRow was calculated excluding void rows, so it remains valid after deletion.
+  }
+
+  // Check whether the row immediately after the last data row is a usable blank.
+  // A blank row is only reused if it is strictly ABOVE the TOTALS line.
+  const nextRowNum  = lastDataRow + 1;          // 1-indexed candidate row
+  const nextIndex   = lastDataRow;              // 0-indexed position in existingRows
+  const nextRow     = existingRows[nextIndex];
+  const nextCellA   = String(nextRow?.[0]  ?? "").trim();
+  const nextCellC   = String(nextRow?.[2]  ?? "").trim();
+  const nextCellT   = String(nextRow?.[19] ?? "").trim();
+  const nextIsAboveTotals = totalsRowNum < 0 || nextRowNum < totalsRowNum;
+  const nextIsBlank = !nextCellA && !nextCellC && !nextCellT && nextIsAboveTotals;
+
+  let newRowNumber: number;
+
+  if (nextIsBlank) {
+    // Reuse the existing blank row above TOTALS — no insertDimension needed.
+    newRowNumber = nextRowNum;
+  } else {
+    // Insert a new blank row. Always go immediately above TOTALS when known,
+    // so no active data ever lands in or below the TOTALS/summary area.
+    const insertAbove    = totalsRowNum > 0 ? totalsRowNum : nextRowNum;
+    const insertStart0   = insertAbove - 1; // 0-indexed: insert before this position
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: {
+        requests: [{
           insertDimension: {
             range: {
-              sheetId: numericTabId,
-              dimension: "ROWS",
-              startIndex: lastDataRow,
-              endIndex: lastDataRow + 1,
+              sheetId:    numericTabId,
+              dimension:  "ROWS",
+              startIndex: insertStart0,
+              endIndex:   insertStart0 + 1,
             },
-            inheritFromBefore: lastDataRow > 1,
+            inheritFromBefore: insertStart0 > 1,
           },
-        },
-      ],
-    },
-  });
+        }],
+      },
+    });
+    newRowNumber = insertAbove; // new blank row is now at this 1-indexed position
+  }
 
-  const newRowNumber = lastDataRow + 1;
   await sheets.spreadsheets.values.update({
     spreadsheetId: sheetId,
     range: `${QUOTED_SHEET_NAME}!A${newRowNumber}`,
@@ -397,10 +447,10 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
   });
 
   return {
-    action: "inserted",
-    rowNumber: newRowNumber,
+    action:        "inserted",
+    rowNumber:     newRowNumber,
     hasDuplicates: false,
-    voidedRows: [],
+    archivedRows:  [],
   };
 }
 
@@ -499,10 +549,10 @@ export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Pro
 // ---------------------------------------------------------------------------
 
 export interface SheetDuplicateGroup {
-  key: string;                       // "INV#:LA#" or whichever keys exist
-  rows: Array<{ rowNumber: number; invNumber: string; laNumber: string; date: string; total: string }>;
-  keepRow: number;                   // suggested row to keep (latest date or last in list)
-  deleteRows: number[];              // row numbers safe to delete after review
+  key: string;
+  rows: Array<{ rowNumber: number; invNumber: string; laNumber: string; date: string; total: string; gigEvent?: string }>;
+  keepRow: number;    // suggested row to keep (latest date or last in list)
+  deleteRows: number[]; // row numbers safe to delete after review
 }
 
 type SheetDuplicateEntry = SheetDuplicateGroup["rows"][number];
@@ -569,18 +619,18 @@ export async function findSheetDuplicates(): Promise<SheetDuplicateGroup[]> {
     const cellA = String(rows[i]?.[0]  ?? "").trim();
     const cellB = String(rows[i]?.[1]  ?? "").trim();
     const cellC = String(rows[i]?.[2]  ?? "").trim();
+    const cellD = String(rows[i]?.[3]  ?? "").trim(); // D: GIG
     const cellE = String(rows[i]?.[4]  ?? "").trim();
-    const cellT = String(rows[i]?.[19] ?? "").trim(); // T: STATUS
+    const cellT = String(rows[i]?.[19] ?? "").trim();
 
-    if (!isInvoiceDataRow(cellA, cellC, cellT)) continue; // skip totals, summaries, and void rows
+    if (!isInvoiceDataRow(cellA, cellC, cellT)) continue;
 
-    // Build a canonical key for this row. Prefer LA# since it's more stable.
     const normLa  = normalizeLA(cellC);
     const normInv = cellA;
     const key     = normLa ? `la:${normLa}` : normInv ? `inv:${normInv}` : null;
     if (!key) continue;
 
-    const entry = { rowNumber: i + 1, invNumber: cellA, laNumber: cellC, date: cellB, total: cellE };
+    const entry = { rowNumber: i + 1, invNumber: cellA, laNumber: cellC, date: cellB, total: cellE, gigEvent: cellD };
     const existing = groups.get(key) ?? [];
     existing.push(entry);
     groups.set(key, existing);
@@ -602,6 +652,117 @@ export interface SheetDuplicateCleanupResult {
   before: SheetDuplicateGroup[];
   after: SheetDuplicateGroup[];
   deletedRows: number[];
+}
+
+/** Row data needed to write an entry to the archive tab. */
+interface ArchiveEntry {
+  rowNumber:      number;
+  invNumber:      string;
+  date:           string;
+  laNumber:       string;
+  gigEvent:       string;
+  total:          string;
+  originalStatus: string;
+}
+
+type SpreadsheetSheetList = Array<{
+  properties?: { sheetId?: number | null; title?: string | null } | null;
+}>;
+
+/**
+ * Create the "Voided Duplicates" archive tab if it doesn't already exist.
+ * Writes a header row so the tab is readable at a glance.
+ */
+async function ensureArchiveTab(
+  sheets:          ReturnType<typeof google.sheets>,
+  sheetId:         string,
+  existingSheets:  SpreadsheetSheetList | null | undefined,
+): Promise<void> {
+  if (existingSheets?.find((s) => s.properties?.title === ARCHIVE_SHEET_NAME)) return;
+
+  const createRes = await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: sheetId,
+    requestBody: {
+      requests: [{
+        addSheet: {
+          properties: { title: ARCHIVE_SHEET_NAME, gridProperties: { frozenRowCount: 1 } },
+        },
+      }],
+    },
+  });
+  if (createRes.data.replies?.[0]?.addSheet?.properties?.sheetId == null) {
+    throw new Error("[google-sheets] Failed to create 'Voided Duplicates' archive tab");
+  }
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_ARCHIVE_SHEET_NAME}!A1:I1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [["Original Row", "Invoice #", "Date", "LA Job #", "Gig/Event", "Total", "Original Status", "Archive Status", "Archived At"]],
+    },
+  });
+}
+
+/**
+ * Append entries to the "Voided Duplicates" archive tab (create tab if needed),
+ * then delete those rows from the main sheet using the provided numeric tab ID.
+ * Archive is written BEFORE deletion so data is never lost if delete fails.
+ */
+async function archiveAndDeleteRows(
+  sheets:         ReturnType<typeof google.sheets>,
+  sheetId:        string,
+  numericTabId:   number,
+  entries:        ArchiveEntry[],
+  existingSheets: SpreadsheetSheetList | null | undefined,
+): Promise<void> {
+  if (entries.length === 0) return;
+
+  // 1. Ensure archive tab exists.
+  await ensureArchiveTab(sheets, sheetId, existingSheets);
+
+  // 2. Append to archive tab.
+  const timestamp = new Date().toISOString();
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_ARCHIVE_SHEET_NAME}!A:I`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: {
+      values: entries.map((e) => [
+        e.rowNumber,
+        e.invNumber,
+        e.date,
+        e.laNumber,
+        e.gigEvent,
+        e.total,
+        e.originalStatus || "sheet_synced",
+        VOID_STATUS,
+        timestamp,
+      ]),
+    },
+  });
+
+  // 3. Delete from main sheet in descending row order so indices stay valid.
+  const safeRows = [...new Set(entries.map((e) => e.rowNumber))]
+    .filter((n) => Number.isInteger(n) && n > 1)
+    .sort((a, b) => b - a);
+  if (safeRows.length === 0) return;
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: sheetId,
+    requestBody: {
+      requests: safeRows.map((rowNumber) => ({
+        deleteDimension: {
+          range: {
+            sheetId: numericTabId,
+            dimension: "ROWS",
+            startIndex: rowNumber - 1,
+            endIndex: rowNumber,
+          },
+        },
+      })),
+    },
+  });
 }
 
 async function deleteSheetRows(rowNumbers: number[]): Promise<void> {
@@ -644,29 +805,62 @@ async function deleteSheetRows(rowNumbers: number[]): Promise<void> {
   });
 }
 
+/**
+ * Archive stale duplicate rows to "Voided Duplicates" then delete them from main sheet.
+ * Creates its own auth/sheets client so it can be called from any context.
+ */
+async function archiveAndDeleteByRows(entries: ArchiveEntry[]): Promise<void> {
+  if (entries.length === 0) return;
+
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
+
+  const auth = await getSheetAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const spreadsheetRes = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
+  const tabMeta = spreadsheetRes.data.sheets?.find((s) => s.properties?.title === SHEET_NAME);
+  if (!tabMeta || tabMeta.properties?.sheetId == null) {
+    throw new Error(`[google-sheets] Tab "${SHEET_NAME}" not found`);
+  }
+
+  await archiveAndDeleteRows(sheets, sheetId, tabMeta.properties.sheetId, entries, spreadsheetRes.data.sheets);
+}
+
 export async function deleteSheetDuplicateRows(requestedRows?: number[]): Promise<SheetDuplicateCleanupResult> {
   const before = await findSheetDuplicates();
-  const recommendedRows = new Set(before.flatMap((group) => group.deleteRows));
-  const requestedSet = requestedRows && requestedRows.length > 0
-    ? new Set(requestedRows.filter((rowNumber) => Number.isInteger(rowNumber)))
+  const recommendedRows = new Set(before.flatMap((g) => g.deleteRows));
+  const requestedSet = requestedRows?.length
+    ? new Set(requestedRows.filter((n) => Number.isInteger(n)))
     : null;
   const rowsToDelete = [...recommendedRows]
-    .filter((rowNumber) => (requestedSet ? requestedSet.has(rowNumber) : true))
+    .filter((n) => (requestedSet ? requestedSet.has(n) : true))
     .sort((a, b) => b - a);
 
-  await deleteSheetRows(rowsToDelete);
-  const after = rowsToDelete.length > 0 ? await findSheetDuplicates() : before;
+  if (rowsToDelete.length > 0) {
+    const toArchive: ArchiveEntry[] = before.flatMap((g) =>
+      g.rows
+        .filter((r) => rowsToDelete.includes(r.rowNumber))
+        .map((r) => ({
+          rowNumber:      r.rowNumber,
+          invNumber:      r.invNumber,
+          date:           r.date,
+          laNumber:       r.laNumber,
+          gigEvent:       r.gigEvent ?? "",
+          total:          r.total,
+          originalStatus: "sheet_synced",
+        })),
+    );
+    await archiveAndDeleteByRows(toArchive);
+  }
 
-  return {
-    before,
-    after,
-    deletedRows: rowsToDelete,
-  };
+  const after = rowsToDelete.length > 0 ? await findSheetDuplicates() : before;
+  return { before, after, deletedRows: rowsToDelete };
 }
 
 /**
  * Delete duplicate rows for one specific invoice key only.
- * Safe for invoice-specific cleanup: deletes nothing outside the matching group.
+ * Safe for invoice-specific cleanup: archives + deletes nothing outside the matching group.
  *
  * @param invoiceKey — canonical key from findSheetDuplicates, e.g. "la:5555" or "inv:1001"
  */
@@ -678,14 +872,22 @@ export async function deleteSheetDuplicatesForKey(invoiceKey: string): Promise<S
     return { before, after: before, deletedRows: [] };
   }
 
-  await deleteSheetRows(group.deleteRows);
+  const toArchive: ArchiveEntry[] = group.rows
+    .filter((r) => group.deleteRows.includes(r.rowNumber))
+    .map((r) => ({
+      rowNumber:      r.rowNumber,
+      invNumber:      r.invNumber,
+      date:           r.date,
+      laNumber:       r.laNumber,
+      gigEvent:       r.gigEvent ?? "",
+      total:          r.total,
+      originalStatus: "sheet_synced",
+    }));
+
+  await archiveAndDeleteByRows(toArchive);
   const after = await findSheetDuplicates();
 
-  return {
-    before,
-    after,
-    deletedRows: group.deleteRows,
-  };
+  return { before, after, deletedRows: group.deleteRows };
 }
 
 // ---------------------------------------------------------------------------
@@ -714,15 +916,25 @@ export interface SheetHealthGroup {
 
 export interface SheetHealthReport {
   totalActiveRows: number;
+  /** Rows on the main sheet still marked VOID_DUPLICATE (should be 0 after cleanup). */
   totalVoidedRows: number;
+  /** Rows archived to "Voided Duplicates" tab. */
+  totalArchivedRows: number;
   totalUniqueKeys: number;
   activeDuplicateCount: number;
   /** Number of voided rows that still have a non-zero total — should always be 0. */
   voidedRowsWithMoneyCount: number;
   groups: SheetHealthGroup[];
   activeDuplicateGroups: SheetHealthGroup[];
-  /** True when no active duplicates AND no void rows with money remaining. */
+  /**
+   * True when: no active duplicates, no void rows with money, no active rows below TOTALS.
+   * A clean sheet guarantees SUM formulas cover exactly the right set of rows.
+   */
   isClean: boolean;
+  /** 1-indexed row number of the TOTALS row; null if no TOTALS row found. */
+  totalsRowNum: number | null;
+  /** Active invoice rows that exist below the TOTALS line (outside SUM formula range). */
+  activeBelowTotalsCount: number;
 }
 
 /**
@@ -741,12 +953,30 @@ export async function getSheetHealthReport(): Promise<SheetHealthReport> {
   const auth = await getSheetAuth();
   const sheets = google.sheets({ version: "v4", auth });
 
-  const readRes = await sheets.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: `${QUOTED_SHEET_NAME}!A:T`,
-  });
+  // Read main sheet + archive tab in parallel.
+  const [readRes, archiveRes] = await Promise.all([
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${QUOTED_SHEET_NAME}!A:T`,
+    }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${QUOTED_ARCHIVE_SHEET_NAME}!A:A`,
+    }).catch(() => ({ data: { values: [] } })), // archive tab may not exist yet
+  ]);
+
+  const archiveRows = archiveRes.data.values ?? [];
+  const totalArchivedRows = Math.max(0, archiveRows.length - 1); // subtract header row
 
   const rows = readRes.data.values ?? [];
+
+  // Find TOTALS row position so we can flag active rows that sit below it.
+  let totalsRowNum: number | null = null;
+  for (let i = 1; i < rows.length; i++) {
+    if (isTotalsRow(String(rows[i]?.[0] ?? "").trim())) { totalsRowNum = i + 1; break; }
+  }
+
+  let activeBelowTotalsCount = 0;
   const groupMap = new Map<string, { activeRows: SheetHealthEntry[]; voidedRows: SheetHealthEntry[] }>();
 
   for (let i = 1; i < rows.length; i++) {
@@ -763,6 +993,11 @@ export async function getSheetHealthReport(): Promise<SheetHealthReport> {
     const normLa  = normalizeLA(cellC);
     const normInv = cellA;
     const key     = normLa ? `la:${normLa}` : normInv ? `inv:${normInv}` : null;
+
+    // Count active rows below TOTALS — these are outside the SUM formula range.
+    if (!isVoid && key && isInvoiceDataRow(cellA, cellC, cellT) && totalsRowNum !== null && sheetsRow >= totalsRowNum) {
+      activeBelowTotalsCount++;
+    }
 
     // Include active invoice rows and void rows that have a recognisable key
     const include = isVoid ? !!key : isInvoiceDataRow(cellA, cellC, cellT);
@@ -826,11 +1061,242 @@ export async function getSheetHealthReport(): Promise<SheetHealthReport> {
   return {
     totalActiveRows,
     totalVoidedRows,
+    totalArchivedRows,
     totalUniqueKeys: groups.filter((g) => g.activeRows.length > 0).length,
     activeDuplicateCount: activeDuplicateGroups.length,
     voidedRowsWithMoneyCount,
     groups,
     activeDuplicateGroups,
-    isClean: activeDuplicateGroups.length === 0 && voidedRowsWithMoneyCount === 0,
+    isClean: activeDuplicateGroups.length === 0 && voidedRowsWithMoneyCount === 0 && activeBelowTotalsCount === 0,
+    totalsRowNum,
+    activeBelowTotalsCount,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Sheet layout repair (admin-only)
+// ---------------------------------------------------------------------------
+
+export interface SheetRepairResult {
+  ok: boolean;
+  message: string;
+  /** Original 1-indexed TOTALS row position (before repair). */
+  totalsRowNum: number;
+  /** VOID_DUPLICATE rows archived + deleted from main sheet. */
+  voidArchivedCount: number;
+  /** Active duplicate rows below TOTALS archived + deleted (key already existed above). */
+  duplicatesArchivedCount: number;
+  /** Active orphan rows below TOTALS (no match above) moved to above TOTALS. */
+  rowsMovedCount: number;
+  healthAfter: SheetHealthReport;
+}
+
+/**
+ * Repairs the Sheet layout:
+ *   1. Archives + deletes all VOID_DUPLICATE rows still on the main sheet.
+ *   2. Archives + deletes active duplicate rows that are below TOTALS when the
+ *      same key already exists above TOTALS.
+ *   3. Moves active orphan rows from below TOTALS (no match above) to immediately
+ *      above TOTALS so they are captured by SUM formulas.
+ *
+ * Archive-before-delete guarantee: nothing is permanently removed unless it was
+ * first written to the "Voided Duplicates" tab.
+ * Never touches unrelated rows or rows above TOTALS.
+ */
+export async function repairSheetLayout(): Promise<SheetRepairResult> {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
+
+  const auth = await getSheetAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // Read spreadsheet metadata + full row data (A:AG covers all 33 existing columns).
+  const [spreadsheetRes, readRes] = await Promise.all([
+    sheets.spreadsheets.get({ spreadsheetId: sheetId }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${QUOTED_SHEET_NAME}!A:AG`,
+    }),
+  ]);
+
+  const tabMeta = spreadsheetRes.data.sheets?.find((s) => s.properties?.title === SHEET_NAME);
+  if (!tabMeta || tabMeta.properties?.sheetId == null) {
+    throw new Error(`[google-sheets] Tab "${SHEET_NAME}" not found`);
+  }
+  const numericTabId = tabMeta.properties.sheetId;
+  const existingSheets = spreadsheetRes.data.sheets;
+  const rows = readRes.data.values ?? [];
+
+  // Locate TOTALS row.
+  let totalsRowNum = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (isTotalsRow(String(rows[i]?.[0] ?? "").trim())) { totalsRowNum = i + 1; break; }
+  }
+  if (totalsRowNum < 0) {
+    const healthAfter = await getSheetHealthReport();
+    return {
+      ok: false,
+      message: "No TOTALS row found — repair aborted. Add a TOTALS row to the sheet first.",
+      totalsRowNum: -1,
+      voidArchivedCount: 0,
+      duplicatesArchivedCount: 0,
+      rowsMovedCount: 0,
+      healthAfter,
+    };
+  }
+
+  // Classify every row relative to the TOTALS line.
+  const activeAbove = new Map<string, number>(); // key → row number
+  const voidOnMain: ArchiveEntry[] = [];
+  const duplicatesBelow: ArchiveEntry[] = [];
+  // Orphans: active rows below TOTALS with no match above — need to be moved.
+  const orphansBelow: Array<{ rowNumber: number; rawData: (string | number)[] }> = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const sheetsRow = i + 1;
+    const cellA = String(rows[i]?.[0] ?? "").trim();
+    const cellB = String(rows[i]?.[1] ?? "").trim();
+    const cellC = String(rows[i]?.[2] ?? "").trim();
+    const cellD = String(rows[i]?.[3] ?? "").trim();
+    const cellE = String(rows[i]?.[4] ?? "").trim();
+    const cellT = String(rows[i]?.[19] ?? "").trim();
+
+    if (isTotalsRow(cellA)) continue; // skip the TOTALS row itself
+
+    if (cellT === VOID_STATUS) {
+      voidOnMain.push({ rowNumber: sheetsRow, invNumber: cellA, date: cellB, laNumber: cellC, gigEvent: cellD, total: cellE, originalStatus: cellT });
+      continue;
+    }
+
+    if (!isInvoiceDataRow(cellA, cellC, cellT)) continue;
+
+    const normLa = normalizeLA(cellC);
+    const key = normLa ? `la:${normLa}` : cellA ? `inv:${cellA}` : null;
+    if (!key) continue;
+
+    const entry: ArchiveEntry = { rowNumber: sheetsRow, invNumber: cellA, date: cellB, laNumber: cellC, gigEvent: cellD, total: cellE, originalStatus: cellT };
+
+    if (sheetsRow < totalsRowNum) {
+      if (!activeAbove.has(key)) activeAbove.set(key, sheetsRow);
+    } else {
+      if (activeAbove.has(key)) {
+        // Key already present above TOTALS → this is a stale duplicate.
+        duplicatesBelow.push(entry);
+      } else {
+        // No match above TOTALS → orphan that must be moved.
+        orphansBelow.push({ rowNumber: sheetsRow, rawData: (rows[i] ?? []) as (string | number)[] });
+        activeAbove.set(key, sheetsRow); // claim the key to catch further duplicates of this orphan
+      }
+    }
+  }
+
+  // Phase A: Archive + delete VOID rows and duplicate rows below TOTALS.
+  const toArchive = [...voidOnMain, ...duplicatesBelow];
+  if (toArchive.length > 0) {
+    await archiveAndDeleteRows(sheets, sheetId, numericTabId, toArchive, existingSheets);
+  }
+
+  // Phase B: Move orphan rows above TOTALS.
+  let rowsMovedCount = 0;
+
+  if (orphansBelow.length > 0) {
+    // Re-read after Phase A deletions to get current row positions.
+    const reReadRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${QUOTED_SHEET_NAME}!A:AG`,
+    });
+    const currentRows = reReadRes.data.values ?? [];
+
+    // Locate TOTALS again (row numbers may have shifted after Phase A deletions).
+    let newTotalsRow = -1;
+    for (let i = 1; i < currentRows.length; i++) {
+      if (isTotalsRow(String(currentRows[i]?.[0] ?? "").trim())) { newTotalsRow = i + 1; break; }
+    }
+    if (newTotalsRow < 0) throw new Error("[repair] TOTALS row disappeared during repair");
+
+    // Match orphan rows by their A+B+C signature (inv# + date + LA#) to find current positions.
+    type OrphanSignature = { rawData: (string | number)[]; sig: string };
+    const sigMap = new Map<string, OrphanSignature>();
+    for (const o of orphansBelow) {
+      const sig = `${String(o.rawData[0] ?? "").trim()}|${String(o.rawData[1] ?? "").trim()}|${String(o.rawData[2] ?? "").trim()}`;
+      if (sig && !sigMap.has(sig)) sigMap.set(sig, { rawData: o.rawData, sig });
+    }
+
+    const movedData: (string | number)[][] = [];
+    const currentOrphanRowNums: number[] = [];
+
+    for (let i = 1; i < currentRows.length; i++) {
+      const sheetsRow = i + 1;
+      if (sheetsRow <= newTotalsRow) continue;
+      const sig = `${String(currentRows[i]?.[0] ?? "").trim()}|${String(currentRows[i]?.[1] ?? "").trim()}|${String(currentRows[i]?.[2] ?? "").trim()}`;
+      if (sig && sigMap.has(sig)) {
+        movedData.push(sigMap.get(sig)!.rawData);
+        currentOrphanRowNums.push(sheetsRow);
+        sigMap.delete(sig); // consume to avoid double-moving if somehow duplicated
+      }
+    }
+
+    // Insert rows above TOTALS and write full row data, tracking offset as we go.
+    let insertOffset = 0;
+    for (const data of movedData) {
+      const insertAt0 = newTotalsRow - 1 + insertOffset; // 0-indexed insert position
+      const writeRow  = newTotalsRow + insertOffset;     // 1-indexed destination
+
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: sheetId,
+        requestBody: {
+          requests: [{
+            insertDimension: {
+              range: { sheetId: numericTabId, dimension: "ROWS", startIndex: insertAt0, endIndex: insertAt0 + 1 },
+              inheritFromBefore: insertAt0 > 1,
+            },
+          }],
+        },
+      });
+
+      // Pad to 33 columns so all cells in A:AG are written cleanly.
+      const paddedData = [...data];
+      while (paddedData.length < 33) paddedData.push("");
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: sheetId,
+        range: `${QUOTED_SHEET_NAME}!A${writeRow}:AG${writeRow}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [paddedData] },
+      });
+
+      insertOffset++;
+      rowsMovedCount++;
+    }
+
+    // Delete original orphan rows from below TOTALS (each shifted by insertOffset).
+    const toDelete = currentOrphanRowNums
+      .map((r) => r + insertOffset)
+      .sort((a, b) => b - a);
+
+    if (toDelete.length > 0) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: sheetId,
+        requestBody: {
+          requests: toDelete.map((rowNumber) => ({
+            deleteDimension: {
+              range: { sheetId: numericTabId, dimension: "ROWS", startIndex: rowNumber - 1, endIndex: rowNumber },
+            },
+          })),
+        },
+      });
+    }
+  }
+
+  const healthAfter = await getSheetHealthReport();
+
+  return {
+    ok: true,
+    message: `Repair complete: ${voidOnMain.length} void rows archived, ${duplicatesBelow.length} duplicates archived, ${rowsMovedCount} rows moved above TOTALS.`,
+    totalsRowNum,
+    voidArchivedCount:       voidOnMain.length,
+    duplicatesArchivedCount: duplicatesBelow.length,
+    rowsMovedCount,
+    healthAfter,
   };
 }

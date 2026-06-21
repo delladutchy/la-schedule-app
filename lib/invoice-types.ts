@@ -218,4 +218,7 @@ export interface SheetRow {
   jobNameOverride?: string;
   dayRateDescriptionOverride?: string;
   noteOverride?: string;
+  // Tax column (AH) — unreimbursed business miles × IRS standard mileage rate.
+  // Helps with Schedule C deduction without mixing miles (col R) and dollars.
+  unreimbursedMileageValue?: number;
 }

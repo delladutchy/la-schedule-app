@@ -122,6 +122,7 @@ interface SheetDuplicateRow {
   laNumber: string;
   date: string;
   total: string;
+  gigEvent?: string;
 }
 
 interface SheetDuplicateGroup {
@@ -162,12 +163,24 @@ interface SheetHealthState {
   message: string | null;
   totalActiveRows: number;
   totalVoidedRows: number;
+  totalArchivedRows: number;
   totalUniqueKeys: number;
   activeDuplicateCount: number;
   voidedRowsWithMoneyCount: number;
   isClean: boolean;
   activeDuplicateGroups: SheetHealthGroupUI[];
   scannedAt: string | null;
+  totalsRowNum: number | null;
+  activeBelowTotalsCount: number;
+}
+
+interface SheetRepairState {
+  status: "idle" | "repairing" | "done" | "error";
+  message: string | null;
+  voidArchivedCount: number;
+  duplicatesArchivedCount: number;
+  rowsMovedCount: number;
+  repairedAt: string | null;
 }
 
 interface PdfState {
@@ -1000,6 +1013,7 @@ export function InvoiceSection({
   const [expensesExpanded, setExpensesExpanded] = useState(false);
   const [overrides, setOverrides] = useState<OverrideFields>({ ...EMPTY_OVERRIDE_FIELDS });
   const [editInvoiceExpanded, setEditInvoiceExpanded] = useState(false);
+  const [adjustmentOverridesExpanded, setAdjustmentOverridesExpanded] = useState(false);
   const [lineItemOverrides, setLineItemOverrides] = useState<InvoiceLineItemOverrides>({});
   const [adjustmentDrafts, setAdjustmentDrafts] = useState<AdjustmentDrafts>({});
   const [autoMileage, setAutoMileage] = useState<AutoMileage | null>(null);
@@ -1020,12 +1034,23 @@ export function InvoiceSection({
     message: null,
     totalActiveRows: 0,
     totalVoidedRows: 0,
+    totalArchivedRows: 0,
     totalUniqueKeys: 0,
     activeDuplicateCount: 0,
     voidedRowsWithMoneyCount: 0,
     isClean: true,
     activeDuplicateGroups: [],
     scannedAt: null,
+    totalsRowNum: null,
+    activeBelowTotalsCount: 0,
+  });
+  const [sheetRepairState, setSheetRepairState] = useState<SheetRepairState>({
+    status: "idle",
+    message: null,
+    voidArchivedCount: 0,
+    duplicatesArchivedCount: 0,
+    rowsMovedCount: 0,
+    repairedAt: null,
   });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
@@ -1513,12 +1538,15 @@ export function InvoiceSection({
         isClean?: boolean;
         totalActiveRows?: number;
         totalVoidedRows?: number;
+        totalArchivedRows?: number;
         totalUniqueKeys?: number;
         activeDuplicateCount?: number;
         voidedRowsWithMoneyCount?: number;
         activeDuplicateGroups?: SheetHealthGroupUI[];
         scannedAt?: string;
         message?: string;
+        totalsRowNum?: number | null;
+        activeBelowTotalsCount?: number;
       };
       if (!res.ok) {
         setSheetHealthState((prev) => ({
@@ -1531,23 +1559,29 @@ export function InvoiceSection({
       const isClean = json.isClean ?? true;
       const dupeCount = json.activeDuplicateCount ?? 0;
       const badVoidCount = json.voidedRowsWithMoneyCount ?? 0;
+      const archived = json.totalArchivedRows ?? 0;
+      const belowTotals = json.activeBelowTotalsCount ?? 0;
       const summary = isClean
-        ? `Sheet is clean — ${json.totalActiveRows ?? 0} active rows, ${json.totalUniqueKeys ?? 0} unique keys, ${json.totalVoidedRows ?? 0} voided rows.`
+        ? `Sheet is clean — ${json.totalActiveRows ?? 0} active rows, ${json.totalUniqueKeys ?? 0} unique keys${archived > 0 ? `, ${archived} archived` : ""}.`
         : [
             dupeCount > 0 ? `${dupeCount} key${dupeCount > 1 ? "s" : ""} with active duplicates.` : null,
             badVoidCount > 0 ? `${badVoidCount} voided row${badVoidCount > 1 ? "s" : ""} still have money (Sheet totals may be overstated).` : null,
+            belowTotals > 0 ? `${belowTotals} active row${belowTotals > 1 ? "s" : ""} below TOTALS (outside SUM formula range).` : null,
           ].filter(Boolean).join(" ");
       setSheetHealthState({
         status: "ready",
         message: summary,
         totalActiveRows: json.totalActiveRows ?? 0,
         totalVoidedRows: json.totalVoidedRows ?? 0,
+        totalArchivedRows: archived,
         totalUniqueKeys: json.totalUniqueKeys ?? 0,
         activeDuplicateCount: dupeCount,
         voidedRowsWithMoneyCount: badVoidCount,
         isClean,
         activeDuplicateGroups: json.activeDuplicateGroups ?? [],
         scannedAt: json.scannedAt ?? null,
+        totalsRowNum: json.totalsRowNum ?? null,
+        activeBelowTotalsCount: belowTotals,
       });
     } catch {
       setSheetHealthState((prev) => ({
@@ -1555,6 +1589,58 @@ export function InvoiceSection({
         status: "error",
         message: "Sheet health check failed — network error.",
       }));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sheet repair
+  // ---------------------------------------------------------------------------
+
+  async function handleRepairSheet() {
+    if (sheetRepairState.status === "repairing") return;
+    const confirmed = window.confirm(
+      "Repair Sheet Layout?\n\n" +
+      "This will:\n" +
+      "  • Archive and remove VOID_DUPLICATE rows from the main sheet\n" +
+      "  • Archive and remove active duplicate rows below TOTALS\n" +
+      "  • Move misplaced active rows to above the TOTALS line\n\n" +
+      "All removed rows are archived to 'Voided Duplicates' first.\n" +
+      "Unrelated rows and rows above TOTALS are never touched.\n\n" +
+      "Proceed?"
+    );
+    if (!confirmed) return;
+
+    setSheetRepairState({ status: "repairing", message: null, voidArchivedCount: 0, duplicatesArchivedCount: 0, rowsMovedCount: 0, repairedAt: null });
+    try {
+      const res = await fetch("/api/invoice/sheet-repair", {
+        method: "POST",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+      });
+      const json = await res.json().catch(() => ({})) as {
+        ok?: boolean;
+        message?: string;
+        voidArchivedCount?: number;
+        duplicatesArchivedCount?: number;
+        rowsMovedCount?: number;
+        repairedAt?: string;
+      };
+      if (!res.ok) {
+        setSheetRepairState((prev) => ({ ...prev, status: "error", message: json.message ?? "Repair failed — retry" }));
+        return;
+      }
+      setSheetRepairState({
+        status: "done",
+        message: json.message ?? "Repair complete.",
+        voidArchivedCount: json.voidArchivedCount ?? 0,
+        duplicatesArchivedCount: json.duplicatesArchivedCount ?? 0,
+        rowsMovedCount: json.rowsMovedCount ?? 0,
+        repairedAt: json.repairedAt ?? null,
+      });
+      // Refresh health state after repair
+      void handleSheetHealthCheck();
+    } catch {
+      setSheetRepairState((prev) => ({ ...prev, status: "error", message: "Repair failed — network error." }));
     }
   }
 
@@ -1586,7 +1672,7 @@ export function InvoiceSection({
         syncedAt?: string;
         message?: string;
         hasDuplicates?: boolean;
-        voidedRows?: number[];
+        archivedRows?: number[];
         keptRow?: number;
         sheetTarget?: { sheetId?: string | null; sheetName?: string };
       };
@@ -2274,9 +2360,8 @@ export function InvoiceSection({
         </button>
         {editInvoiceExpanded ? (
           <div className="invoice-collapsible-content">
-            {/* ── Invoice text overrides ── */}
-            <p className="invoice-overrides-hint">
-              Clear any generated/default text to return to the automatic invoice wording.
+            <p className="invoice-overrides-hint-top">
+              Optional invoice wording. Blank fields use automatic wording.
             </p>
             <div className="invoice-override-field">
               <label className="invoice-label-sm" htmlFor="inv-override-job">Job name</label>
@@ -2288,7 +2373,6 @@ export function InvoiceSection({
                 onChange={(e) => handleOverrideChange("invoice_job_name_override", e.target.value)}
                 placeholder={autoPreviewJobTitle || "e.g. Wilm U Grad"}
               />
-              <p className="invoice-override-hint-sm">Affects: PDF job row, email body. (Subject always uses LA #.)</p>
             </div>
             {lineItemDescriptionFields.map((fieldConfig) => {
               const value = resolveLineItemInputValue(fieldConfig.field, fieldConfig.defaultDescription);
@@ -2303,12 +2387,11 @@ export function InvoiceSection({
                     placeholder={fieldConfig.defaultDescription || "Optional description"}
                     rows={fieldConfig.rows}
                   />
-                  <p className="invoice-override-hint-sm">Affects: PDF/preview description column. {fieldConfig.hint}</p>
                 </div>
               );
             })}
             <div className="invoice-override-field">
-              <label className="invoice-label-sm" htmlFor="inv-override-note">Invoice note</label>
+              <label className="invoice-label-sm" htmlFor="inv-override-note">Note to customer</label>
               <textarea
                 id="inv-override-note"
                 className="invoice-textarea invoice-override-textarea"
@@ -2317,90 +2400,102 @@ export function InvoiceSection({
                 placeholder={DEFAULT_INVOICE_NOTE}
                 rows={3}
               />
-              <p className="invoice-override-hint-sm">Affects: PDF "Note to customer" section. Leave blank for default.</p>
             </div>
 
-            {/* ── Line item adjustments ── */}
+            {/* ── Advanced Amount Overrides (collapsed) ── */}
             {p && adjustmentRows.length > 0 ? (
-              <>
-                <p className="invoice-overrides-hint" style={{marginTop: "1rem"}}>
-                  Leave rows on Auto for normal calculations. Edit only when an invoice needs a manual adjustment.
-                </p>
-                <div className="invoice-adjustment-list">
-                  {adjustmentRows.map((row) => {
-                    const draft = adjustmentDrafts[row.key] ?? {};
-                    const qtyValue = draft.qty ?? formatAdjustmentInputValue(row.qty);
-                    const rateValue = draft.rate ?? formatAdjustmentInputValue(row.rate);
-                    const amountValue = draft.amount ?? formatAdjustmentInputValue(row.amount);
-                    return (
-                      <div className="invoice-adjustment-row" key={row.key}>
-                        <div className="invoice-adjustment-row-head">
-                          <span className="invoice-adjustment-label">{row.label}</span>
-                          <span className={`invoice-adjustment-status${row.isCustom ? " is-custom" : ""}`}>
-                            {row.isCustom ? "Custom" : "Auto"}
-                          </span>
-                        </div>
-                        {row.mode === "qtyRate" ? (
-                          <div className="invoice-adjustment-grid invoice-adjustment-grid--qty-rate">
-                            <label className="invoice-label-sm" htmlFor={`inv-adjust-${row.key}-qty`}>
-                              Qty
-                              <input
-                                id={`inv-adjust-${row.key}-qty`}
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                className="invoice-input-sm"
-                                value={qtyValue}
-                                onChange={(e) => handleLineItemAdjustmentChange(row, "qty", e.target.value)}
-                              />
-                            </label>
-                            <label className="invoice-label-sm" htmlFor={`inv-adjust-${row.key}-rate`}>
-                              Rate
-                              <input
-                                id={`inv-adjust-${row.key}-rate`}
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                className="invoice-input-sm"
-                                value={rateValue}
-                                onChange={(e) => handleLineItemAdjustmentChange(row, "rate", e.target.value)}
-                              />
-                            </label>
-                            <div className="invoice-adjustment-amount">
-                              <span className="invoice-label-sm">Amount</span>
-                              <strong>{fmtCurrency(row.amount)}</strong>
+              <div className="invoice-block invoice-block--nested" style={{ marginTop: "0.75rem" }}>
+                <button
+                  type="button"
+                  className="invoice-collapsible-toggle invoice-collapsible-toggle--sm"
+                  onClick={() => setAdjustmentOverridesExpanded((prev) => !prev)}
+                  aria-expanded={adjustmentOverridesExpanded}
+                >
+                  <span className="invoice-block-label">Advanced Amount Overrides</span>
+                  <span className="invoice-collapsible-meta">
+                    {customAdjustmentCount > 0 ? (
+                      <span className="invoice-adjustment-alert">{customAdjustmentCount} custom</span>
+                    ) : null}
+                    <span className="invoice-collapsible-chevron">{adjustmentOverridesExpanded ? "▲" : "▼"}</span>
+                  </span>
+                </button>
+                {adjustmentOverridesExpanded ? (
+                  <div className="invoice-adjustment-list">
+                    {adjustmentRows.map((row) => {
+                      const draft = adjustmentDrafts[row.key] ?? {};
+                      const qtyValue = draft.qty ?? formatAdjustmentInputValue(row.qty);
+                      const rateValue = draft.rate ?? formatAdjustmentInputValue(row.rate);
+                      const amountValue = draft.amount ?? formatAdjustmentInputValue(row.amount);
+                      return (
+                        <div className="invoice-adjustment-row" key={row.key}>
+                          <div className="invoice-adjustment-row-head">
+                            <span className="invoice-adjustment-label">{row.label}</span>
+                            <span className={`invoice-adjustment-status${row.isCustom ? " is-custom" : ""}`}>
+                              {row.isCustom ? "Custom" : "Auto"}
+                            </span>
+                          </div>
+                          {row.mode === "qtyRate" ? (
+                            <div className="invoice-adjustment-grid invoice-adjustment-grid--qty-rate">
+                              <label className="invoice-label-sm" htmlFor={`inv-adjust-${row.key}-qty`}>
+                                Qty
+                                <input
+                                  id={`inv-adjust-${row.key}-qty`}
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  className="invoice-input-sm"
+                                  value={qtyValue}
+                                  onChange={(e) => handleLineItemAdjustmentChange(row, "qty", e.target.value)}
+                                />
+                              </label>
+                              <label className="invoice-label-sm" htmlFor={`inv-adjust-${row.key}-rate`}>
+                                Rate
+                                <input
+                                  id={`inv-adjust-${row.key}-rate`}
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  className="invoice-input-sm"
+                                  value={rateValue}
+                                  onChange={(e) => handleLineItemAdjustmentChange(row, "rate", e.target.value)}
+                                />
+                              </label>
+                              <div className="invoice-adjustment-amount">
+                                <span className="invoice-label-sm">Amount</span>
+                                <strong>{fmtCurrency(row.amount)}</strong>
+                              </div>
                             </div>
-                          </div>
-                        ) : (
-                          <div className="invoice-adjustment-grid invoice-adjustment-grid--amount">
-                            <label className="invoice-label-sm" htmlFor={`inv-adjust-${row.key}-amount`}>
-                              Amount
-                              <input
-                                id={`inv-adjust-${row.key}-amount`}
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                className="invoice-input-sm"
-                                value={amountValue}
-                                onChange={(e) => handleLineItemAdjustmentChange(row, "amount", e.target.value)}
-                              />
-                            </label>
-                          </div>
-                        )}
-                        {row.isCustom ? (
-                          <button
-                            type="button"
-                            className="invoice-adjustment-reset"
-                            onClick={() => handleResetLineItemAdjustment(row.key)}
-                          >
-                            Reset to Auto
-                          </button>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
+                          ) : (
+                            <div className="invoice-adjustment-grid invoice-adjustment-grid--amount">
+                              <label className="invoice-label-sm" htmlFor={`inv-adjust-${row.key}-amount`}>
+                                Amount
+                                <input
+                                  id={`inv-adjust-${row.key}-amount`}
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  className="invoice-input-sm"
+                                  value={amountValue}
+                                  onChange={(e) => handleLineItemAdjustmentChange(row, "amount", e.target.value)}
+                                />
+                              </label>
+                            </div>
+                          )}
+                          {row.isCustom ? (
+                            <button
+                              type="button"
+                              className="invoice-adjustment-reset"
+                              onClick={() => handleResetLineItemAdjustment(row.key)}
+                            >
+                              Reset to Auto
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : null}
@@ -2692,7 +2787,7 @@ export function InvoiceSection({
               ) : null}
               {syncState.status === "success" && syncState.hasDuplicates ? (
                 <p className="invoice-sheet-sync-status">
-                  Duplicate old rows were marked inactive — totals stay accurate.
+                  Old duplicate rows were archived — main Sheet is clean.
                 </p>
               ) : null}
               {hasCurrentSheetDuplicates ? (
@@ -2802,7 +2897,18 @@ export function InvoiceSection({
                             <div className="invoice-sheet-helper" style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
                               <span>Active rows: {sheetHealthState.totalActiveRows}</span>
                               <span>Unique keys: {sheetHealthState.totalUniqueKeys}</span>
-                              <span>Voided rows: {sheetHealthState.totalVoidedRows}</span>
+                              {sheetHealthState.totalsRowNum ? (
+                                <span>TOTALS row: {sheetHealthState.totalsRowNum}</span>
+                              ) : null}
+                              {sheetHealthState.activeBelowTotalsCount > 0 ? (
+                                <span style={{ color: "var(--color-warning, #c8a000)" }}>Below TOTALS: {sheetHealthState.activeBelowTotalsCount}</span>
+                              ) : null}
+                              {sheetHealthState.totalArchivedRows > 0 ? (
+                                <span>Archived: {sheetHealthState.totalArchivedRows}</span>
+                              ) : null}
+                              {sheetHealthState.totalVoidedRows > 0 ? (
+                                <span>Still on main sheet (old): {sheetHealthState.totalVoidedRows}</span>
+                              ) : null}
                             </div>
                           ) : null}
                           {sheetHealthState.activeDuplicateGroups.length > 0 ? (
@@ -2845,6 +2951,41 @@ export function InvoiceSection({
                             </div>
                           ) : null}
                         </>
+                      ) : null}
+                    </div>
+
+                    {/* Repair Sheet Layout */}
+                    <div className="invoice-sheet-health">
+                      <div className="invoice-sheet-duplicates-head">
+                        <div>
+                          <p className="invoice-sheet-duplicates-title">Repair Sheet Layout</p>
+                          <p className="invoice-sheet-helper">
+                            Move misplaced rows above TOTALS, archive void rows. Confirmation required.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="invoice-pdf-regen-btn"
+                          onClick={() => { void handleRepairSheet(); }}
+                          disabled={sheetRepairState.status === "repairing"}
+                        >
+                          {sheetRepairState.status === "repairing" ? "Repairing…" : "Repair Sheet Layout"}
+                        </button>
+                      </div>
+                      {sheetRepairState.status === "done" || sheetRepairState.status === "error" ? (
+                        <p
+                          className={`invoice-sheet-duplicate-message${sheetRepairState.status === "error" ? " is-warning" : ""}`}
+                          role={sheetRepairState.status === "error" ? "alert" : undefined}
+                        >
+                          {sheetRepairState.status === "error" ? "⚠ " : "✓ "}{sheetRepairState.message}
+                        </p>
+                      ) : null}
+                      {sheetRepairState.status === "done" && (sheetRepairState.voidArchivedCount > 0 || sheetRepairState.duplicatesArchivedCount > 0 || sheetRepairState.rowsMovedCount > 0) ? (
+                        <div className="invoice-sheet-helper" style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+                          {sheetRepairState.voidArchivedCount > 0 ? <span>Void archived: {sheetRepairState.voidArchivedCount}</span> : null}
+                          {sheetRepairState.duplicatesArchivedCount > 0 ? <span>Duplicates archived: {sheetRepairState.duplicatesArchivedCount}</span> : null}
+                          {sheetRepairState.rowsMovedCount > 0 ? <span>Rows moved above TOTALS: {sheetRepairState.rowsMovedCount}</span> : null}
+                        </div>
                       ) : null}
                     </div>
 

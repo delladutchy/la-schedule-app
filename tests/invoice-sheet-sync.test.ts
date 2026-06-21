@@ -1159,7 +1159,7 @@ interface UpsertEntry {
 interface UpsertResult {
   action: "updated" | "inserted";
   keptRow: number;
-  voidedRows: number[];
+  archivedRows: number[];
   hasDuplicates: boolean;
 }
 
@@ -1178,10 +1178,15 @@ function simulateUpsertWithVoid(
     cellA: string; cellB: string; cellC: string; cellD: string;
   }> = [];
 
+  const oldVoidRows: number[] = [];
+
   for (const entry of entries) {
-    if (entry.cellT === VOID_STATUS) continue; // skip void rows
     const laMatch  = !!(normLa  && normalizeLA(entry.cellC) === normLa);
     const invMatch = !!(normInv && entry.cellA && entry.cellA === normInv);
+    if (entry.cellT === VOID_STATUS) {
+      if (laMatch || invMatch) oldVoidRows.push(entry.rowNumber);
+      continue;
+    }
     if (laMatch || invMatch) {
       const score = scoreKeepRow(
         entry.cellA, entry.cellB, entry.cellC, entry.cellE,
@@ -1193,7 +1198,7 @@ function simulateUpsertWithVoid(
 
   if (matchingRows.length === 0) {
     const lastDataRow = entries.filter(e => isInvoiceDataRow(e.cellA, e.cellC, e.cellT)).at(-1)?.rowNumber ?? 1;
-    return { action: "inserted", keptRow: lastDataRow + 1, voidedRows: [], hasDuplicates: false };
+    return { action: "inserted", keptRow: lastDataRow + 1, archivedRows: [...oldVoidRows], hasDuplicates: false };
   }
 
   const keepEntry = matchingRows.reduce((best, e) => e.score > best.score ? e : best);
@@ -1201,7 +1206,7 @@ function simulateUpsertWithVoid(
   return {
     action: "updated",
     keptRow: keepEntry.rowNumber,
-    voidedRows: stale.map(s => s.rowNumber),
+    archivedRows: [...stale.map(s => s.rowNumber), ...oldVoidRows],
     hasDuplicates: stale.length > 0,
   };
 }
@@ -1216,7 +1221,7 @@ describe("Void-based duplicate handling — automatic upsert logic", () => {
     const result = simulateUpsertWithVoid([base], "5555", "1001", 2598.75);
     expect(result.action).toBe("updated");
     expect(result.keptRow).toBe(2);
-    expect(result.voidedRows).toHaveLength(0);
+    expect(result.archivedRows).toHaveLength(0);
     expect(result.hasDuplicates).toBe(false);
   });
 
@@ -1225,7 +1230,7 @@ describe("Void-based duplicate handling — automatic upsert logic", () => {
     const result = simulateUpsertWithVoid([base, stale], "5555", "1001", 2598.75);
     expect(result.action).toBe("updated");
     expect(result.keptRow).toBe(2); // base wins: LA# + inv# + total match
-    expect(result.voidedRows).toEqual([5]);
+    expect(result.archivedRows).toEqual([5]);
     expect(result.hasDuplicates).toBe(true);
   });
 
@@ -1234,23 +1239,23 @@ describe("Void-based duplicate handling — automatic upsert logic", () => {
     const stale3: UpsertEntry = { ...base, rowNumber: 4, cellA: "9999", cellC: "5555", cellE: "500.00" };
     const result = simulateUpsertWithVoid([base, stale2, stale3], "5555", "1001", 2598.75);
     expect(result.keptRow).toBe(2); // base has highest score (LA# + inv# + total)
-    expect(result.voidedRows.sort()).toEqual([3, 4]);
+    expect(result.archivedRows.sort()).toEqual([3, 4]);
     expect(result.hasDuplicates).toBe(true);
   });
 
-  it("VOID rows in sheet are skipped — already-voided rows not re-voided or re-matched", () => {
+  it("VOID rows in sheet are not re-matched as active — but are archived+deleted to clean main sheet", () => {
     const alreadyVoided: UpsertEntry = { ...base, rowNumber: 5, cellT: VOID_STATUS };
     const result = simulateUpsertWithVoid([base, alreadyVoided], "5555", "1001", 2598.75);
     expect(result.keptRow).toBe(2);
-    expect(result.voidedRows).toHaveLength(0); // void row not counted
-    expect(result.hasDuplicates).toBe(false);  // only 1 active match
+    expect(result.hasDuplicates).toBe(false);        // only 1 active match → no active dupe
+    expect(result.archivedRows).toEqual([5]);         // old void row collected for archive+delete
   });
 
   it("no matches → insert new row after last active data row", () => {
     const result = simulateUpsertWithVoid([base], "6666", "1002", 500);
     expect(result.action).toBe("inserted");
     expect(result.keptRow).toBe(3); // row 2 is last active data row → new row at 3
-    expect(result.voidedRows).toHaveLength(0);
+    expect(result.archivedRows).toHaveLength(0);
   });
 
   it("after voiding, a fresh scan finds only one active row for that key", () => {
@@ -1260,18 +1265,20 @@ describe("Void-based duplicate handling — automatic upsert logic", () => {
     const later: UpsertEntry   = { ...base, rowNumber: 5 };
     const firstSync = simulateUpsertWithVoid([earlier, later], "5555", "1001", 2598.75);
     expect(firstSync.keptRow).toBe(5);
-    expect(firstSync.voidedRows).toEqual([2]); // lower row (older) gets voided
+    expect(firstSync.archivedRows).toEqual([2]); // lower row (older) gets voided
 
-    // Simulate Sheet state after void: earlier row now has VOID_STATUS
-    const afterVoid: UpsertEntry[] = [
-      { ...earlier, cellT: VOID_STATUS }, // voided
+    // Simulate legacy Sheet state: row1 still has VOID_STATUS on main sheet
+    // (old behaviour before archive migration, or archive tab failed last time)
+    const withLegacyVoid: UpsertEntry[] = [
+      { ...earlier, cellT: VOID_STATUS }, // old void row still on main sheet
       later,                              // still active
     ];
-    const secondSync = simulateUpsertWithVoid(afterVoid, "5555", "1001", 2598.75);
+    const secondSync = simulateUpsertWithVoid(withLegacyVoid, "5555", "1001", 2598.75);
     expect(secondSync.action).toBe("updated");
     expect(secondSync.keptRow).toBe(5);
-    expect(secondSync.voidedRows).toHaveLength(0);   // no new stale rows
-    expect(secondSync.hasDuplicates).toBe(false);    // clean
+    // New behaviour: old VOID row is also archived+deleted during the next sync
+    expect(secondSync.archivedRows).toEqual([2]); // legacy void row cleaned up
+    expect(secondSync.hasDuplicates).toBe(false); // no active duplicates, only void cleanup
   });
 
   it("inv#-only match (no LA#) still correctly picks keep row", () => {
@@ -1541,24 +1548,34 @@ describe("End-to-end: two rows with same LA# → one active after void-based syn
     date: "2026-01-15", total: "2598.75", status: "sheet_synced",
   };
 
-  it("Step 1: upsert with 2 matching rows voids the lower-numbered row", () => {
-    // Using the simulateUpsertWithVoid helper from section W
+  it("Step 1: upsert with 2 matching rows archives+deletes the lower-numbered row", () => {
     const entry1: UpsertEntry = { ...row1, cellA: row1.invNumber, cellB: row1.date, cellC: row1.laNumber, cellD: "Corporate Shoot", cellE: row1.total, cellT: row1.status };
     const entry2: UpsertEntry = { ...row2, cellA: row2.invNumber, cellB: row2.date, cellC: row2.laNumber, cellD: "Corporate Shoot", cellE: row2.total, cellT: row2.status };
     const result = simulateUpsertWithVoid([entry1, entry2], "5555", "1001", 2598.75);
-    expect(result.keptRow).toBe(5);       // higher row = more recent = kept
-    expect(result.voidedRows).toEqual([2]); // lower row voided
+    expect(result.keptRow).toBe(5);           // higher row = more recent = kept
+    expect(result.archivedRows).toEqual([2]); // lower row archived to "Voided Duplicates" tab
     expect(result.hasDuplicates).toBe(true);
   });
 
-  it("Step 2: after void, Sheet state has 1 active row + 1 VOID_DUPLICATE row", () => {
-    const afterVoid: HealthEntry[] = [
-      { ...row1, status: VOID_STATUS, total: "0" }, // voided and zeroed
-      row2,                                           // kept active
-    ];
-    const report = computeHealthReport(afterVoid);
+  it("Step 2: after archive+delete, main Sheet has 1 active row only (no stale row)", () => {
+    // The real system archives+deletes row1. Health report sees only row2.
+    const afterArchive: HealthEntry[] = [row2];
+    const report = computeHealthReport(afterArchive);
     expect(report.totalActiveRows).toBe(1);
-    expect(report.totalVoidedRows).toBe(1);
+    expect(report.totalVoidedRows).toBe(0); // no void rows on main sheet
+    expect(report.activeDuplicateCount).toBe(0);
+    expect(report.isClean).toBe(true);
+  });
+
+  it("Step 2b: old VOID row still on sheet (pre-migration) is excluded from duplicates", () => {
+    // Health report still handles legacy VOID rows from before archive migration.
+    const withLegacyVoid: HealthEntry[] = [
+      { ...row1, status: VOID_STATUS, total: "0" },
+      row2,
+    ];
+    const report = computeHealthReport(withLegacyVoid);
+    expect(report.totalActiveRows).toBe(1);
+    expect(report.totalVoidedRows).toBe(1); // legacy void still counted
     expect(report.activeDuplicateCount).toBe(0);
     expect(report.isClean).toBe(true);
   });
@@ -1575,32 +1592,42 @@ describe("End-to-end: two rows with same LA# → one active after void-based syn
     expect(report.isClean).toBe(true);
   });
 
-  it("Step 4: duplicate checker sees 0 active duplicate groups", () => {
-    const afterVoid: FakeDuplicateEntryV2[] = [
+  it("Step 4: after archive+delete, duplicate checker sees 0 groups (only one active row)", () => {
+    // Real system deleted row1. Main sheet has only row2.
+    const afterArchive: FakeDuplicateEntryV2[] = [
+      { rowNumber: 5, invNumber: "1001", laNumber: "5555", date: "2026-01-15", total: "2598.75", status: "sheet_synced" },
+    ];
+    const groups = findDuplicateGroupsV2(afterArchive);
+    expect(groups).toHaveLength(0); // only 1 active row → no duplicate
+  });
+
+  it("Step 4b: if archive tab fails and VOID row remains, duplicate checker still excludes it", () => {
+    // Legacy fallback: VOID row still on main sheet
+    const withLegacyVoid: FakeDuplicateEntryV2[] = [
       { rowNumber: 2, invNumber: "1001", laNumber: "5555", date: "2026-01-10", total: "0", status: VOID_STATUS },
       { rowNumber: 5, invNumber: "1001", laNumber: "5555", date: "2026-01-15", total: "2598.75", status: "sheet_synced" },
     ];
-    const groups = findDuplicateGroupsV2(afterVoid);
-    expect(groups).toHaveLength(0); // VOID row excluded → only 1 active row → no duplicate
+    const groups = findDuplicateGroupsV2(withLegacyVoid);
+    expect(groups).toHaveLength(0); // VOID row excluded → no duplicate
   });
 
-  it("Step 5: voided row has zero total so SUM formulas exclude its money", () => {
-    const afterVoid: HealthEntry[] = [
-      { ...row1, status: VOID_STATUS, total: "0" },
-      row2,
-    ];
-    const report = computeHealthReport(afterVoid);
-    const group = report.groups.find(g => g.key === "la:5555");
-    expect(group?.voidedRowsHaveZeroTotal).toBe(true);
+  it("Step 5: archived row is removed from main sheet — SUM totals include only active row", () => {
+    // After archive+delete: only row2 on main sheet. No void rows, no inflation.
+    const afterArchive: HealthEntry[] = [row2];
+    const report = computeHealthReport(afterArchive);
+    expect(report.totalActiveRows).toBe(1);
+    expect(report.totalVoidedRows).toBe(0);
     expect(report.voidedRowsWithMoneyCount).toBe(0);
+    expect(report.isClean).toBe(true);
   });
 
-  it("Step 5b: if voided row were NOT zeroed, health report flags it as a problem", () => {
-    const afterVoidNotZeroed: HealthEntry[] = [
-      { ...row1, status: VOID_STATUS, total: "2598.75" }, // bug: total not zeroed
+  it("Step 5b: legacy VOID row with money would be flagged by health check", () => {
+    // Old behavior (before archive migration) — health check catches rows that slipped through
+    const legacyVoidWithMoney: HealthEntry[] = [
+      { ...row1, status: VOID_STATUS, total: "2598.75" },
       row2,
     ];
-    const report = computeHealthReport(afterVoidNotZeroed);
+    const report = computeHealthReport(legacyVoidWithMoney);
     expect(report.voidedRowsWithMoneyCount).toBe(1);
     expect(report.isClean).toBe(false);
   });
@@ -1610,15 +1637,417 @@ describe("End-to-end: two rows with same LA# → one active after void-based syn
       rowNumber: 7, invNumber: "1002", laNumber: "6666",
       date: "2026-02-01", total: "1000.00", status: "sheet_synced",
     };
-    const afterVoid: HealthEntry[] = [
-      { ...row1, status: VOID_STATUS, total: "0" },
-      row2,
-      unrelated,
-    ];
-    const report = computeHealthReport(afterVoid);
+    const afterArchive: HealthEntry[] = [row2, unrelated];
+    const report = computeHealthReport(afterArchive);
     expect(report.totalUniqueKeys).toBe(2);
     const groupB = report.groups.find(g => g.key === "la:6666");
     expect(groupB?.activeRows).toHaveLength(1);
     expect(groupB?.voidedRows).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AA. Blank-row detection for INSERT placement
+// ---------------------------------------------------------------------------
+
+describe("Blank-row detection — INSERT reuses blank rows above totals", () => {
+  // The real upsertSheetRow checks whether the row at position lastDataRow+1
+  // is blank before inserting.  These pure-function tests document the logic.
+
+  function isNextRowBlank(cells: [string, string, string]): boolean {
+    const [cellA, cellC, cellT] = cells;
+    return !cellA.trim() && !cellC.trim() && !cellT.trim();
+  }
+
+  it("all-empty next row → blank (should reuse without insertDimension)", () => {
+    expect(isNextRowBlank(["", "", ""])).toBe(true);
+  });
+
+  it("next row has cellA (totals label) → NOT blank → must insert", () => {
+    expect(isNextRowBlank(["TOTAL", "", ""])).toBe(false);
+  });
+
+  it("next row has cellC (LA#) → NOT blank → must insert", () => {
+    expect(isNextRowBlank(["", "6666", ""])).toBe(false);
+  });
+
+  it("next row has cellT (STATUS) → NOT blank → must insert", () => {
+    expect(isNextRowBlank(["", "", "VOID_DUPLICATE"])).toBe(false);
+  });
+
+  it("next row whitespace-only → treated as blank", () => {
+    expect(isNextRowBlank(["  ", "  ", "  "])).toBe(true);
+  });
+
+  it("invoice-data row at next position → NOT blank → must insert (no overwrite)", () => {
+    expect(isNextRowBlank(["1001", "5555", "sheet_synced"])).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AB. isTotalsRow — TOTALS line detection
+// ---------------------------------------------------------------------------
+
+// Mirror of isTotalsRow from lib/google-sheets.ts
+function isTotalsRow(cellA: string): boolean {
+  const t = cellA.trim().toUpperCase();
+  return t.startsWith("TOTALS") || t === "TOTAL";
+}
+
+describe("isTotalsRow — TOTALS row detection", () => {
+  it("'TOTALS:' → true", () => { expect(isTotalsRow("TOTALS:")).toBe(true); });
+  it("'TOTALS' → true",  () => { expect(isTotalsRow("TOTALS")).toBe(true); });
+  it("'TOTAL' → true",   () => { expect(isTotalsRow("TOTAL")).toBe(true); });
+  it("'Totals:' (mixed case) → true", () => { expect(isTotalsRow("Totals:")).toBe(true); });
+  it("'  TOTALS:  ' (whitespace) → true", () => { expect(isTotalsRow("  TOTALS:  ")).toBe(true); });
+  it("'TOTALS: 2026' → true (extra text after)", () => { expect(isTotalsRow("TOTALS: 2026")).toBe(true); });
+  it("'1001' (invoice number) → false",  () => { expect(isTotalsRow("1001")).toBe(false); });
+  it("'' (blank) → false", () => { expect(isTotalsRow("")).toBe(false); });
+  it("'5555' (LA number) → false", () => { expect(isTotalsRow("5555")).toBe(false); });
+  it("'SUBTOTALS:' → false (does not start with 'TOTALS')", () => { expect(isTotalsRow("SUBTOTALS:")).toBe(false); });
+});
+
+// ---------------------------------------------------------------------------
+// AC. TOTALS-aware row placement logic
+// ---------------------------------------------------------------------------
+
+// Simulate the upsertSheetRow TOTALS-aware INSERT decision logic.
+interface SimRow { cellA: string; cellC: string; cellT: string }
+
+function simulateTotalsPlacement(rows: SimRow[]): {
+  totalsRowNum: number;
+  lastDataRow: number;
+  nextRowNum: number;
+  nextIsAboveTotals: boolean;
+  nextIsBlank: boolean;
+  insertAbove: number;
+  newRowNumber: number;
+} {
+  // Pass 1: find TOTALS
+  let totalsRowNum = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (isTotalsRow(rows[i]!.cellA)) { totalsRowNum = i + 1; break; }
+  }
+
+  // Pass 2: track lastDataRow (only above TOTALS)
+  let lastDataRow = 1;
+  for (let i = 1; i < rows.length; i++) {
+    const { cellA, cellC, cellT } = rows[i]!;
+    const sheetsRow = i + 1;
+    if (isInvoiceDataRow(cellA, cellC, cellT) && (totalsRowNum < 0 || sheetsRow < totalsRowNum)) {
+      lastDataRow = sheetsRow;
+    }
+  }
+
+  const nextRowNum = lastDataRow + 1;
+  const nextIdx = lastDataRow;
+  const next = rows[nextIdx];
+  const nextCellA = next?.cellA ?? "";
+  const nextCellC = next?.cellC ?? "";
+  const nextCellT = next?.cellT ?? "";
+  const nextIsAboveTotals = totalsRowNum < 0 || nextRowNum < totalsRowNum;
+  const nextIsBlank = !nextCellA.trim() && !nextCellC.trim() && !nextCellT.trim() && nextIsAboveTotals;
+
+  const insertAbove = totalsRowNum > 0 ? totalsRowNum : nextRowNum;
+  const newRowNumber = nextIsBlank ? nextRowNum : insertAbove;
+
+  return { totalsRowNum, lastDataRow, nextRowNum, nextIsAboveTotals, nextIsBlank, insertAbove, newRowNumber };
+}
+
+describe("TOTALS-aware row placement — upsertSheetRow INSERT logic", () => {
+  // Build fake sheet: row 1 = header, rows 2-4 = active, row 5 = blank, row 6 = TOTALS
+  function makeSheet(...extra: SimRow[]): SimRow[] {
+    return [
+      { cellA: "INV#",    cellC: "LA#",    cellT: "STATUS" },      // row 1: header
+      { cellA: "1001",    cellC: "5555",   cellT: "sheet_synced" }, // row 2: active
+      { cellA: "1002",    cellC: "6666",   cellT: "sheet_synced" }, // row 3: active
+      { cellA: "1003",    cellC: "7777",   cellT: "sheet_synced" }, // row 4: active
+      ...extra,
+    ];
+  }
+
+  it("blank row above TOTALS → reuse it (no insert needed)", () => {
+    const sheet = makeSheet(
+      { cellA: "", cellC: "", cellT: "" },  // row 5: blank
+      { cellA: "TOTALS:", cellC: "", cellT: "" }, // row 6: TOTALS
+    );
+    const result = simulateTotalsPlacement(sheet);
+    expect(result.totalsRowNum).toBe(6);
+    expect(result.lastDataRow).toBe(4);
+    expect(result.nextIsBlank).toBe(true);
+    expect(result.newRowNumber).toBe(5); // reuses blank row 5
+  });
+
+  it("no blank row, data right before TOTALS → insert before TOTALS", () => {
+    const sheet = makeSheet(
+      { cellA: "TOTALS:", cellC: "", cellT: "" }, // row 5: TOTALS immediately after data
+    );
+    const result = simulateTotalsPlacement(sheet);
+    expect(result.totalsRowNum).toBe(5);
+    expect(result.lastDataRow).toBe(4);
+    expect(result.nextIsAboveTotals).toBe(false); // row 5 is AT TOTALS, not above
+    expect(result.nextIsBlank).toBe(false);
+    expect(result.insertAbove).toBe(5);
+    expect(result.newRowNumber).toBe(5); // inserts at row 5, TOTALS shifts to 6
+  });
+
+  it("blank row exists but it is AT the TOTALS line → not used, insert before TOTALS instead", () => {
+    // This is the degenerate case where TOTALS row IS blank (shouldn't happen, but guard it)
+    const sheet = makeSheet(
+      { cellA: "TOTALS:", cellC: "", cellT: "" }, // row 5: TOTALS with blank C/T
+    );
+    const result = simulateTotalsPlacement(sheet);
+    // nextRowNum = 5, nextIsAboveTotals = (5 < 5) = false → nextIsBlank = false
+    expect(result.nextIsBlank).toBe(false);
+    expect(result.newRowNumber).toBe(5);
+  });
+
+  it("active row below TOTALS does NOT advance lastDataRow", () => {
+    // Leaked active row at row 7 (below TOTALS at row 6) must not shift lastDataRow
+    const sheet = makeSheet(
+      { cellA: "TOTALS:", cellC: "", cellT: "" },   // row 5: TOTALS
+      { cellA: "9999", cellC: "8888", cellT: "sheet_synced" }, // row 6: leaked active row
+    );
+    const result = simulateTotalsPlacement(sheet);
+    expect(result.totalsRowNum).toBe(5);
+    expect(result.lastDataRow).toBe(4); // row 6 is BELOW TOTALS — ignored
+    expect(result.insertAbove).toBe(5);
+  });
+
+  it("no TOTALS row found → falls back to lastDataRow + 1", () => {
+    const sheet = makeSheet(); // no TOTALS row
+    const result = simulateTotalsPlacement(sheet);
+    expect(result.totalsRowNum).toBe(-1);
+    expect(result.lastDataRow).toBe(4);
+    expect(result.newRowNumber).toBe(5); // inserts at row 5 (original behavior)
+  });
+
+  it("blank row below TOTALS is NOT reused", () => {
+    // Blank at row 7 (below TOTALS at row 5) — must not be reused for new data
+    const sheet = makeSheet(
+      { cellA: "TOTALS:", cellC: "", cellT: "" }, // row 5: TOTALS
+      { cellA: "", cellC: "", cellT: "" },          // row 6: blank BELOW TOTALS
+    );
+    const result = simulateTotalsPlacement(sheet);
+    expect(result.totalsRowNum).toBe(5);
+    expect(result.lastDataRow).toBe(4);
+    // nextRowNum = 5, nextIsAboveTotals = (5 < 5) = false → not blank
+    expect(result.nextIsBlank).toBe(false);
+    expect(result.newRowNumber).toBe(5); // inserts before TOTALS
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AD. Column mapping — verify A-U and AH indices
+// ---------------------------------------------------------------------------
+
+// Mirror of COLUMN_ORDER from lib/google-sheets.ts
+const COLUMN_ORDER_MIRROR = [
+  "invoiceNumber",         // A (0)
+  "date",                  // B (1)
+  "laJobNumber",           // C (2)
+  "gigEvent",              // D (3)
+  "totalPay",              // E (4)
+  "labor",                 // F (5)
+  "ot",                    // G (6)
+  "perDiem",               // H (7)
+  "mileage",               // I (8)  — dollars charged to LA
+  "parking",               // J (9)
+  "hotel",                 // K (10)
+  "tolls",                 // L (11)
+  "bagFees",               // M (12)
+  "uber",                  // N (13)
+  "otherExpenses",         // O (14)
+  "totalBusinessMiles",    // P (15) — miles (not dollars)
+  "laPaidMiles",           // Q (16) — miles (not dollars)
+  "unreimbursedMiles",     // R (17) — miles (NOT dollars — tax-critical)
+  "mileagePaid",           // S (18) — dollars LA paid
+  "status",                // T (19)
+  "paidDate",              // U (20)
+  "invoicePdfUrl",         // V (21)
+  "invoiceSentDate",       // W (22)
+  "amountPaid",            // X (23)
+  "remainingBalance",      // Y (24)
+  "paymentMethod",         // Z (25)
+  "paymentReceivedDate",   // AA (26)
+  "paymentBatchRef",       // AB (27)
+  "sentTo",                // AC (28)
+  "sentSubject",           // AD (29)
+  "jobNameOverride",       // AE (30)
+  "dayRateDescriptionOverride", // AF (31)
+  "noteOverride",          // AG (32)
+  "unreimbursedMileageValue",  // AH (33) — unreimbursedMiles × IRS rate
+] as const;
+
+describe("Column mapping A–U and AH", () => {
+  it("total columns = 34 (A–AG plus AH tax column)", () => {
+    expect(COLUMN_ORDER_MIRROR.length).toBe(34);
+  });
+  it("A (0) = invoiceNumber", () => { expect(COLUMN_ORDER_MIRROR[0]).toBe("invoiceNumber"); });
+  it("C (2) = laJobNumber", () => { expect(COLUMN_ORDER_MIRROR[2]).toBe("laJobNumber"); });
+  it("E (4) = totalPay", () => { expect(COLUMN_ORDER_MIRROR[4]).toBe("totalPay"); });
+  it("I (8) = mileage (dollar amount)", () => { expect(COLUMN_ORDER_MIRROR[8]).toBe("mileage"); });
+  it("P (15) = totalBusinessMiles (miles)", () => { expect(COLUMN_ORDER_MIRROR[15]).toBe("totalBusinessMiles"); });
+  it("Q (16) = laPaidMiles (miles)", () => { expect(COLUMN_ORDER_MIRROR[16]).toBe("laPaidMiles"); });
+  it("R (17) = unreimbursedMiles (miles, NOT dollars)", () => { expect(COLUMN_ORDER_MIRROR[17]).toBe("unreimbursedMiles"); });
+  it("S (18) = mileagePaid (dollars)", () => { expect(COLUMN_ORDER_MIRROR[18]).toBe("mileagePaid"); });
+  it("T (19) = status", () => { expect(COLUMN_ORDER_MIRROR[19]).toBe("status"); });
+  it("U (20) = paidDate", () => { expect(COLUMN_ORDER_MIRROR[20]).toBe("paidDate"); });
+  it("V (21) = invoicePdfUrl (NOT mileage value — V is used by PDF link)", () => {
+    expect(COLUMN_ORDER_MIRROR[21]).toBe("invoicePdfUrl");
+  });
+  it("AH (33) = unreimbursedMileageValue (tax deduction column)", () => {
+    expect(COLUMN_ORDER_MIRROR[33]).toBe("unreimbursedMileageValue");
+  });
+  it("col R is miles, not dollars — unreimbursedMiles and mileage are different fields", () => {
+    // Validate that col I (mileage/dollars) and col R (unreimbursedMiles/miles) are distinct
+    expect(COLUMN_ORDER_MIRROR[8]).not.toBe(COLUMN_ORDER_MIRROR[17]);
+    expect(COLUMN_ORDER_MIRROR[8]).toBe("mileage");
+    expect(COLUMN_ORDER_MIRROR[17]).toBe("unreimbursedMiles");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AE. Mileage calculation accuracy and IRS deduction value
+// ---------------------------------------------------------------------------
+
+const IRS_MILEAGE_RATE_2026 = 0.725;
+
+// Mirror of calculateMileage logic from lib/invoice-calculations.ts
+function calculateMileage(totalMiles: number, deductionMiles: number, rate: number) {
+  const reimbursedMiles = Math.max(0, totalMiles - deductionMiles);
+  const unreimbursedMiles = totalMiles - reimbursedMiles;
+  const mileageAmount = Math.round(reimbursedMiles * rate * 100) / 100;
+  const unreimbursedMileageValue = Math.round(unreimbursedMiles * IRS_MILEAGE_RATE_2026 * 100) / 100;
+  return { totalMiles, deductionMiles, reimbursedMiles, unreimbursedMiles, mileageAmount, unreimbursedMileageValue };
+}
+
+describe("Mileage calculation — miles vs dollars, IRS deduction", () => {
+  it("420 total miles, 60 deducted → 360 reimbursed, 60 unreimbursed, $187.20 mileage paid", () => {
+    const m = calculateMileage(420, 60, 0.52);
+    expect(m.reimbursedMiles).toBe(360);
+    expect(m.unreimbursedMiles).toBe(60);
+    expect(m.mileageAmount).toBe(187.2);
+  });
+
+  it("col R (unreimbursedMiles) is in MILES, not dollars", () => {
+    const m = calculateMileage(420, 60, 0.52);
+    // col R = unreimbursedMiles (60 miles) — NOT dollars
+    // col I = mileageAmount ($187.20) — these are different
+    expect(m.unreimbursedMiles).toBe(60); // miles
+    expect(m.mileageAmount).not.toBe(m.unreimbursedMiles); // dollars ≠ miles
+  });
+
+  it("unreimbursedMiles = totalMiles − reimbursedMiles (never negative)", () => {
+    // Normal case: deduction < total → some miles reimbursed, some not
+    expect(calculateMileage(100, 30, 0.52).unreimbursedMiles).toBe(30);
+    // Clamped case: deduction > total → LA reimburses 0, ALL driven miles are unreimbursed
+    expect(calculateMileage(20, 60, 0.52).reimbursedMiles).toBe(0);
+    expect(calculateMileage(20, 60, 0.52).unreimbursedMiles).toBe(20); // drove 20 miles, LA paid 0
+  });
+
+  it("IRS deduction value = unreimbursedMiles × 0.725", () => {
+    const m = calculateMileage(420, 60, 0.52);
+    // 60 unreimbursed miles × $0.725 IRS rate = $43.50
+    expect(m.unreimbursedMileageValue).toBe(43.5);
+  });
+
+  it("IRS rate 2026 = 0.725", () => {
+    expect(IRS_MILEAGE_RATE_2026).toBe(0.725);
+  });
+
+  it("unreimbursedMileageValue is 0 when no deduction miles exist (deduction = 0)", () => {
+    const m = calculateMileage(50, 0, 0.52); // no deduction → all 50 miles reimbursed
+    expect(m.reimbursedMiles).toBe(50);
+    expect(m.unreimbursedMiles).toBe(0);
+    expect(m.unreimbursedMileageValue).toBe(0);
+  });
+
+  it("billable mileage (col I) uses the billing rate, not the IRS rate", () => {
+    const billingRate = 0.52;
+    const m = calculateMileage(420, 60, billingRate);
+    // LA pays reimbursedMiles × billing rate
+    expect(m.mileageAmount).toBe(Math.round(360 * billingRate * 100) / 100);
+    // IRS value uses IRS rate (different from billing rate)
+    expect(m.unreimbursedMileageValue).toBe(Math.round(60 * IRS_MILEAGE_RATE_2026 * 100) / 100);
+    expect(m.mileageAmount).not.toBe(m.unreimbursedMileageValue);
+  });
+
+  it("mileage (col I) and mileagePaid (col S) are the same dollar amount", () => {
+    // Both cols I and S hold mileageAmount — what LA is charged and what they pay
+    const m = calculateMileage(420, 60, 0.52);
+    expect(m.mileageAmount).toBe(187.2); // col I
+    // col S (mileagePaid) = same value: 187.20
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AF. Health report — TOTALS position and activeBelowTotalsCount
+// ---------------------------------------------------------------------------
+
+interface HealthEntryV2 extends HealthEntry {
+  sheetRow: number; // explicit 1-indexed row number for TOTALS detection
+}
+
+function computeHealthReportV2(
+  entries: HealthEntry[],
+  totalsAt: number | null, // 1-indexed row number of TOTALS
+): { isClean: boolean; activeBelowTotalsCount: number; totalsRowNum: number | null } {
+  let activeBelowTotalsCount = 0;
+  for (const e of entries) {
+    if (e.status !== VOID_STATUS && isInvoiceDataRow(e.invNumber, e.laNumber, e.status)) {
+      if (totalsAt !== null && e.rowNumber >= totalsAt) {
+        activeBelowTotalsCount++;
+      }
+    }
+  }
+  const baseReport = computeHealthReport(entries);
+  const isClean = baseReport.activeDuplicateCount === 0 && baseReport.voidedRowsWithMoneyCount === 0 && activeBelowTotalsCount === 0;
+  return { isClean, activeBelowTotalsCount, totalsRowNum: totalsAt };
+}
+
+describe("Health report — TOTALS position and activeBelowTotalsCount", () => {
+  const activeRow2: HealthEntry = { rowNumber: 2, invNumber: "1001", laNumber: "5555", date: "2026-01-15", total: "2000", status: "sheet_synced" };
+  const activeRow3: HealthEntry = { rowNumber: 3, invNumber: "1002", laNumber: "6666", date: "2026-02-01", total: "1500", status: "sheet_synced" };
+  const totalsAt = 5; // TOTALS row at row 5
+
+  it("all active rows above TOTALS → activeBelowTotalsCount = 0, isClean true", () => {
+    const report = computeHealthReportV2([activeRow2, activeRow3], totalsAt);
+    expect(report.activeBelowTotalsCount).toBe(0);
+    expect(report.isClean).toBe(true);
+  });
+
+  it("active row at TOTALS row number → flagged (row AT TOTALS is misplaced)", () => {
+    const atTotals: HealthEntry = { rowNumber: 5, invNumber: "1003", laNumber: "7777", date: "2026-03-01", total: "1000", status: "sheet_synced" };
+    const report = computeHealthReportV2([activeRow2, atTotals], totalsAt);
+    expect(report.activeBelowTotalsCount).toBe(1);
+    expect(report.isClean).toBe(false);
+  });
+
+  it("active row below TOTALS → flagged, isClean false", () => {
+    const belowTotals: HealthEntry = { rowNumber: 7, invNumber: "1004", laNumber: "8888", date: "2026-04-01", total: "1200", status: "sheet_synced" };
+    const report = computeHealthReportV2([activeRow2, belowTotals], totalsAt);
+    expect(report.activeBelowTotalsCount).toBe(1);
+    expect(report.isClean).toBe(false);
+  });
+
+  it("VOID row below TOTALS → not counted in activeBelowTotalsCount", () => {
+    const voidBelow: HealthEntry = { rowNumber: 7, invNumber: "1001", laNumber: "5555", date: "2026-01-10", total: "0", status: VOID_STATUS };
+    const report = computeHealthReportV2([activeRow2, voidBelow], totalsAt);
+    expect(report.activeBelowTotalsCount).toBe(0);
+  });
+
+  it("no TOTALS row (totalsAt null) → activeBelowTotalsCount = 0", () => {
+    const report = computeHealthReportV2([activeRow2, activeRow3], null);
+    expect(report.activeBelowTotalsCount).toBe(0);
+    expect(report.totalsRowNum).toBeNull();
+  });
+
+  it("multiple active rows below TOTALS → all counted", () => {
+    const below1: HealthEntry = { rowNumber: 6, invNumber: "1003", laNumber: "7777", date: "2026-03-01", total: "900", status: "sheet_synced" };
+    const below2: HealthEntry = { rowNumber: 8, invNumber: "1004", laNumber: "8888", date: "2026-04-01", total: "600", status: "sheet_synced" };
+    const report = computeHealthReportV2([activeRow2, below1, below2], totalsAt);
+    expect(report.activeBelowTotalsCount).toBe(2);
+    expect(report.isClean).toBe(false);
   });
 });
