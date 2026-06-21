@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { InvoiceSection } from "@/components/InvoiceSection";
+import { InvoiceSection, snapUtcToTimeOption } from "@/components/InvoiceSection";
 import type { WorklistEntry, WorklistFilter } from "@/lib/invoice-worklist";
 
 // ---------------------------------------------------------------------------
@@ -330,6 +330,8 @@ export function InvoiceWorklist() {
             gigSummary={selected.summary}
             editorToken={token}
             jobLocation={selected.location ?? undefined}
+            defaultStartTime={selected.startTimeUtc ? snapUtcToTimeOption(selected.startTimeUtc) : undefined}
+            defaultEndTime={selected.endTimeUtc ? snapUtcToTimeOption(selected.endTimeUtc) : undefined}
           />
         </div>
       ) : null}

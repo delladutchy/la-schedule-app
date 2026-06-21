@@ -213,7 +213,15 @@ export function initWorkdayEntries(
   const savedByDate = new Map(existing.map((e) => [e.date, e]));
   return mergeInvoiceWorkDates(dates, existing).map((date) => {
     const saved = savedByDate.get(date);
-    if (saved) return saved; // always trust saved data over calendar defaults
+    if (saved) {
+      // An empty saved time ("") means the user cleared it → fall back to the
+      // calendar-scheduled default, just as if no time had been saved yet.
+      // A non-empty saved time (e.g. "7:30 AM") always wins over the default.
+      const startTime = saved.startTime !== "" ? saved.startTime : (defaultStart ?? "");
+      const endTime   = saved.endTime   !== "" ? saved.endTime   : (defaultEnd   ?? "");
+      if (startTime === saved.startTime && endTime === saved.endTime) return saved;
+      return { ...saved, startTime, endTime };
+    }
     return { date, startTime: defaultStart ?? "", endTime: defaultEnd ?? "" };
   });
 }

@@ -23,6 +23,18 @@ export interface WorklistEntry {
   workDates: string[];
   /** Calendar event location, if set */
   location: string | null;
+  /**
+   * UTC ISO string of the event's scheduled START time.
+   * null for all-day events (which have no specific wall-clock time).
+   * Used to seed the default Start time in invoice workday rows.
+   */
+  startTimeUtc: string | null;
+  /**
+   * UTC ISO string of the event's scheduled END time.
+   * null for all-day events or when no end time is set.
+   * Used to seed the default End time in invoice workday rows.
+   */
+  endTimeUtc: string | null;
   /** Invoice status from Supabase (defaults to "none" if no invoice_data row exists) */
   invoiceStatus: InvoiceStatus;
   invoiceNumber: string | null;
@@ -60,6 +72,10 @@ export async function listWorklistEntries(opts: {
     startMs: number;
     endMs: number;
     location: string | null;
+    /** UTC ISO string of the event start time; null for all-day events. */
+    startTimeUtc: string | null;
+    /** UTC ISO string of the event end time; null for all-day events. */
+    endTimeUtc: string | null;
   }> = [];
 
   const TIME_CHUNK_MS = 60 * 24 * 60 * 60 * 1000; // 60-day chunks
@@ -89,12 +105,24 @@ export async function listWorklistEntries(opts: {
         const endMs   = parseBoundaryMs(item.end, tz);
         if (startMs == null || endMs == null || endMs <= startMs) continue;
 
+        // Track whether this is a timed event (has dateTime) or all-day (date only).
+        // All-day events have no meaningful wall-clock time — use null so
+        // InvoiceSection doesn't default workday rows to "12:00 AM".
+        const startTimeUtc = item.start?.dateTime
+          ? new Date(startMs).toISOString()
+          : null;
+        const endTimeUtc = item.end?.dateTime
+          ? new Date(endMs).toISOString()
+          : null;
+
         rawEvents.push({
           eventId:  item.id,
           summary:  (item.summary ?? "").trim() || "Untitled",
           startMs,
           endMs,
           location: (item.location ?? "").trim() || null,
+          startTimeUtc,
+          endTimeUtc,
         });
       }
       pageToken = resp.data.nextPageToken ?? undefined;
@@ -154,6 +182,8 @@ export async function listWorklistEntries(opts: {
       endDate,
       workDates,
       location:         ev.location,
+      startTimeUtc:     ev.startTimeUtc,
+      endTimeUtc:       ev.endTimeUtc,
       invoiceStatus:    inv?.invoice_status   ?? "none",
       invoiceNumber:    inv?.invoice_number   ?? null,
       invoiceTotal:     inv?.invoice_total    ?? null,

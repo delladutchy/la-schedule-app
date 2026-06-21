@@ -29,6 +29,8 @@ function makeEntry(overrides: Partial<WorklistEntry> = {}): WorklistEntry {
     endDate:          "2026-05-15",
     workDates:        ["2026-05-15"],
     location:         null,
+    startTimeUtc:     null,
+    endTimeUtc:       null,
     invoiceStatus:    "none",
     invoiceNumber:    null,
     invoiceTotal:     null,
@@ -386,5 +388,42 @@ describe("past job quick-action availability", () => {
     // Sending requires status to be at least "sheet_synced" — "none" means no invoice yet
     expect(entry.invoiceStatus).toBe("none");
     expect(entry.invoiceTotal).toBeNull();
+  });
+});
+
+// ── WorklistEntry scheduled time fields (startTimeUtc / endTimeUtc) ───────────
+
+describe("WorklistEntry scheduled time fields", () => {
+  it("timed event carries startTimeUtc and endTimeUtc (non-null)", () => {
+    const entry = makeEntry({
+      startTimeUtc: "2026-06-22T13:30:00.000Z", // 6:30 AM PDT
+      endTimeUtc:   "2026-06-23T01:00:00.000Z", // 6:00 PM PDT
+    });
+    expect(entry.startTimeUtc).toBe("2026-06-22T13:30:00.000Z");
+    expect(entry.endTimeUtc).toBe("2026-06-23T01:00:00.000Z");
+  });
+
+  it("all-day event has startTimeUtc = null and endTimeUtc = null", () => {
+    const entry = makeEntry({ startTimeUtc: null, endTimeUtc: null });
+    expect(entry.startTimeUtc).toBeNull();
+    expect(entry.endTimeUtc).toBeNull();
+  });
+
+  it("default makeEntry has null time fields (represents all-day or unknown time)", () => {
+    const entry = makeEntry();
+    expect(entry.startTimeUtc).toBeNull();
+    expect(entry.endTimeUtc).toBeNull();
+  });
+
+  it("multi-day timed event has startTimeUtc of first day start", () => {
+    const entry = makeEntry({
+      startDate:    "2026-06-22",
+      endDate:      "2026-06-24",
+      workDates:    ["2026-06-22", "2026-06-23", "2026-06-24"],
+      startTimeUtc: "2026-06-22T13:30:00.000Z", // 6:30 AM PDT first day
+      endTimeUtc:   "2026-06-25T01:00:00.000Z", // 6:00 PM PDT last day
+    });
+    expect(entry.startTimeUtc).not.toBeNull();
+    expect(entry.endTimeUtc).not.toBeNull();
   });
 });

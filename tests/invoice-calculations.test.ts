@@ -546,14 +546,32 @@ describe("initWorkdayEntries — default time behavior", () => {
     });
   });
 
-  it("saved values are never overwritten by defaults: even empty strings are preserved", () => {
-    // User explicitly cleared start/end times — empty string is a valid saved state.
+  it("clearing a manual time (empty string) falls back to calendar default", () => {
+    // Empty string means "cleared / use calendar time" — not a locked blank.
     const saved: WorkdayEntry[] = [
       { date: "2026-06-18", startTime: "", endTime: "" },
     ];
     const entries = initWorkdayEntries(saved, ["2026-06-18"], DEFAULT_START, DEFAULT_END);
-    expect(entries[0]!.startTime).toBe(""); // empty saved value preserved, not replaced
+    expect(entries[0]!.startTime).toBe(DEFAULT_START);
+    expect(entries[0]!.endTime).toBe(DEFAULT_END);
+  });
+
+  it("clearing a time with no calendar default → keeps blank (no time available)", () => {
+    const saved: WorkdayEntry[] = [
+      { date: "2026-06-18", startTime: "", endTime: "" },
+    ];
+    const entries = initWorkdayEntries(saved, ["2026-06-18"]); // no defaults passed
+    expect(entries[0]!.startTime).toBe("");
     expect(entries[0]!.endTime).toBe("");
+  });
+
+  it("non-empty saved time always wins over calendar default", () => {
+    const saved: WorkdayEntry[] = [
+      { date: "2026-06-18", startTime: "7:30 AM", endTime: "8:00 PM" },
+    ];
+    const entries = initWorkdayEntries(saved, ["2026-06-18"], DEFAULT_START, DEFAULT_END);
+    expect(entries[0]!.startTime).toBe("7:30 AM");
+    expect(entries[0]!.endTime).toBe("8:00 PM");
   });
 
   it("calendar event time change: existing saved invoice times are untouched", () => {
@@ -938,5 +956,155 @@ describe("balance due — fresh calculation", () => {
     const p = calculateInvoicePacket(data);
     const row = generateSheetRow(p, "Test Gig");
     expect(row.remainingBalance).toBe(p.estimatedTotal); // 5800, not stale 800
+  });
+});
+
+// ---------------------------------------------------------------------------
+// snapUtcToTimeOption — calendar event time → invoice workday default
+// (Tested via a local re-implementation that mirrors the exported function)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirror of `snapUtcToTimeOption` from InvoiceSection for unit-testing without
+ * importing the client component. The logic must stay in sync with the source.
+ */
+function testSnapUtcToTimeOption(utcIso: string): string | undefined {
+  const d = new Date(utcIso);
+  const totalMins = d.getHours() * 60 + d.getMinutes();
+  if (totalMins === 0) return undefined;
+  const snapped = Math.round(totalMins / 30) * 30;
+  const hSnapped = Math.floor(snapped / 60) % 24;
+  const mSnapped = snapped % 60;
+  const period = hSnapped >= 12 ? "PM" : "AM";
+  const h12 = hSnapped % 12 || 12;
+  return `${h12}:${String(mSnapped).padStart(2, "0")} ${period}`;
+}
+
+describe("snapUtcToTimeOption — invoice workday default time from calendar", () => {
+  // This function uses JS Date.getHours() (LOCAL timezone), so tests must be
+  // timezone-agnostic. We compute UTC values that correspond to midnight / non-
+  // midnight in the CURRENT test runner's local timezone.
+
+  /** Returns the UTC ISO string for "midnight today" in the test runner's local timezone. */
+  function localMidnightUtc(): string {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0); // midnight local time
+    return d.toISOString();
+  }
+
+  /** Returns the UTC ISO string for "N hours from midnight" in the local timezone. */
+  function localHoursUtc(hours: number, minutes = 0): string {
+    const d = new Date();
+    d.setHours(hours, minutes, 0, 0);
+    return d.toISOString();
+  }
+
+  it("midnight local time → undefined (all-day event, no real scheduled time)", () => {
+    // Whatever timezone the test runner is in, midnight local → getHours()=0 → undefined
+    const result = testSnapUtcToTimeOption(localMidnightUtc());
+    expect(result).toBeUndefined();
+  });
+
+  it("midnight local time → NOT '12:00 AM' (all-day detection prevents that string)", () => {
+    const result = testSnapUtcToTimeOption(localMidnightUtc());
+    expect(result).not.toBe("12:00 AM");
+  });
+
+  it("6:30 AM local → '6:30 AM' (exact 30-min boundary, no snapping needed)", () => {
+    const result = testSnapUtcToTimeOption(localHoursUtc(6, 30));
+    expect(result).toBe("6:30 AM");
+  });
+
+  it("7:00 AM local → '7:00 AM'", () => {
+    expect(testSnapUtcToTimeOption(localHoursUtc(7, 0))).toBe("7:00 AM");
+  });
+
+  it("6:00 PM local → '6:00 PM'", () => {
+    expect(testSnapUtcToTimeOption(localHoursUtc(18, 0))).toBe("6:00 PM");
+  });
+
+  it("6:15 AM local → '6:30 AM' (snaps up to nearest 30 min)", () => {
+    expect(testSnapUtcToTimeOption(localHoursUtc(6, 15))).toBe("6:30 AM");
+  });
+
+  it("6:10 AM local → '6:00 AM' (snaps down to nearest 30 min)", () => {
+    expect(testSnapUtcToTimeOption(localHoursUtc(6, 10))).toBe("6:00 AM");
+  });
+
+  it("non-midnight times always return a defined string", () => {
+    for (const [h, m] of [[1,0],[6,30],[7,0],[12,0],[18,0],[22,30]]) {
+      const result = testSnapUtcToTimeOption(localHoursUtc(h!, m!));
+      expect(result, `expected string for ${h}:${m!.toString().padStart(2,"0")}`).toBeDefined();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// initWorkdayEntries — calendar-default integration with clear/reset
+// ---------------------------------------------------------------------------
+
+describe("initWorkdayEntries — calendar default fallback after clear", () => {
+  const DATE = "2026-06-22";
+  const CAL_START = "6:30 AM";
+  const CAL_END = "6:00 PM";
+
+  it("no saved entry + calendar time → work row shows calendar time", () => {
+    const entries = initWorkdayEntries([], [DATE], CAL_START, CAL_END);
+    expect(entries[0]!.startTime).toBe(CAL_START);
+    expect(entries[0]!.endTime).toBe(CAL_END);
+  });
+
+  it("no saved entry + no calendar time → work row is blank", () => {
+    const entries = initWorkdayEntries([], [DATE]);
+    expect(entries[0]!.startTime).toBe("");
+    expect(entries[0]!.endTime).toBe("");
+  });
+
+  it("saved manual time overrides calendar default", () => {
+    const saved: WorkdayEntry[] = [{ date: DATE, startTime: "7:00 AM", endTime: "7:00 PM" }];
+    const entries = initWorkdayEntries(saved, [DATE], CAL_START, CAL_END);
+    expect(entries[0]!.startTime).toBe("7:00 AM");
+    expect(entries[0]!.endTime).toBe("7:00 PM");
+  });
+
+  it("clearing to '' falls back to calendar default", () => {
+    const saved: WorkdayEntry[] = [{ date: DATE, startTime: "", endTime: "" }];
+    const entries = initWorkdayEntries(saved, [DATE], CAL_START, CAL_END);
+    expect(entries[0]!.startTime).toBe(CAL_START);
+    expect(entries[0]!.endTime).toBe(CAL_END);
+  });
+
+  it("reopening with saved time shows saved time, not calendar default", () => {
+    const saved: WorkdayEntry[] = [{ date: DATE, startTime: "7:00 AM", endTime: "8:00 PM" }];
+    const entries = initWorkdayEntries(saved, [DATE], CAL_START, CAL_END);
+    expect(entries[0]!.startTime).toBe("7:00 AM");
+    expect(entries[0]!.endTime).toBe("8:00 PM");
+  });
+
+  it("multi-day: all days get same calendar default when no saved entry", () => {
+    const dates = ["2026-06-22", "2026-06-23", "2026-06-24"];
+    const entries = initWorkdayEntries([], dates, CAL_START, CAL_END);
+    for (const e of entries) {
+      expect(e.startTime).toBe(CAL_START);
+      expect(e.endTime).toBe(CAL_END);
+    }
+  });
+
+  it("multi-day: saved times per day survive reopen; unsaved days get calendar default", () => {
+    const saved: WorkdayEntry[] = [
+      { date: "2026-06-22", startTime: "6:00 AM", endTime: "5:00 PM" }, // day 1 saved
+    ];
+    const dates = ["2026-06-22", "2026-06-23", "2026-06-24"];
+    const entries = initWorkdayEntries(saved, dates, CAL_START, CAL_END);
+    expect(entries.find(e => e.date === "2026-06-22")!.startTime).toBe("6:00 AM"); // saved
+    expect(entries.find(e => e.date === "2026-06-23")!.startTime).toBe(CAL_START); // default
+    expect(entries.find(e => e.date === "2026-06-24")!.startTime).toBe(CAL_START); // default
+  });
+
+  it("past job entries are fully editable (same logic as future/today jobs)", () => {
+    const pastDate = "2020-01-15";
+    const saved: WorkdayEntry[] = [{ date: pastDate, startTime: "8:00 AM", endTime: "6:00 PM" }];
+    const entries = initWorkdayEntries(saved, [pastDate], CAL_START, CAL_END);
+    expect(entries[0]!.startTime).toBe("8:00 AM");
   });
 });
