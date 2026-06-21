@@ -183,6 +183,18 @@ interface SheetRepairState {
   repairedAt: string | null;
 }
 
+interface SheetResetState {
+  status: "idle" | "resetting" | "done" | "error";
+  message: string | null;
+  voidArchivedCount: number;
+  testArchivedCount: number;
+  duplicatesArchivedCount: number;
+  belowTotalsMovedCount: number;
+  goodRowsKept: number;
+  formulasRebuilt: boolean;
+  resetAt: string | null;
+}
+
 interface PdfState {
   status: "idle" | "generating" | "done" | "error";
   error: string | null;
@@ -1052,6 +1064,17 @@ export function InvoiceSection({
     rowsMovedCount: 0,
     repairedAt: null,
   });
+  const [sheetResetState, setSheetResetState] = useState<SheetResetState>({
+    status: "idle",
+    message: null,
+    voidArchivedCount: 0,
+    testArchivedCount: 0,
+    duplicatesArchivedCount: 0,
+    belowTotalsMovedCount: 0,
+    goodRowsKept: 0,
+    formulasRebuilt: false,
+    resetAt: null,
+  });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [isSaving, setIsSaving] = useState(false);
@@ -1641,6 +1664,71 @@ export function InvoiceSection({
       void handleSheetHealthCheck();
     } catch {
       setSheetRepairState((prev) => ({ ...prev, status: "error", message: "Repair failed — network error." }));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sheet reset / clean start
+  // ---------------------------------------------------------------------------
+
+  async function handleResetSheet() {
+    if (sheetResetState.status === "resetting") return;
+    const confirmed = window.confirm(
+      "Reset / Rebuild Invoice Sheet?\n\n" +
+      "This will:\n" +
+      "  • Archive and remove ALL VOID_DUPLICATE rows\n" +
+      "  • Archive and remove fake/test rows (LA#5555, invoice 1001, gig name containing 'test')\n" +
+      "  • Deduplicate remaining rows (best row per invoice/job kept)\n" +
+      "  • Move any misplaced rows to above the TOTALS line\n" +
+      "  • Rebuild TOTALS row SUM formulas (columns E–S)\n\n" +
+      "Real invoice rows are kept. All removed rows are archived first.\n" +
+      "Invoice math, PDFs, emails, and payment records are not changed.\n\n" +
+      "This cannot be undone (check 'Voided Duplicates' tab to recover).\n\n" +
+      "Proceed with the reset?"
+    );
+    if (!confirmed) return;
+
+    setSheetResetState({
+      status: "resetting", message: null,
+      voidArchivedCount: 0, testArchivedCount: 0, duplicatesArchivedCount: 0,
+      belowTotalsMovedCount: 0, goodRowsKept: 0, formulasRebuilt: false, resetAt: null,
+    });
+    try {
+      const res = await fetch("/api/invoice/sheet-reset", {
+        method: "POST",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+      });
+      const json = await res.json().catch(() => ({})) as {
+        ok?: boolean;
+        message?: string;
+        voidArchivedCount?: number;
+        testArchivedCount?: number;
+        duplicatesArchivedCount?: number;
+        belowTotalsMovedCount?: number;
+        goodRowsKept?: number;
+        formulasRebuilt?: boolean;
+        resetAt?: string;
+      };
+      if (!res.ok) {
+        setSheetResetState((prev) => ({ ...prev, status: "error", message: json.message ?? "Reset failed — retry" }));
+        return;
+      }
+      setSheetResetState({
+        status: "done",
+        message: json.message ?? "Reset complete.",
+        voidArchivedCount:       json.voidArchivedCount       ?? 0,
+        testArchivedCount:       json.testArchivedCount       ?? 0,
+        duplicatesArchivedCount: json.duplicatesArchivedCount ?? 0,
+        belowTotalsMovedCount:   json.belowTotalsMovedCount   ?? 0,
+        goodRowsKept:            json.goodRowsKept            ?? 0,
+        formulasRebuilt:         json.formulasRebuilt         ?? false,
+        resetAt:                 json.resetAt                 ?? null,
+      });
+      // Refresh health state after reset
+      void handleSheetHealthCheck();
+    } catch {
+      setSheetResetState((prev) => ({ ...prev, status: "error", message: "Reset failed — network error." }));
     }
   }
 
@@ -2985,6 +3073,44 @@ export function InvoiceSection({
                           {sheetRepairState.voidArchivedCount > 0 ? <span>Void archived: {sheetRepairState.voidArchivedCount}</span> : null}
                           {sheetRepairState.duplicatesArchivedCount > 0 ? <span>Duplicates archived: {sheetRepairState.duplicatesArchivedCount}</span> : null}
                           {sheetRepairState.rowsMovedCount > 0 ? <span>Rows moved above TOTALS: {sheetRepairState.rowsMovedCount}</span> : null}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {/* Reset / Rebuild Invoice Sheet */}
+                    <div className="invoice-sheet-health">
+                      <div className="invoice-sheet-duplicates-head">
+                        <div>
+                          <p className="invoice-sheet-duplicates-title">Reset / Rebuild Invoice Sheet</p>
+                          <p className="invoice-sheet-helper">
+                            Remove test data, dedup, rebuild TOTALS formulas. Archives everything first. Confirmation required.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="invoice-sheet-delete-duplicates-btn"
+                          onClick={() => { void handleResetSheet(); }}
+                          disabled={sheetResetState.status === "resetting"}
+                        >
+                          {sheetResetState.status === "resetting" ? "Resetting…" : "Reset / Rebuild Sheet"}
+                        </button>
+                      </div>
+                      {sheetResetState.status === "done" || sheetResetState.status === "error" ? (
+                        <p
+                          className={`invoice-sheet-duplicate-message${sheetResetState.status === "error" ? " is-warning" : ""}`}
+                          role={sheetResetState.status === "error" ? "alert" : undefined}
+                        >
+                          {sheetResetState.status === "error" ? "⚠ " : "✓ "}{sheetResetState.message}
+                        </p>
+                      ) : null}
+                      {sheetResetState.status === "done" ? (
+                        <div className="invoice-sheet-helper" style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+                          {sheetResetState.testArchivedCount > 0 ? <span>Test rows removed: {sheetResetState.testArchivedCount}</span> : null}
+                          {sheetResetState.voidArchivedCount > 0 ? <span>Void archived: {sheetResetState.voidArchivedCount}</span> : null}
+                          {sheetResetState.duplicatesArchivedCount > 0 ? <span>Duplicates archived: {sheetResetState.duplicatesArchivedCount}</span> : null}
+                          {sheetResetState.belowTotalsMovedCount > 0 ? <span>Moved above TOTALS: {sheetResetState.belowTotalsMovedCount}</span> : null}
+                          <span>Real rows kept: {sheetResetState.goodRowsKept}</span>
+                          {sheetResetState.formulasRebuilt ? <span>Formulas rebuilt</span> : null}
                         </div>
                       ) : null}
                     </div>

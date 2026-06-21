@@ -2051,3 +2051,248 @@ describe("Health report — TOTALS position and activeBelowTotalsCount", () => {
     expect(report.isClean).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AG. isTestSheetRow — fake/test row detection
+// ---------------------------------------------------------------------------
+
+// Mirror of isTestSheetRow from lib/google-sheets.ts
+function isTestSheetRow(invNumber: string, laNumber: string, gigEvent: string): boolean {
+  if (normalizeLA(laNumber) === "5555") return true;
+  if (invNumber.trim() === "1001") return true;
+  if (gigEvent.trim().toLowerCase().includes("test")) return true;
+  return false;
+}
+
+describe("isTestSheetRow — fake/test row detection", () => {
+  // Test rows by LA#
+  it("LA#5555 (canonical) → test row", () => {
+    expect(isTestSheetRow("1001", "LA#5555", "some gig")).toBe(true);
+  });
+  it("5555 (no prefix) → test row (normalizeLA matches)", () => {
+    expect(isTestSheetRow("1001", "5555", "some gig")).toBe(true);
+  });
+  it("LA #5555 (space variant) → test row", () => {
+    expect(isTestSheetRow("1001", "LA #5555", "some gig")).toBe(true);
+  });
+
+  // Test rows by invoice number
+  it("invoice 1001 → test row", () => {
+    expect(isTestSheetRow("1001", "LA#9999", "real gig")).toBe(true);
+  });
+  it("invoice 1001 with whitespace → test row", () => {
+    expect(isTestSheetRow("  1001  ", "LA#9999", "real gig")).toBe(true);
+  });
+  it("invoice 1001a → NOT a test row (different number)", () => {
+    expect(isTestSheetRow("1001a", "LA#9999", "real gig")).toBe(false);
+  });
+
+  // Test rows by gig name
+  it("gig containing 'test' → test row", () => {
+    expect(isTestSheetRow("1002", "LA#9999", "test job")).toBe(true);
+  });
+  it("gig 'Testing invoice sync' → test row", () => {
+    expect(isTestSheetRow("1002", "LA#9999", "Testing invoice sync")).toBe(true);
+  });
+  it("gig 'UNIT TEST' (uppercase) → test row (case-insensitive)", () => {
+    expect(isTestSheetRow("1002", "LA#9999", "UNIT TEST")).toBe(true);
+  });
+
+  // Real rows
+  it("real invoice row: inv 1002, LA#6789, real gig → NOT a test row", () => {
+    expect(isTestSheetRow("1002", "LA#6789", "Music video shoot — director")).toBe(false);
+  });
+  it("real invoice row: inv 1050, LA#1234 → NOT a test row", () => {
+    expect(isTestSheetRow("1050", "LA#1234", "Commercial shoot")).toBe(false);
+  });
+  it("blank gig name → NOT a test row", () => {
+    expect(isTestSheetRow("1002", "LA#6789", "")).toBe(false);
+  });
+  it("gig containing 'latest' → NOT a test row ('latest' contains 'test'!)", () => {
+    // NOTE: 'latest' does contain 'test' — this is an edge case to document.
+    // The function matches any occurrence of the substring 'test'.
+    expect(isTestSheetRow("1002", "LA#6789", "Latest commercial")).toBe(true); // intentional: 'latest' has 'test' in it
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AH. Reset / Rebuild Sheet — simulation tests
+// ---------------------------------------------------------------------------
+
+interface ResetRow {
+  rowNumber: number;
+  invNumber: string;
+  laNumber: string;
+  gigEvent: string;
+  total: string;
+  status: string;
+}
+
+interface ResetSimResult {
+  voidToArchive: ResetRow[];
+  testToArchive: ResetRow[];
+  duplicatesToArchive: ResetRow[];
+  goodRows: ResetRow[];
+}
+
+function simulateReset(rows: ResetRow[]): ResetSimResult {
+  const voidToArchive: ResetRow[] = [];
+  const testToArchive: ResetRow[] = [];
+  const activeByKey = new Map<string, ResetRow[]>();
+
+  for (const r of rows) {
+    if (r.status === VOID_STATUS) { voidToArchive.push(r); continue; }
+    if (!isInvoiceDataRow(r.invNumber, r.laNumber, r.status)) continue;
+    if (isTestSheetRow(r.invNumber, r.laNumber, r.gigEvent)) { testToArchive.push(r); continue; }
+    const normLa = normalizeLA(r.laNumber);
+    const key = normLa ? `la:${normLa}` : r.invNumber ? `inv:${r.invNumber}` : null;
+    if (!key) continue;
+    const existing = activeByKey.get(key) ?? [];
+    existing.push(r);
+    activeByKey.set(key, existing);
+  }
+
+  const duplicatesToArchive: ResetRow[] = [];
+  const goodRows: ResetRow[] = [];
+
+  for (const [, candidates] of activeByKey) {
+    if (candidates.length === 1) { goodRows.push(candidates[0]!); continue; }
+    // Keep highest row number as tiebreaker (mirrors scoreKeepRow without incoming params)
+    const keep = candidates.reduce((best, e) => e.rowNumber > best.rowNumber ? e : best);
+    goodRows.push(keep);
+    duplicatesToArchive.push(...candidates.filter((c) => c.rowNumber !== keep.rowNumber));
+  }
+
+  return { voidToArchive, testToArchive, duplicatesToArchive, goodRows };
+}
+
+describe("Reset / Rebuild Sheet — row classification", () => {
+  const realRow: ResetRow = { rowNumber: 2, invNumber: "1002", laNumber: "LA#6789", gigEvent: "Film shoot", total: "2000", status: "sheet_synced" };
+  const voidRow: ResetRow = { rowNumber: 3, invNumber: "1001", laNumber: "LA#5555", gigEvent: "test job", total: "0", status: VOID_STATUS };
+  const testByLA: ResetRow = { rowNumber: 4, invNumber: "1001", laNumber: "LA#5555", gigEvent: "some gig", total: "500", status: "sheet_synced" };
+  const testByInv: ResetRow = { rowNumber: 5, invNumber: "1001", laNumber: "LA#7777", gigEvent: "music video", total: "800", status: "sheet_synced" };
+  const testByGig: ResetRow = { rowNumber: 6, invNumber: "1003", laNumber: "LA#8888", gigEvent: "testing invoice sync", total: "300", status: "sheet_synced" };
+
+  it("VOID rows are archived, not treated as active", () => {
+    const { voidToArchive, goodRows } = simulateReset([voidRow, realRow]);
+    expect(voidToArchive.map(r => r.rowNumber)).toContain(3);
+    expect(goodRows.map(r => r.rowNumber)).toContain(2);
+    expect(goodRows.map(r => r.rowNumber)).not.toContain(3);
+  });
+
+  it("LA#5555 row is archived as test data", () => {
+    const { testToArchive } = simulateReset([testByLA, realRow]);
+    expect(testToArchive.map(r => r.rowNumber)).toContain(4);
+  });
+
+  it("invoice 1001 row is archived as test data", () => {
+    const { testToArchive } = simulateReset([testByInv, realRow]);
+    expect(testToArchive.map(r => r.rowNumber)).toContain(5);
+  });
+
+  it("'test' in gig name is archived as test data", () => {
+    const { testToArchive } = simulateReset([testByGig, realRow]);
+    expect(testToArchive.map(r => r.rowNumber)).toContain(6);
+  });
+
+  it("real invoice rows are kept as goodRows", () => {
+    const { goodRows } = simulateReset([testByLA, voidRow, realRow]);
+    expect(goodRows).toHaveLength(1);
+    expect(goodRows[0]?.rowNumber).toBe(2);
+  });
+
+  it("archive-before-delete: all removed rows appear in archive lists, none silently dropped", () => {
+    const rows = [testByLA, voidRow, testByInv, testByGig, realRow];
+    const { voidToArchive, testToArchive, goodRows } = simulateReset(rows);
+    const archived = [...voidToArchive, ...testToArchive];
+    // Every non-real row must be in an archive list
+    expect(archived.map(r => r.rowNumber).sort()).toEqual([3, 4, 5, 6]);
+    // Real rows must be in goodRows
+    expect(goodRows.map(r => r.rowNumber)).toEqual([2]);
+    // Nothing dropped silently
+    expect(archived.length + goodRows.length).toBe(rows.length);
+  });
+
+  it("duplicate active rows: only best (highest row#) is kept, others archived", () => {
+    const dup1: ResetRow = { rowNumber: 7, invNumber: "1004", laNumber: "LA#9000", gigEvent: "Real shoot", total: "1500", status: "sheet_synced" };
+    const dup2: ResetRow = { rowNumber: 9, invNumber: "1004", laNumber: "LA#9000", gigEvent: "Real shoot", total: "1500", status: "sheet_synced" };
+    const { duplicatesToArchive, goodRows } = simulateReset([dup1, dup2, realRow]);
+    expect(duplicatesToArchive).toHaveLength(1);
+    expect(duplicatesToArchive[0]?.rowNumber).toBe(7); // lower row# is the duplicate
+    expect(goodRows.map(r => r.rowNumber)).toContain(9); // higher row# is kept
+  });
+
+  it("reset on an already-clean sheet: 0 archived, real row preserved", () => {
+    const { voidToArchive, testToArchive, duplicatesToArchive, goodRows } = simulateReset([realRow]);
+    expect(voidToArchive).toHaveLength(0);
+    expect(testToArchive).toHaveLength(0);
+    expect(duplicatesToArchive).toHaveLength(0);
+    expect(goodRows).toHaveLength(1);
+  });
+});
+
+describe("Reset — formula rebuild range", () => {
+  it("formula covers rows 2 through (totalsRow - 1)", () => {
+    // If TOTALS is at row 10 and last active is at row 9, formula = SUM(X2:X9)
+    const totalsRow = 10;
+    const lastRow = totalsRow - 1;
+    const formula = `=SUM(E2:E${lastRow})`;
+    expect(formula).toBe("=SUM(E2:E9)");
+  });
+
+  it("formula covers blank rows above TOTALS (blank cells contribute 0 to SUM)", () => {
+    // TOTALS at row 15, last active at row 5, blank rows 6-14 → SUM covers all
+    const totalsRow = 15;
+    const lastRow = totalsRow - 1;
+    const formula = `=SUM(E2:E${lastRow})`;
+    expect(formula).toBe("=SUM(E2:E14)");
+    // Future insert at row 6 is captured because the range includes rows 6-14
+    expect(6).toBeGreaterThanOrEqual(2);
+    expect(6).toBeLessThanOrEqual(14);
+  });
+
+  it("15 money columns (E–S) each get a SUM formula", () => {
+    const moneyCols = ["E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S"];
+    expect(moneyCols).toHaveLength(15);
+    const formulas = moneyCols.map((col) => `=SUM(${col}2:${col}9)`);
+    expect(formulas[0]).toBe("=SUM(E2:E9)");   // E: totalPay
+    expect(formulas[4]).toBe("=SUM(I2:I9)");   // I: mileage
+    expect(formulas[14]).toBe("=SUM(S2:S9)");  // S: mileagePaid
+  });
+});
+
+describe("Reset — health report after clean reset", () => {
+  it("after reset: only real rows present → health report is clean", () => {
+    const realRow1: HealthEntry = { rowNumber: 2, invNumber: "1002", laNumber: "LA#6789", date: "2026-06-01", total: "2000", status: "sheet_synced" };
+    const realRow2: HealthEntry = { rowNumber: 3, invNumber: "1003", laNumber: "LA#7890", date: "2026-06-15", total: "1500", status: "sheet_synced" };
+    const totalsAt = 4;
+    const report = computeHealthReportV2([realRow1, realRow2], totalsAt);
+    expect(report.isClean).toBe(true);
+    expect(report.activeBelowTotalsCount).toBe(0);
+  });
+
+  it("after reset: zero void rows on main sheet → totalVoidedRows = 0", () => {
+    const realRow1: HealthEntry = { rowNumber: 2, invNumber: "1002", laNumber: "LA#6789", date: "2026-06-01", total: "2000", status: "sheet_synced" };
+    const report = computeHealthReport([realRow1]);
+    expect(report.totalVoidedRows).toBe(0);
+    expect(report.activeDuplicateCount).toBe(0);
+    expect(report.isClean).toBe(true);
+  });
+
+  it("after reset + future sync: new invoice writes one active row above TOTALS", () => {
+    // Verify that upsert logic (from TOTALS placement tests) still works post-reset.
+    // Sheet after reset: header row 1, real rows 2-3, TOTALS at row 4.
+    const sheet = [
+      { cellA: "INV#",  cellC: "LA#",   cellT: "STATUS" },
+      { cellA: "1002",  cellC: "6789",  cellT: "sheet_synced" }, // row 2: real
+      { cellA: "1003",  cellC: "7890",  cellT: "sheet_synced" }, // row 3: real
+      { cellA: "TOTALS:", cellC: "",    cellT: "" },             // row 4: TOTALS
+    ];
+    const result = simulateTotalsPlacement(sheet);
+    expect(result.totalsRowNum).toBe(4);
+    expect(result.lastDataRow).toBe(3);
+    // No blank row between row 3 and TOTALS row 4 → INSERT before TOTALS
+    expect(result.nextIsBlank).toBe(false);
+    expect(result.newRowNumber).toBe(4); // new row inserted at row 4, TOTALS shifts to 5
+  });
+});

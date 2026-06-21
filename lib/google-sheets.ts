@@ -1300,3 +1300,266 @@ export async function repairSheetLayout(): Promise<SheetRepairResult> {
     healthAfter,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Sheet reset / clean start (admin-only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when a sheet row looks like fake/test data that should be
+ * removed during a reset. Criteria:
+ *   - LA# normalises to "5555"       (canonical test LA number)
+ *   - Invoice number is exactly "1001" (canonical test invoice)
+ *   - Gig/event name contains "test" (case-insensitive)
+ *
+ * Real jobs with genuinely matching identifiers are extremely unlikely
+ * (LA assigns real numbers; gig names are production event summaries).
+ */
+export function isTestSheetRow(invNumber: string, laNumber: string, gigEvent: string): boolean {
+  if (normalizeLA(laNumber) === "5555") return true;
+  if (invNumber.trim() === "1001") return true;
+  if (gigEvent.trim().toLowerCase().includes("test")) return true;
+  return false;
+}
+
+export interface SheetResetResult {
+  ok: boolean;
+  message: string;
+  voidArchivedCount: number;
+  testArchivedCount: number;
+  duplicatesArchivedCount: number;
+  /** Good rows that were below TOTALS and moved to above TOTALS (not archived). */
+  belowTotalsMovedCount: number;
+  /** Real active rows that survived the reset (now above TOTALS). */
+  goodRowsKept: number;
+  formulasRebuilt: boolean;
+  totalsRowNumAfter: number;
+  healthAfter: SheetHealthReport;
+}
+
+/**
+ * Resets the Sheet to a clean state suitable for real invoice use:
+ *
+ *   1. Archives + deletes all VOID_DUPLICATE rows.
+ *   2. Archives + deletes all fake/test rows (LA#5555, inv#1001, gig "test").
+ *   3. Deduplicates remaining active rows — best row per key kept, extras archived.
+ *   4. Moves any remaining good rows below TOTALS to above TOTALS.
+ *   5. Rebuilds TOTALS row SUM formulas (E–S) to cover all rows above TOTALS.
+ *   6. Returns SheetResetResult with health report.
+ *
+ * Archive-before-delete: every removed row is written to "Voided Duplicates"
+ * before deletion. The header row, TOTALS row, and unrecognised rows are
+ * never touched. Never emails, syncs, or modifies invoice DB records.
+ */
+export async function resetSheetLayout(): Promise<SheetResetResult> {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
+
+  const auth = await getSheetAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // ── Phase 0: Read full sheet ───────────────────────────────────────────────
+  const [spreadsheetRes, readRes] = await Promise.all([
+    sheets.spreadsheets.get({ spreadsheetId: sheetId }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${QUOTED_SHEET_NAME}!A:AG`,
+    }),
+  ]);
+
+  const tabMeta = spreadsheetRes.data.sheets?.find((s) => s.properties?.title === SHEET_NAME);
+  if (!tabMeta || tabMeta.properties?.sheetId == null) {
+    throw new Error(`[google-sheets] Tab "${SHEET_NAME}" not found`);
+  }
+  const numericTabId = tabMeta.properties.sheetId;
+  const existingSheets = spreadsheetRes.data.sheets;
+  const rows = readRes.data.values ?? [];
+
+  // ── Phase 1: Classify rows ────────────────────────────────────────────────
+  const voidToArchive: ArchiveEntry[] = [];
+  const testToArchive: ArchiveEntry[] = [];
+  // Active, non-test rows grouped by key for deduplication.
+  const activeByKey = new Map<string, Array<{ rowNumber: number; entry: ArchiveEntry }>>();
+
+  for (let i = 1; i < rows.length; i++) {
+    const sheetsRow = i + 1;
+    const cellA = String(rows[i]?.[0] ?? "").trim();
+    const cellB = String(rows[i]?.[1] ?? "").trim();
+    const cellC = String(rows[i]?.[2] ?? "").trim();
+    const cellD = String(rows[i]?.[3] ?? "").trim();
+    const cellE = String(rows[i]?.[4] ?? "").trim();
+    const cellT = String(rows[i]?.[19] ?? "").trim();
+
+    if (isTotalsRow(cellA)) continue; // never touch the TOTALS row
+
+    const entry: ArchiveEntry = {
+      rowNumber: sheetsRow, invNumber: cellA, date: cellB,
+      laNumber: cellC, gigEvent: cellD, total: cellE, originalStatus: cellT,
+    };
+
+    if (cellT === VOID_STATUS) {
+      voidToArchive.push(entry);
+      continue;
+    }
+
+    if (!isInvoiceDataRow(cellA, cellC, cellT)) continue; // blank/unrecognised — skip
+
+    if (isTestSheetRow(cellA, cellC, cellD)) {
+      testToArchive.push(entry);
+      continue;
+    }
+
+    const normLa = normalizeLA(cellC);
+    const key = normLa ? `la:${normLa}` : cellA ? `inv:${cellA}` : null;
+    if (!key) continue;
+
+    const existing = activeByKey.get(key) ?? [];
+    existing.push({ rowNumber: sheetsRow, entry });
+    activeByKey.set(key, existing);
+  }
+
+  // Dedup: keep best-scored row per key, archive the rest.
+  const duplicatesToArchive: ArchiveEntry[] = [];
+  let goodRowsKept = 0;
+  for (const [, candidates] of activeByKey) {
+    if (candidates.length === 1) { goodRowsKept++; continue; }
+    // Score without incoming match bonuses (empty strings = no LA/inv bonus)
+    // → falls back to date recency + row-number tiebreaker.
+    const scored = candidates.map((c) => ({
+      ...c,
+      score: scoreKeepRow(c.entry.invNumber, c.entry.date, c.entry.laNumber, c.entry.total, c.rowNumber, "", "", undefined),
+    }));
+    const keep = scored.reduce((best, e) => e.score > best.score ? e : best);
+    goodRowsKept++;
+    duplicatesToArchive.push(
+      ...scored.filter((e) => e.rowNumber !== keep.rowNumber).map((e) => e.entry),
+    );
+  }
+
+  // ── Phase 2: Archive + delete ─────────────────────────────────────────────
+  const allToArchive = [...voidToArchive, ...testToArchive, ...duplicatesToArchive];
+  if (allToArchive.length > 0) {
+    await archiveAndDeleteRows(sheets, sheetId, numericTabId, allToArchive, existingSheets);
+  }
+
+  // ── Phase 3: Re-read + move good rows from below TOTALS ───────────────────
+  const reReadRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_SHEET_NAME}!A:AG`,
+  });
+  const currentRows = reReadRes.data.values ?? [];
+
+  let curTotalsRow = -1;
+  for (let i = 1; i < currentRows.length; i++) {
+    if (isTotalsRow(String(currentRows[i]?.[0] ?? "").trim())) { curTotalsRow = i + 1; break; }
+  }
+
+  // Collect any good rows still below TOTALS (after phase 2) — move them above.
+  const belowTotalsGood: Array<{ rowNumber: number; rawData: (string | number)[] }> = [];
+  if (curTotalsRow > 0) {
+    for (let i = 1; i < currentRows.length; i++) {
+      const sheetsRow = i + 1;
+      if (sheetsRow <= curTotalsRow) continue;
+      const cellA = String(currentRows[i]?.[0] ?? "").trim();
+      const cellC = String(currentRows[i]?.[2] ?? "").trim();
+      const cellD = String(currentRows[i]?.[3] ?? "").trim();
+      const cellT = String(currentRows[i]?.[19] ?? "").trim();
+      if (cellT === VOID_STATUS || !isInvoiceDataRow(cellA, cellC, cellT)) continue;
+      if (isTestSheetRow(cellA, cellC, cellD)) continue;
+      belowTotalsGood.push({ rowNumber: sheetsRow, rawData: (currentRows[i] ?? []) as (string | number)[] });
+    }
+  }
+
+  let belowTotalsMovedCount = 0;
+  if (belowTotalsGood.length > 0 && curTotalsRow > 0) {
+    let insertOffset = 0;
+    for (const r of belowTotalsGood) {
+      const insertAt0 = curTotalsRow - 1 + insertOffset;
+      const writeRow  = curTotalsRow + insertOffset;
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: sheetId,
+        requestBody: {
+          requests: [{
+            insertDimension: {
+              range: { sheetId: numericTabId, dimension: "ROWS", startIndex: insertAt0, endIndex: insertAt0 + 1 },
+              inheritFromBefore: insertAt0 > 1,
+            },
+          }],
+        },
+      });
+      const padded = [...r.rawData];
+      while (padded.length < 33) padded.push("");
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: sheetId,
+        range: `${QUOTED_SHEET_NAME}!A${writeRow}:AG${writeRow}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [padded] },
+      });
+      insertOffset++;
+      belowTotalsMovedCount++;
+    }
+    // Delete originals from their original positions (now shifted by insertOffset).
+    const toDelete = belowTotalsGood.map((r) => r.rowNumber + insertOffset).sort((a, b) => b - a);
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: {
+        requests: toDelete.map((rowNumber) => ({
+          deleteDimension: {
+            range: { sheetId: numericTabId, dimension: "ROWS", startIndex: rowNumber - 1, endIndex: rowNumber },
+          },
+        })),
+      },
+    });
+  }
+
+  // ── Phase 4: Rebuild TOTALS row SUM formulas (E–S) ───────────────────────
+  // Re-read column A only to find the final TOTALS position after all moves.
+  const finalColARes = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_SHEET_NAME}!A:A`,
+  });
+  const colA = finalColARes.data.values ?? [];
+  let finalTotalsRow = -1;
+  for (let i = 1; i < colA.length; i++) {
+    if (isTotalsRow(String(colA[i]?.[0] ?? "").trim())) { finalTotalsRow = i + 1; break; }
+  }
+
+  let formulasRebuilt = false;
+  if (finalTotalsRow > 1) {
+    // Formula range covers rows 2 through (TOTALS - 1), capturing all rows above TOTALS.
+    // Blanks in that range contribute 0 to SUM; future inserts are covered automatically.
+    const lastRow = finalTotalsRow - 1;
+    const moneyCols = ["E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S"];
+    const formulaValues = moneyCols.map((col) => `=SUM(${col}2:${col}${lastRow})`);
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: sheetId,
+      range: `${QUOTED_SHEET_NAME}!E${finalTotalsRow}:S${finalTotalsRow}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [formulaValues] },
+    });
+    formulasRebuilt = true;
+  }
+
+  const healthAfter = await getSheetHealthReport();
+
+  const parts: string[] = ["Reset complete."];
+  if (voidToArchive.length)        parts.push(`${voidToArchive.length} void rows archived.`);
+  if (testToArchive.length)        parts.push(`${testToArchive.length} test/fake rows archived.`);
+  if (duplicatesToArchive.length)  parts.push(`${duplicatesToArchive.length} duplicate rows archived.`);
+  if (belowTotalsMovedCount)       parts.push(`${belowTotalsMovedCount} rows moved above TOTALS.`);
+  parts.push(`${goodRowsKept} real rows kept.`);
+  if (formulasRebuilt)             parts.push(`TOTALS formulas rebuilt.`);
+
+  return {
+    ok:                      true,
+    message:                 parts.join(" "),
+    voidArchivedCount:       voidToArchive.length,
+    testArchivedCount:       testToArchive.length,
+    duplicatesArchivedCount: duplicatesToArchive.length,
+    belowTotalsMovedCount,
+    goodRowsKept,
+    formulasRebuilt,
+    totalsRowNumAfter:       finalTotalsRow,
+    healthAfter,
+  };
+}
