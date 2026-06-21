@@ -1047,7 +1047,9 @@ export function InvoiceSection({
     other_expenses: "",
     expense_notes: "",
   });
+  const [workDaysExpanded, setWorkDaysExpanded] = useState(false);
   const [expensesExpanded, setExpensesExpanded] = useState(false);
+  const [previewExpanded, setPreviewExpanded] = useState(false);
   const [overrides, setOverrides] = useState<OverrideFields>({ ...EMPTY_OVERRIDE_FIELDS });
   const [editInvoiceExpanded, setEditInvoiceExpanded] = useState(false);
   const [adjustmentOverridesExpanded, setAdjustmentOverridesExpanded] = useState(false);
@@ -1161,14 +1163,8 @@ export function InvoiceSection({
           setAdjustmentDrafts({});
           const hydratedOverrides = hydrateOverrideFields(data);
           setOverrides(hydratedOverrides);
-          setEditInvoiceExpanded(
-            hasOverrideText(hydratedOverrides) || countInvoiceLineItemOverrides(hydratedLineItemOverrides) > 0,
-          );
-          setExpensesExpanded(
-            data.bag_fees != null || data.hotel != null || data.parking != null ||
-            data.tolls != null || data.uber != null || data.other_expenses != null ||
-            (data.expense_notes != null && data.expense_notes.trim() !== ""),
-          );
+          setEditInvoiceExpanded(false);
+          setExpensesExpanded(false);
           if (data.sheet_synced_at) {
             setSyncState({ status: "success", message: null, syncedAt: data.sheet_synced_at });
           } else if (data.sheet_sync_error) {
@@ -2487,6 +2483,13 @@ export function InvoiceSection({
     await save({ workday_entries: updated, total_miles: null });
   }
 
+  // ── Summary values for collapsed section headers ─────────────────────────
+  const workDaysTotalHours = p
+    ? p.workdays.reduce((sum, w) => sum + w.totalHours, 0)
+    : 0;
+  const expensesTotal = (["bag_fees", "hotel", "parking", "tolls", "uber", "other_expenses"] as const)
+    .reduce((sum, field) => sum + (parseExpenseInput(expenses[field]) ?? 0), 0);
+
   return (
     <div
       className="invoice-section"
@@ -2498,21 +2501,237 @@ export function InvoiceSection({
 
       {saveError ? <p className="invoice-error" role="alert">{saveError}</p> : null}
 
+      {/* ── Invoice card: status, totals, actions ─────────────────── */}
+      {p ? (
+        <div className="invoice-block invoice-pdf-block">
+          {isSaving ? <span className="invoice-saving-indicator">Saving…</span> : null}
+
+          {hasPdf ? (
+            <div className="invoice-pdf-actions">
+              <div className="invoice-status-card">
+                <div className="invoice-status-card-header">
+                  <div>
+                    <p className="invoice-pdf-number">Invoice #{invoiceNumber ?? "—"}</p>
+                    {laNumber ? (
+                      <p className="invoice-pdf-la-number">LA Job #{laNumber}</p>
+                    ) : null}
+                  </div>
+                  <span className="invoice-status-pill" data-status={currentStatus ?? "draft"}>
+                    {invoiceStatusLabel}
+                  </span>
+                </div>
+                <dl className="invoice-status-grid">
+                  <div className="invoice-status-grid-row">
+                    <dt>Status</dt>
+                    <dd>{invoiceStatusLabel}</dd>
+                  </div>
+                  {invoiceSentAt ? (
+                    <div className="invoice-status-grid-row">
+                      <dt>Sent</dt>
+                      <dd>{(() => { try { return new Date(invoiceSentAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return invoiceSentAt; } })()}</dd>
+                    </div>
+                  ) : null}
+                  <div className="invoice-status-grid-row">
+                    <dt>Total</dt>
+                    <dd>
+                      {displayedInvoiceTotal != null ? fmtCurrency(displayedInvoiceTotal) : "—"}
+                      {isSaving ? <span className="invoice-card-saving"> Saving…</span> : null}
+                    </dd>
+                  </div>
+                  <div className="invoice-status-grid-row">
+                    <dt>Amount Paid</dt>
+                    <dd>{fmtCurrency(amountPaid)}</dd>
+                  </div>
+                  <div className="invoice-status-grid-row invoice-status-grid-row--balance">
+                    <dt>Balance Due</dt>
+                    <dd>{displayedBalanceDue != null ? fmtCurrency(displayedBalanceDue) : "—"}</dd>
+                  </div>
+                </dl>
+                {(invoiceSentAt || invoiceSentTo || invoiceSentSubject) ? (
+                  <div className="invoice-sent-summary">
+                    <button
+                      type="button"
+                      className="invoice-sent-toggle"
+                      onClick={() => setSentDetailsOpen((v) => !v)}
+                      aria-expanded={sentDetailsOpen}
+                    >
+                      Sent details {sentDetailsOpen ? "▾" : "▸"}
+                    </button>
+                    {sentDetailsOpen ? (
+                      <div className="invoice-sent-details">
+                        {invoiceSentTo ? (
+                          <div className="invoice-sent-detail-row">
+                            <span className="invoice-label-sm">Sent to</span>
+                            <span>{invoiceSentTo}</span>
+                          </div>
+                        ) : null}
+                        {invoiceSentAt ? (
+                          <div className="invoice-sent-detail-row">
+                            <span className="invoice-label-sm">Sent at</span>
+                            <span>{(() => {
+                              try {
+                                const d = new Date(invoiceSentAt);
+                                const m = d.getMonth() + 1;
+                                const dy = d.getDate();
+                                const yr = String(d.getFullYear()).slice(-2);
+                                const h = d.getHours();
+                                const min = String(d.getMinutes()).padStart(2, "0");
+                                const ampm = h >= 12 ? "PM" : "AM";
+                                const h12 = h % 12 || 12;
+                                return `${m}/${dy}/${yr} ${h12}:${min} ${ampm}`;
+                              } catch { return invoiceSentAt; }
+                            })()}</span>
+                          </div>
+                        ) : null}
+                        {invoiceSentSubject ? (
+                          <div className="invoice-sent-detail-row">
+                            <span className="invoice-label-sm">Subject</span>
+                            <span>{invoiceSentSubject}</span>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Convert legacy JU-style number to numeric */}
+              {invoiceNumber && !isNumericInvoiceNumber(invoiceNumber) ? (
+                <div className="invoice-renumber-block">
+                  <button
+                    type="button"
+                    className="invoice-pdf-regen-btn"
+                    onClick={() => { void handleRenumber(); }}
+                    disabled={renumberState.status === "renumbering" || pdfState.status === "generating"}
+                  >
+                    {renumberState.status === "renumbering" || pdfState.status === "generating"
+                      ? "Converting…"
+                      : "Convert to Numeric Invoice #"}
+                  </button>
+                  {renumberState.error ? (
+                    <p className="invoice-error" role="alert">{renumberState.error}</p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* Normal action buttons — Review and Open PDF */}
+              <div className="invoice-pdf-buttons">
+                {!emailDialog.open ? (
+                  <button
+                    type="button"
+                    className="invoice-pdf-email-btn"
+                    onClick={() => { void handleOpenReview(); }}
+                    disabled={isVerifying || pdfState.status === "generating"}
+                  >
+                    {isVerifying ? "Verifying…" : "Review"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="invoice-pdf-link-btn"
+                  onClick={() => { void handleOpenPdf(); }}
+                  disabled={isVerifying || pdfState.status === "generating"}
+                >
+                  {isVerifying ? "Verifying…" : "Open PDF"}
+                </button>
+              </div>
+
+              {/* Email dialog — inline below action row */}
+              {emailDialog.open ? (
+                <EmailDialog
+                  dialog={emailDialog}
+                  onChange={setEmailDialog}
+                  onSend={() => { void handleSendEmail(); }}
+                  onClose={() => setEmailDialog(EMAIL_DIALOG_RESET)}
+                  filename={emailFilename}
+                />
+              ) : null}
+
+              {/* Verified status line — driven by the pipeline; falls back to legacy sync status */}
+              {verifyState.status === "verified" && verifyState.message ? (
+                <p className="invoice-verify-status invoice-verify-status--ok">
+                  ✓ {verifyState.message}{verifiedLabel ? ` · ${verifiedLabel}` : ""}
+                </p>
+              ) : verifyState.status === "failed" ? (
+                <p className="invoice-verify-status invoice-verify-status--fail" role="alert">
+                  ⚠ {verifyState.message ?? VERIFY_FAIL_MESSAGE}
+                </p>
+              ) : verifyState.status === "verifying" ? (
+                <p className="invoice-verify-status">Verifying…</p>
+              ) : syncState.status === "success" && syncedLabel ? (
+                <p className="invoice-sheet-sync-status">
+                  {syncState.message ?? "Sheet updated"} · {syncedLabel}
+                </p>
+              ) : syncState.status === "error" ? (
+                <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn">
+                  Sheet sync warning — use Advanced Recovery Tools to retry
+                </p>
+              ) : null}
+
+              {pdfState.status === "error" ? (
+                <p className="invoice-error" role="alert">{pdfState.error}</p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="invoice-pdf-actions">
+              <button
+                type="button"
+                className={`invoice-pdf-create-btn${pdfState.status === "generating" ? " invoice-pdf-create-btn--loading" : ""}`}
+                onClick={() => { void handleCreatePdf(); }}
+                disabled={pdfState.status === "generating" || isSaving || p.dayRateQty === 0}
+              >
+                {pdfState.action === "manual" && pdfState.status === "generating"
+                  ? "Generating PDF…"
+                  : "Create Invoice PDF"}
+              </button>
+              {p.dayRateQty === 0 ? (
+                <p className="invoice-status-muted">Enter start/end times for at least one day first.</p>
+              ) : null}
+              {pdfState.status === "error" ? (
+                <p className="invoice-error" role="alert">{pdfState.error}</p>
+              ) : null}
+            </div>
+          )}
+        </div>
+      ) : null}
+
       {/* ── Work Dates / Hours + per-day mileage ─────────────────── */}
       <div className="invoice-block">
-        <p className="invoice-block-label">Work Days</p>
-        {workdayEntries.map((entry, i) => (
-          <WorkdayRow
-            key={entry.date}
-            entry={entry}
-            workdays={p?.workdays ?? []}
-            index={i}
-            onChange={handleWorkdayChange}
-            autoMileage={autoMileage}
-            autoMileageNote={autoMileageNote}
-            mileageRate={mileageRate}
-          />
-        ))}
+        <button
+          type="button"
+          className="invoice-collapsible-toggle"
+          onClick={() => setWorkDaysExpanded((prev) => !prev)}
+          aria-expanded={workDaysExpanded}
+        >
+          <span className="invoice-block-label">Work Days</span>
+          <span className="invoice-collapsible-meta">
+            {p && workDaysTotalHours > 0 ? (
+              <span className="invoice-collapsible-summary">
+                {workdayEntries.length} {workdayEntries.length === 1 ? "day" : "days"} · {fmtHours(workDaysTotalHours)} hrs
+                {p.totalOvertimeHours > 0 ? ` · ${fmtHours(p.totalOvertimeHours)} OT` : ""}
+              </span>
+            ) : (
+              <span className="invoice-collapsible-summary">{workdayEntries.length} {workdayEntries.length === 1 ? "day" : "days"}</span>
+            )}
+            <span className="invoice-collapsible-chevron">{workDaysExpanded ? "▲" : "▼"}</span>
+          </span>
+        </button>
+        {workDaysExpanded ? (
+          <div className="invoice-collapsible-content">
+            {workdayEntries.map((entry, i) => (
+              <WorkdayRow
+                key={entry.date}
+                entry={entry}
+                workdays={p?.workdays ?? []}
+                index={i}
+                onChange={handleWorkdayChange}
+                autoMileage={autoMileage}
+                autoMileageNote={autoMileageNote}
+                mileageRate={mileageRate}
+              />
+            ))}
+          </div>
+        ) : null}
       </div>
 
       {/* Compact legacy mileage migration note — only shown when no per-day mileage exists */}
@@ -2541,7 +2760,12 @@ export function InvoiceSection({
           aria-expanded={expensesExpanded}
         >
           <span className="invoice-block-label">Additional Expenses</span>
-          <span className="invoice-collapsible-chevron">{expensesExpanded ? "▲" : "▼"}</span>
+          <span className="invoice-collapsible-meta">
+            {expensesTotal > 0 ? (
+              <span className="invoice-collapsible-summary">{fmtCurrency(expensesTotal)}</span>
+            ) : null}
+            <span className="invoice-collapsible-chevron">{expensesExpanded ? "▲" : "▼"}</span>
+          </span>
         </button>
         {expensesExpanded ? (
           <div className="invoice-collapsible-content">
@@ -2762,7 +2986,19 @@ export function InvoiceSection({
       {/* ── Invoice Preview ────────────────────────────────────── */}
       {p ? (
         <div className="invoice-block invoice-block--preview">
-          <p className="invoice-block-label">Invoice Preview</p>
+          <button
+            type="button"
+            className="invoice-collapsible-toggle"
+            onClick={() => setPreviewExpanded((prev) => !prev)}
+            aria-expanded={previewExpanded}
+          >
+            <span className="invoice-block-label">Invoice Preview</span>
+            <span className="invoice-collapsible-meta">
+              <span className="invoice-collapsible-summary">{fmtCurrency(p.estimatedTotal)}</span>
+              <span className="invoice-collapsible-chevron">{previewExpanded ? "▲" : "▼"}</span>
+            </span>
+          </button>
+          {previewExpanded ? (
           <div className="invoice-preview">
             {p.dayRateQty > 0 ? (
               <div className="invoice-preview-row">
@@ -2875,193 +3111,24 @@ export function InvoiceSection({
               <span className="invoice-preview-amount">{fmtCurrency(p.estimatedTotal)}</span>
             </div>
           </div>
+          ) : null}
         </div>
       ) : null}
 
-      {/* ── Primary action: Create Invoice PDF ───────────────── */}
-      {p ? (
-        <div className="invoice-block invoice-pdf-block">
-          {isSaving ? <span className="invoice-saving-indicator">Saving…</span> : null}
-
-          {hasPdf ? (
-            // PDF exists — show actions
-            <div className="invoice-pdf-actions">
-              <div className="invoice-status-card">
-                <div className="invoice-status-card-header">
-                  <div>
-                    <p className="invoice-pdf-number">Invoice #{invoiceNumber ?? "—"}</p>
-                    {laNumber ? (
-                      <p className="invoice-pdf-la-number">LA Job #{laNumber}</p>
-                    ) : null}
-                  </div>
-                  <span className="invoice-status-pill" data-status={currentStatus ?? "draft"}>
-                    {invoiceStatusLabel}
-                  </span>
-                </div>
-                <dl className="invoice-status-grid">
-                  <div className="invoice-status-grid-row">
-                    <dt>Status</dt>
-                    <dd>{invoiceStatusLabel}</dd>
-                  </div>
-                  {invoiceSentAt ? (
-                    <div className="invoice-status-grid-row">
-                      <dt>Sent</dt>
-                      <dd>{(() => { try { return new Date(invoiceSentAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return invoiceSentAt; } })()}</dd>
-                    </div>
-                  ) : null}
-                  <div className="invoice-status-grid-row">
-                    <dt>Total</dt>
-                    <dd>
-                      {displayedInvoiceTotal != null ? fmtCurrency(displayedInvoiceTotal) : "—"}
-                      {isSaving ? <span className="invoice-card-saving"> Saving…</span> : null}
-                    </dd>
-                  </div>
-                  <div className="invoice-status-grid-row">
-                    <dt>Amount Paid</dt>
-                    <dd>{fmtCurrency(amountPaid)}</dd>
-                  </div>
-                  <div className="invoice-status-grid-row invoice-status-grid-row--balance">
-                    <dt>Balance Due</dt>
-                    <dd>{displayedBalanceDue != null ? fmtCurrency(displayedBalanceDue) : "—"}</dd>
-                  </div>
-                </dl>
-                {(invoiceSentAt || invoiceSentTo || invoiceSentSubject) ? (
-                  <div className="invoice-sent-summary">
-                    <button
-                      type="button"
-                      className="invoice-sent-toggle"
-                      onClick={() => setSentDetailsOpen((v) => !v)}
-                      aria-expanded={sentDetailsOpen}
-                    >
-                      Sent details {sentDetailsOpen ? "▾" : "▸"}
-                    </button>
-                    {sentDetailsOpen ? (
-                      <div className="invoice-sent-details">
-                        {invoiceSentTo ? (
-                          <div className="invoice-sent-detail-row">
-                            <span className="invoice-label-sm">Sent to</span>
-                            <span>{invoiceSentTo}</span>
-                          </div>
-                        ) : null}
-                        {invoiceSentAt ? (
-                          <div className="invoice-sent-detail-row">
-                            <span className="invoice-label-sm">Sent at</span>
-                            <span>{(() => {
-                              try {
-                                const d = new Date(invoiceSentAt);
-                                const m = d.getMonth() + 1;
-                                const dy = d.getDate();
-                                const yr = String(d.getFullYear()).slice(-2);
-                                const h = d.getHours();
-                                const min = String(d.getMinutes()).padStart(2, "0");
-                                const ampm = h >= 12 ? "PM" : "AM";
-                                const h12 = h % 12 || 12;
-                                return `${m}/${dy}/${yr} ${h12}:${min} ${ampm}`;
-                              } catch { return invoiceSentAt; }
-                            })()}</span>
-                          </div>
-                        ) : null}
-                        {invoiceSentSubject ? (
-                          <div className="invoice-sent-detail-row">
-                            <span className="invoice-label-sm">Subject</span>
-                            <span>{invoiceSentSubject}</span>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-
-              {/* Convert legacy JU-style number to numeric */}
-              {invoiceNumber && !isNumericInvoiceNumber(invoiceNumber) ? (
-                <div className="invoice-renumber-block">
-                  <button
-                    type="button"
-                    className="invoice-pdf-regen-btn"
-                    onClick={() => { void handleRenumber(); }}
-                    disabled={renumberState.status === "renumbering" || pdfState.status === "generating"}
-                  >
-                    {renumberState.status === "renumbering" || pdfState.status === "generating"
-                      ? "Converting…"
-                      : "Convert to Numeric Invoice #"}
-                  </button>
-                  {renumberState.error ? (
-                    <p className="invoice-error" role="alert">{renumberState.error}</p>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {/* Normal action buttons — Review and Open PDF */}
-              <div className="invoice-pdf-buttons">
-                {!emailDialog.open ? (
-                  <button
-                    type="button"
-                    className="invoice-pdf-email-btn"
-                    onClick={() => { void handleOpenReview(); }}
-                    disabled={isVerifying || pdfState.status === "generating"}
-                  >
-                    {isVerifying ? "Verifying…" : "Review"}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="invoice-pdf-link-btn"
-                  onClick={() => { void handleOpenPdf(); }}
-                  disabled={isVerifying || pdfState.status === "generating"}
-                >
-                  {isVerifying ? "Verifying…" : "Open PDF"}
-                </button>
-              </div>
-
-              {/* Email dialog — inline below action row */}
-              {emailDialog.open ? (
-                <EmailDialog
-                  dialog={emailDialog}
-                  onChange={setEmailDialog}
-                  onSend={() => { void handleSendEmail(); }}
-                  onClose={() => setEmailDialog(EMAIL_DIALOG_RESET)}
-                  filename={emailFilename}
-                />
-              ) : null}
-
-              {/* Verified status line — driven by the pipeline; falls back to legacy sync status */}
-              {verifyState.status === "verified" && verifyState.message ? (
-                <p className="invoice-verify-status invoice-verify-status--ok">
-                  ✓ {verifyState.message}{verifiedLabel ? ` · ${verifiedLabel}` : ""}
-                </p>
-              ) : verifyState.status === "failed" ? (
-                <p className="invoice-verify-status invoice-verify-status--fail" role="alert">
-                  ⚠ {verifyState.message ?? VERIFY_FAIL_MESSAGE}
-                </p>
-              ) : verifyState.status === "verifying" ? (
-                <p className="invoice-verify-status">Verifying…</p>
-              ) : syncState.status === "success" && syncedLabel ? (
-                <p className="invoice-sheet-sync-status">
-                  {syncState.message ?? "Sheet updated"} · {syncedLabel}
-                </p>
-              ) : syncState.status === "error" ? (
-                <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn">
-                  Sheet sync warning — use Advanced Recovery Tools to retry
-                </p>
-              ) : null}
-
-              {pdfState.status === "error" ? (
-                <p className="invoice-error" role="alert">{pdfState.error}</p>
-              ) : null}
-
-              {/* Advanced Recovery Tools — collapsed by default; auto-expanded on verification failure */}
-              <div className="invoice-advanced">
-                <button
-                  type="button"
-                  className="invoice-advanced-toggle"
-                  onClick={() => setAdvancedOpen((v) => !v)}
-                  aria-expanded={advancedOpen}
-                >
-                  Advanced Recovery Tools {advancedOpen ? "▾" : "▸"}
-                </button>
-                {advancedOpen ? (
-                  <div className="invoice-advanced-content">
+      {/* ── Advanced Recovery Tools ── */}
+      {p && hasPdf ? (
+        <div className="invoice-block">
+          <div className="invoice-advanced">
+            <button
+              type="button"
+              className="invoice-advanced-toggle"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              aria-expanded={advancedOpen}
+            >
+              Advanced Recovery Tools {advancedOpen ? "▾" : "▸"}
+            </button>
+            {advancedOpen ? (
+              <div className="invoice-advanced-content">
                     <p className="invoice-advanced-hint">
                       Normal invoice actions verify PDF and Sheet automatically. Use these only if something looks wrong.
                     </p>
@@ -3361,31 +3428,9 @@ export function InvoiceSection({
                         </div>
                       ) : null}
                     </div>
-                  </div>
-                ) : null}
               </div>
-            </div>
-          ) : (
-            // No PDF yet — primary CTA
-            <div className="invoice-pdf-actions">
-              <button
-                type="button"
-                className={`invoice-pdf-create-btn${pdfState.status === "generating" ? " invoice-pdf-create-btn--loading" : ""}`}
-                onClick={() => { void handleCreatePdf(); }}
-                disabled={pdfState.status === "generating" || isSaving || p.dayRateQty === 0}
-              >
-                {pdfState.action === "manual" && pdfState.status === "generating"
-                  ? "Generating PDF…"
-                  : "Create Invoice PDF"}
-              </button>
-              {p.dayRateQty === 0 ? (
-                <p className="invoice-status-muted">Enter start/end times for at least one day first.</p>
-              ) : null}
-              {pdfState.status === "error" ? (
-                <p className="invoice-error" role="alert">{pdfState.error}</p>
-              ) : null}
-            </div>
-          )}
+            ) : null}
+          </div>
         </div>
       ) : null}
 

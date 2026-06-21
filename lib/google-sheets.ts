@@ -43,7 +43,7 @@ const QUOTED_SHEET_NAME = `'${SHEET_NAME}'`;
 //
 // Tax deduction column (AH, index 33 — optional, added after existing columns):
 //   AH  UNREIMBURSED MILEAGE VALUE (unreimbursed miles × IRS standard rate)
-const COLUMN_ORDER: Array<keyof SheetRow> = [
+export const COLUMN_ORDER: Array<keyof SheetRow> = [
   "invoiceNumber",       // A
   "date",               // B
   "laJobNumber",        // C
@@ -82,6 +82,49 @@ const COLUMN_ORDER: Array<keyof SheetRow> = [
   // Tax deduction column (AH) — unreimbursed miles × IRS standard mileage rate.
   "unreimbursedMileageValue",      // AH
 ];
+
+export const SHEET_HEADERS: string[] = [
+  "INV #",                       // A
+  "DATE",                        // B
+  "LA JOB #",                    // C
+  "GIG",                         // D
+  "TOTAL PAY",                   // E
+  "LABOR",                       // F
+  "OT",                          // G
+  "PER DIEM",                    // H
+  "MILEAGE",                     // I
+  "PARKING",                     // J
+  "HOTEL",                       // K
+  "TOLLS",                       // L
+  "BAG FEES",                    // M
+  "UBER",                        // N
+  "OTHER EXPENSES",              // O
+  "TOTAL MILES",                 // P
+  "LA PAID MILES",               // Q
+  "UNREIMBURSED MILES",          // R
+  "MILEAGE PAID",                // S
+  "STATUS",                      // T
+  "PAID DATE",                   // U
+  "PDF LINK",                    // V
+  "SENT DATE",                   // W
+  "AMOUNT PAID",                 // X
+  "REMAINING BALANCE",           // Y
+  "PAYMENT METHOD",              // Z
+  "PAYMENT RECEIVED DATE",       // AA
+  "PAYMENT BATCH REF",           // AB
+  "SENT TO",                     // AC
+  "SENT SUBJECT",                // AD
+  "JOB NAME OVERRIDE",           // AE
+  "DAY RATE DESC OVERRIDE",      // AF
+  "INVOICE NOTE OVERRIDE",       // AG
+  "UNREIMBURSED MILEAGE VALUE",  // AH
+];
+
+if (SHEET_HEADERS.length !== COLUMN_ORDER.length) {
+  throw new Error("[google-sheets] SHEET_HEADERS must match COLUMN_ORDER length");
+}
+
+export const MAIN_SHEET_HEADER_RANGE = `${QUOTED_SHEET_NAME}!A1:AH1`;
 
 // ---------------------------------------------------------------------------
 // Row-matching helpers
@@ -202,6 +245,18 @@ function rowToValues(row: SheetRow): (string | number)[] {
     const val = row[key];
     if (val == null) return "";
     return val;
+  });
+}
+
+async function ensureMainSheetHeaders(
+  sheets: ReturnType<typeof google.sheets>,
+  sheetId: string,
+): Promise<void> {
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range: MAIN_SHEET_HEADER_RANGE,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [SHEET_HEADERS] },
   });
 }
 
@@ -327,6 +382,7 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
     );
   }
   const numericTabId = tabMeta.properties.sheetId;
+  await ensureMainSheetHeaders(sheets, sheetId);
 
   const existingRows = readRes.data.values ?? [];
 
@@ -625,6 +681,8 @@ export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Pro
   }
 
   if (matchRowIndex < 0) return; // row not in sheet yet — no-op
+
+  await ensureMainSheetHeaders(sheets, sheetId);
 
   // Columns T:AB = COLUMN_ORDER indices 19–27 (status → paymentBatchRef).
   // We also refresh column A (invoiceNumber) via a separate range.
@@ -1218,12 +1276,12 @@ export async function repairSheetLayout(): Promise<SheetRepairResult> {
   const auth = await getSheetAuth();
   const sheets = google.sheets({ version: "v4", auth });
 
-  // Read spreadsheet metadata + full row data (A:AG covers all 33 existing columns).
+  // Read spreadsheet metadata + full row data (A:AH covers all app-written columns).
   const [spreadsheetRes, readRes] = await Promise.all([
     sheets.spreadsheets.get({ spreadsheetId: sheetId }),
     sheets.spreadsheets.values.get({
       spreadsheetId: sheetId,
-      range: `${QUOTED_SHEET_NAME}!A:AG`,
+      range: `${QUOTED_SHEET_NAME}!A:AH`,
     }),
   ]);
 
@@ -1233,6 +1291,7 @@ export async function repairSheetLayout(): Promise<SheetRepairResult> {
   }
   const numericTabId = tabMeta.properties.sheetId;
   const existingSheets = spreadsheetRes.data.sheets;
+  await ensureMainSheetHeaders(sheets, sheetId);
   const rows = readRes.data.values ?? [];
 
   // Locate TOTALS row.
@@ -1311,7 +1370,7 @@ export async function repairSheetLayout(): Promise<SheetRepairResult> {
     // Re-read after Phase A deletions to get current row positions.
     const reReadRes = await sheets.spreadsheets.values.get({
       spreadsheetId: sheetId,
-      range: `${QUOTED_SHEET_NAME}!A:AG`,
+      range: `${QUOTED_SHEET_NAME}!A:AH`,
     });
     const currentRows = reReadRes.data.values ?? [];
 
@@ -1362,13 +1421,13 @@ export async function repairSheetLayout(): Promise<SheetRepairResult> {
         },
       });
 
-      // Pad to 33 columns so all cells in A:AG are written cleanly.
+      // Pad to the full app-written width so all cells in A:AH are written cleanly.
       const paddedData = [...data];
-      while (paddedData.length < 33) paddedData.push("");
+      while (paddedData.length < COLUMN_ORDER.length) paddedData.push("");
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: sheetId,
-        range: `${QUOTED_SHEET_NAME}!A${writeRow}:AG${writeRow}`,
+        range: `${QUOTED_SHEET_NAME}!A${writeRow}:AH${writeRow}`,
         valueInputOption: "USER_ENTERED",
         requestBody: { values: [paddedData] },
       });
@@ -1471,7 +1530,7 @@ export async function resetSheetLayout(): Promise<SheetResetResult> {
     sheets.spreadsheets.get({ spreadsheetId: sheetId }),
     sheets.spreadsheets.values.get({
       spreadsheetId: sheetId,
-      range: `${QUOTED_SHEET_NAME}!A:AG`,
+      range: `${QUOTED_SHEET_NAME}!A:AH`,
     }),
   ]);
 
@@ -1481,6 +1540,7 @@ export async function resetSheetLayout(): Promise<SheetResetResult> {
   }
   const numericTabId = tabMeta.properties.sheetId;
   const existingSheets = spreadsheetRes.data.sheets;
+  await ensureMainSheetHeaders(sheets, sheetId);
   const rows = readRes.data.values ?? [];
 
   // ── Phase 1: Classify rows ────────────────────────────────────────────────
@@ -1553,7 +1613,7 @@ export async function resetSheetLayout(): Promise<SheetResetResult> {
   // ── Phase 3: Re-read + move good rows from below TOTALS ───────────────────
   const reReadRes = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
-    range: `${QUOTED_SHEET_NAME}!A:AG`,
+    range: `${QUOTED_SHEET_NAME}!A:AH`,
   });
   const currentRows = reReadRes.data.values ?? [];
 
@@ -1596,10 +1656,10 @@ export async function resetSheetLayout(): Promise<SheetResetResult> {
         },
       });
       const padded = [...r.rawData];
-      while (padded.length < 33) padded.push("");
+      while (padded.length < COLUMN_ORDER.length) padded.push("");
       await sheets.spreadsheets.values.update({
         spreadsheetId: sheetId,
-        range: `${QUOTED_SHEET_NAME}!A${writeRow}:AG${writeRow}`,
+        range: `${QUOTED_SHEET_NAME}!A${writeRow}:AH${writeRow}`,
         valueInputOption: "USER_ENTERED",
         requestBody: { values: [padded] },
       });

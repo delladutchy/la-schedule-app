@@ -13,6 +13,7 @@
  *   - Duplicate cleanup keeps the newest duplicate row and only deletes confirmed duplicates
  */
 import { describe, it, expect } from "vitest";
+import { COLUMN_ORDER, MAIN_SHEET_HEADER_RANGE, SHEET_HEADERS } from "@/lib/google-sheets";
 
 // ---------------------------------------------------------------------------
 // Mirrors of generateSheetRow pure logic (no Sheets API calls)
@@ -997,18 +998,18 @@ describe("isInvoiceDataRow — skips VOID_DUPLICATE rows (optional cellT param)"
 });
 
 // ---------------------------------------------------------------------------
-// U. buildVoidRowValues — 33-column void row structure
+// U. buildVoidRowValues — 34-column void row structure
 // ---------------------------------------------------------------------------
 
 // Mirror of buildVoidRowValues exported from lib/google-sheets.ts
-// Keep in sync with COLUMN_ORDER (33 columns: A=0 through AG=32).
+// Keep in sync with COLUMN_ORDER (34 columns: A=0 through AH=33).
 function buildVoidRowValues(
   cellA: string,
   cellB: string,
   cellC: string,
   cellD: string,
 ): (string | number)[] {
-  const ncols = 33; // COLUMN_ORDER.length
+  const ncols = 34; // COLUMN_ORDER.length
   const row: (string | number)[] = new Array(ncols).fill("");
   row[0] = cellA; // A: INV# (kept)
   row[1] = cellB; // B: DATE (kept)
@@ -1020,8 +1021,8 @@ function buildVoidRowValues(
 }
 
 describe("buildVoidRowValues — void row structure", () => {
-  it("returns exactly 33 values (matches COLUMN_ORDER length)", () => {
-    expect(buildVoidRowValues("1001", "2026-01-15", "5555", "Corporate Shoot")).toHaveLength(33);
+  it("returns exactly 34 values (matches COLUMN_ORDER length)", () => {
+    expect(buildVoidRowValues("1001", "2026-01-15", "5555", "Corporate Shoot")).toHaveLength(34);
   });
 
   it("keeps identifying columns A–D at indices 0–3", () => {
@@ -1063,7 +1064,7 @@ describe("buildVoidRowValues — void row structure", () => {
     const row = buildVoidRowValues("1001", "2026-01-15", "5555", "");
     expect(row[3]).toBe("");
     expect(row[19]).toBe(VOID_STATUS);
-    expect(row).toHaveLength(33);
+    expect(row).toHaveLength(34);
   });
 });
 
@@ -1882,6 +1883,7 @@ const COLUMN_ORDER_MIRROR = [
 describe("Column mapping A–U and AH", () => {
   it("total columns = 34 (A–AG plus AH tax column)", () => {
     expect(COLUMN_ORDER_MIRROR.length).toBe(34);
+    expect(COLUMN_ORDER).toHaveLength(34);
   });
   it("A (0) = invoiceNumber", () => { expect(COLUMN_ORDER_MIRROR[0]).toBe("invoiceNumber"); });
   it("C (2) = laJobNumber", () => { expect(COLUMN_ORDER_MIRROR[2]).toBe("laJobNumber"); });
@@ -1895,15 +1897,95 @@ describe("Column mapping A–U and AH", () => {
   it("U (20) = paidDate", () => { expect(COLUMN_ORDER_MIRROR[20]).toBe("paidDate"); });
   it("V (21) = invoicePdfUrl (NOT mileage value — V is used by PDF link)", () => {
     expect(COLUMN_ORDER_MIRROR[21]).toBe("invoicePdfUrl");
+    expect(COLUMN_ORDER[21]).toBe("invoicePdfUrl");
   });
   it("AH (33) = unreimbursedMileageValue (tax deduction column)", () => {
     expect(COLUMN_ORDER_MIRROR[33]).toBe("unreimbursedMileageValue");
+    expect(COLUMN_ORDER[33]).toBe("unreimbursedMileageValue");
   });
   it("col R is miles, not dollars — unreimbursedMiles and mileage are different fields", () => {
     // Validate that col I (mileage/dollars) and col R (unreimbursedMiles/miles) are distinct
     expect(COLUMN_ORDER_MIRROR[8]).not.toBe(COLUMN_ORDER_MIRROR[17]);
     expect(COLUMN_ORDER_MIRROR[8]).toBe("mileage");
     expect(COLUMN_ORDER_MIRROR[17]).toBe("unreimbursedMiles");
+  });
+});
+
+describe("Google Sheet headers for app-written columns", () => {
+  it("header row includes PDF LINK in column V", () => {
+    expect(SHEET_HEADERS[21]).toBe("PDF LINK");
+  });
+
+  it("all app-written columns have non-empty headers", () => {
+    expect(SHEET_HEADERS).toHaveLength(COLUMN_ORDER.length);
+    for (let i = 0; i < COLUMN_ORDER.length; i++) {
+      expect(SHEET_HEADERS[i]?.trim(), `missing header for ${COLUMN_ORDER[i]} at index ${i}`).not.toBe("");
+    }
+  });
+
+  it("labels every app-written column after V clearly", () => {
+    expect(SHEET_HEADERS.slice(22)).toEqual([
+      "SENT DATE",
+      "AMOUNT PAID",
+      "REMAINING BALANCE",
+      "PAYMENT METHOD",
+      "PAYMENT RECEIVED DATE",
+      "PAYMENT BATCH REF",
+      "SENT TO",
+      "SENT SUBJECT",
+      "JOB NAME OVERRIDE",
+      "DAY RATE DESC OVERRIDE",
+      "INVOICE NOTE OVERRIDE",
+      "UNREIMBURSED MILEAGE VALUE",
+    ]);
+  });
+
+  it("invoice PDF URL still writes to column V", () => {
+    const freshUrl = "https://example.com/invoices/Invoice-LA5555.pdf";
+    const sampleRow = {
+      invoiceNumber: "1001",
+      date: "2026-06-18",
+      laJobNumber: "LA#5555",
+      gigEvent: "test job",
+      totalPay: 1000,
+      labor: 1000,
+      ot: 0,
+      perDiem: 0,
+      mileage: 0,
+      parking: 0,
+      hotel: 0,
+      tolls: 0,
+      bagFees: 0,
+      uber: 0,
+      otherExpenses: 0,
+      totalBusinessMiles: 0,
+      laPaidMiles: 0,
+      unreimbursedMiles: 0,
+      mileagePaid: 0,
+      status: "sheet_synced",
+      paidDate: "",
+      invoicePdfUrl: freshUrl,
+      invoiceSentDate: "",
+      amountPaid: 0,
+      remainingBalance: 1000,
+      paymentMethod: "",
+      paymentReceivedDate: "",
+      paymentBatchRef: "",
+      sentTo: "",
+      sentSubject: "",
+      jobNameOverride: "",
+      dayRateDescriptionOverride: "",
+      noteOverride: "",
+      unreimbursedMileageValue: 0,
+    };
+    const values = COLUMN_ORDER.map((key) => sampleRow[key as keyof typeof sampleRow] ?? "");
+    expect(values[21]).toBe(freshUrl);
+    expect(SHEET_HEADERS[21]).toBe("PDF LINK");
+  });
+
+  it("reset/rebuild uses the full A1:AH1 header range", () => {
+    expect(MAIN_SHEET_HEADER_RANGE).toBe("'LA PAY (2026)'!A1:AH1");
+    expect(SHEET_HEADERS[33]).toBe("UNREIMBURSED MILEAGE VALUE");
   });
 });
 
