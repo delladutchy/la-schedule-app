@@ -27,6 +27,11 @@ import {
 } from "@/lib/invoice-line-item-overrides";
 import { isNumericInvoiceNumber } from "@/lib/invoice-number";
 import { isEditableKeyboardTarget } from "@/lib/keyboard";
+import {
+  buildVerifiedMessage,
+  isVerifyBlockingEmail,
+  VERIFY_FAIL_MESSAGE,
+} from "@/lib/invoice-pipeline";
 
 // ---------------------------------------------------------------------------
 // Time dropdown helpers
@@ -75,10 +80,18 @@ function fmtDate(isoDate: string): string {
   });
 }
 
-// Snap a UTC ISO string to the nearest 30-min TIME_OPTIONS value.
-export function snapUtcToTimeOption(utcIso: string): string {
+/**
+ * Snap a UTC ISO string to the nearest 30-min TIME_OPTIONS value.
+ *
+ * Returns `undefined` when the local clock time is exactly midnight (00:00).
+ * Midnight occurs for all-day Google Calendar events whose UTC boundary is
+ * midnight in the display timezone — showing "12:00 AM" as a default for those
+ * would be incorrect. Callers treat `undefined` as "no scheduled time / leave blank".
+ */
+export function snapUtcToTimeOption(utcIso: string): string | undefined {
   const d = new Date(utcIso);
   const totalMins = d.getHours() * 60 + d.getMinutes();
+  if (totalMins === 0) return undefined; // midnight local = all-day event, no real time
   const snapped = Math.round(totalMins / 30) * 30;
   const hSnapped = Math.floor(snapped / 60) % 24;
   const mSnapped = snapped % 60;
@@ -115,6 +128,18 @@ interface SyncState {
   syncedAt: string | null;
   hasDuplicates?: boolean;
 }
+
+interface VerifyState {
+  status: "idle" | "verifying" | "verified" | "failed";
+  message: string | null;
+  verifiedAt: string | null;
+  autoRepaired: boolean;
+  hasUnrelatedClutter: boolean;
+}
+
+const VERIFY_INITIAL: VerifyState = {
+  status: "idle", message: null, verifiedAt: null, autoRepaired: false, hasUnrelatedClutter: false,
+};
 
 interface SheetDuplicateRow {
   rowNumber: number;
@@ -1083,6 +1108,7 @@ export function InvoiceSection({
   const [emailDialog, setEmailDialog] = useState<EmailDialogState>(EMAIL_DIALOG_RESET);
   const [sentDetailsOpen, setSentDetailsOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [verifyState, setVerifyState] = useState<VerifyState>(VERIFY_INITIAL);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveVersionRef = useRef(0);
@@ -1426,6 +1452,12 @@ export function InvoiceSection({
     const hasPending = saveStatus === "unsaved" || isSaving;
     onPendingChange?.(hasPending);
   }, [saveStatus, isSaving, onPendingChange]);
+
+  // Auto-expand Advanced Recovery Tools when pipeline verification fails so
+  // the user can see and use the manual tools without needing to know to open them.
+  useEffect(() => {
+    if (verifyState.status === "failed") setAdvancedOpen(true);
+  }, [verifyState.status]);
 
   async function handleCheckSheetDuplicates(options: { silent?: boolean } = {}) {
     if (sheetDuplicateState.status === "checking" || sheetDuplicateState.status === "deleting") return;
@@ -1794,6 +1826,113 @@ export function InvoiceSection({
   }
 
   // ---------------------------------------------------------------------------
+  // Verified pipeline — the core normal-workflow action.
+  //
+  // Steps:
+  //   1. Autosave pending edits (flush)
+  //   2. Regenerate a fresh PDF
+  //   3. Sync / update Google Sheet (includes auto-repair, duplicate archiving,
+  //      formula rebuild — all handled server-side by upsertSheetRow)
+  //   4. Verify: PDF URL exists + Sheet sync succeeded → set verified message
+  //
+  // All three primary actions (Review, Open PDF, and Send Invoice gate) run
+  // through this function.  On any failure: verifyState.status = "failed",
+  // Advanced Recovery Tools auto-expand, email send is blocked.
+  // ---------------------------------------------------------------------------
+
+  async function runVerifiedPipeline(): Promise<{ success: boolean; pdfUrl: string | null }> {
+    const prevSyncedAt = syncState.syncedAt; // capture before any awaits
+    setVerifyState({ status: "verifying", message: null, verifiedAt: null, autoRepaired: false, hasUnrelatedClutter: false });
+
+    // ── Step 1: Autosave ─────────────────────────────────────────────────────
+    const saved = await flushCurrentInvoiceInputs();
+    if (!saved) {
+      setVerifyState({ status: "failed", message: VERIFY_FAIL_MESSAGE, verifiedAt: null, autoRepaired: false, hasUnrelatedClutter: false });
+      return { success: false, pdfUrl: null };
+    }
+
+    // ── Step 2: Regenerate PDF ───────────────────────────────────────────────
+    let pdfUrl: string | null = null;
+    try {
+      const pdfRes = await fetch(`/api/invoice/pdf/${encodeURIComponent(eventId)}`, {
+        method: "POST",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        body: JSON.stringify({ gigSummary }),
+      });
+      const pdfJson = await pdfRes.json() as InvoicePdfMetadataResponse;
+      if (!pdfRes.ok || !pdfJson.ok) {
+        setPdfState({ status: "error", error: pdfJson.detail ?? pdfJson.error ?? "PDF generation failed", action: null });
+        setVerifyState({ status: "failed", message: VERIFY_FAIL_MESSAGE, verifiedAt: null, autoRepaired: false, hasUnrelatedClutter: false });
+        return { success: false, pdfUrl: null };
+      }
+      const pdfMeta = normalizeInvoicePdfMetadata(pdfJson);
+      pdfUrl = pdfMeta.invoicePdfUrl;
+      setInvoiceData((prev) => mergeInvoicePdfMetadata(prev, pdfMeta));
+      setPdfState({ status: "done", error: null, action: null });
+    } catch {
+      setPdfState({ status: "error", error: "Network error — PDF not generated", action: null });
+      setVerifyState({ status: "failed", message: VERIFY_FAIL_MESSAGE, verifiedAt: null, autoRepaired: false, hasUnrelatedClutter: false });
+      return { success: false, pdfUrl: null };
+    }
+
+    if (!pdfUrl) {
+      setVerifyState({ status: "failed", message: VERIFY_FAIL_MESSAGE, verifiedAt: null, autoRepaired: false, hasUnrelatedClutter: false });
+      return { success: false, pdfUrl: null };
+    }
+
+    // ── Step 3: Sync Google Sheet ─────────────────────────────────────────────
+    let autoRepaired = false;
+    let hasUnrelatedClutter = false;
+    let newSyncedAt: string | null = null;
+    try {
+      const syncRes = await fetch("/api/invoice/sync-sheet", {
+        method: "POST",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        body: JSON.stringify({ eventId, gigSummary }),
+      });
+      const syncJson = await syncRes.json().catch(() => ({})) as {
+        syncedAt?: string;
+        message?: string;
+        autoRepaired?: boolean;
+        formulasRepaired?: boolean;
+        hasUnrelatedClutter?: boolean;
+      };
+      if (!syncRes.ok) {
+        setSyncState({ status: "error", message: syncJson.message ?? "Sheet sync failed — retry", syncedAt: prevSyncedAt });
+        setVerifyState({ status: "failed", message: VERIFY_FAIL_MESSAGE, verifiedAt: null, autoRepaired: false, hasUnrelatedClutter: false });
+        return { success: false, pdfUrl: null };
+      }
+      autoRepaired = syncJson.autoRepaired ?? false;
+      hasUnrelatedClutter = syncJson.hasUnrelatedClutter ?? false;
+      newSyncedAt = syncJson.syncedAt ?? null;
+      setSyncState({ status: "success", message: syncJson.message ?? null, syncedAt: newSyncedAt });
+    } catch {
+      setSyncState({ status: "error", message: "Sheet sync failed — network error", syncedAt: prevSyncedAt });
+      setVerifyState({ status: "failed", message: VERIFY_FAIL_MESSAGE, verifiedAt: null, autoRepaired: false, hasUnrelatedClutter: false });
+      return { success: false, pdfUrl: null };
+    }
+
+    // ── Step 4: Verified ─────────────────────────────────────────────────────
+    // PDF URL exists + Sheet sync succeeded + auto-repair / formula rebuild
+    // handled server-side. Build the user-facing message.
+    const verifyMessage = buildVerifiedMessage(autoRepaired, hasUnrelatedClutter);
+    setVerifyState({
+      status: "verified",
+      message: verifyMessage,
+      verifiedAt: newSyncedAt ?? new Date().toISOString(),
+      autoRepaired,
+      hasUnrelatedClutter,
+    });
+
+    // Background: refresh full invoice state (non-blocking, picks up DB changes).
+    void refreshInvoiceState(normalizeInvoicePdfMetadata({ invoice_pdf_url: pdfUrl, ok: true }));
+
+    return { success: true, pdfUrl };
+  }
+
+  // ---------------------------------------------------------------------------
   // Renumber — assign next numeric invoice number to a legacy JU-style number,
   // then immediately regenerate the PDF (which also re-syncs Google Sheets).
   // ---------------------------------------------------------------------------
@@ -1914,17 +2053,17 @@ export function InvoiceSection({
     }
   }
 
-  // Open PDF: regenerate fresh PDF, then open the new URL in a new tab.
+  // Open PDF: run verified pipeline, then open the fresh URL in a new tab.
   async function handleOpenPdf() {
-    const url = await generateFreshPdf("open");
-    if (!url) return; // error already set in pdfState
-    window.open(url, "_blank", "noopener,noreferrer");
+    const { success, pdfUrl } = await runVerifiedPipeline();
+    if (!success || !pdfUrl) return; // verifyState already set to "failed"
+    window.open(pdfUrl, "_blank", "noopener,noreferrer");
   }
 
-  // Download PDF: regenerate fresh PDF, then trigger a browser download of the new URL.
+  // Download PDF (Advanced Recovery Tools only): regenerate + download.
   async function handleDownloadPdf() {
     const url = await generateFreshPdf("download");
-    if (!url) return; // error already set in pdfState
+    if (!url) return;
     const a = document.createElement("a");
     a.href = url;
     a.download = buildPdfFilename(invoiceNumber, laNumber);
@@ -1933,21 +2072,34 @@ export function InvoiceSection({
     document.body.removeChild(a);
   }
 
-  // Review: regenerate fresh PDF, then open the email/review dialog.
+  // Review: run verified pipeline, then open the email/review dialog.
+  // Dialog only opens when pipeline fully verified — PDF + Sheet confirmed.
   async function handleOpenReview() {
-    const url = await generateFreshPdf("review");
-    if (!url) return; // error already set in pdfState
+    const { success } = await runVerifiedPipeline();
+    if (!success) return; // verifyState already set to "failed"
     // Seed editable fields with computed defaults so the user can adjust before sending.
     setEmailDialog({ ...EMAIL_DIALOG_RESET, open: true, editableSubject: emailSubject, editableBody: emailBody });
   }
 
-  // Manual/advanced regeneration (also used by renumber flow).
+  // Manual/advanced regeneration (Advanced Recovery Tools only; also used by renumber flow).
   async function handleCreatePdf() {
     await generateFreshPdf("manual");
   }
 
   async function handleSendEmail() {
     if (emailDialog.status === "sending") return;
+
+    // Block send if the verified pipeline has not confirmed this invoice.
+    // The dialog only opens after a successful pipeline run, so this guard
+    // catches the edge case where the user edits and the state goes stale.
+    if (isVerifyBlockingEmail(verifyState.status)) {
+      setEmailDialog((prev) => ({
+        ...prev,
+        status: "error",
+        error: "Invoice not verified — close this dialog, click Review, and try again.",
+      }));
+      return;
+    }
 
     // Resolve addresses from the selected preset or custom input.
     let toAddresses: string[] = [];
@@ -2067,6 +2219,7 @@ export function InvoiceSection({
   const p = packet;
   const m = p?.mileage ?? null;
   const mileageRate = invoiceData?.mileage_rate ?? 0.52;
+  const isVerifying = verifyState.status === "verifying";
   const showMileage = m != null && m.totalMiles > 0;
 
   const syncedLabel = syncState.syncedAt
@@ -2076,6 +2229,16 @@ export function InvoiceSection({
             month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
           });
         } catch { return syncState.syncedAt; }
+      })()
+    : null;
+
+  const verifiedLabel = verifyState.verifiedAt
+    ? (() => {
+        try {
+          return new Date(verifyState.verifiedAt).toLocaleString("en-US", {
+            month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+          });
+        } catch { return verifyState.verifiedAt; }
       })()
     : null;
 
@@ -2829,29 +2992,25 @@ export function InvoiceSection({
                 </div>
               ) : null}
 
-              {/* Normal action buttons — Review and Open PDF only */}
+              {/* Normal action buttons — Review and Open PDF */}
               <div className="invoice-pdf-buttons">
                 {!emailDialog.open ? (
                   <button
                     type="button"
                     className="invoice-pdf-email-btn"
                     onClick={() => { void handleOpenReview(); }}
-                    disabled={pdfState.status === "generating"}
+                    disabled={isVerifying || pdfState.status === "generating"}
                   >
-                    {pdfState.action === "review" && pdfState.status === "generating"
-                      ? "Updating…"
-                      : "Review"}
+                    {isVerifying ? "Verifying…" : "Review"}
                   </button>
                 ) : null}
                 <button
                   type="button"
                   className="invoice-pdf-link-btn"
                   onClick={() => { void handleOpenPdf(); }}
-                  disabled={pdfState.status === "generating"}
+                  disabled={isVerifying || pdfState.status === "generating"}
                 >
-                  {pdfState.action === "open" && pdfState.status === "generating"
-                    ? "Updating PDF…"
-                    : "Open PDF"}
+                  {isVerifying ? "Verifying…" : "Open PDF"}
                 </button>
               </div>
 
@@ -2866,29 +3025,32 @@ export function InvoiceSection({
                 />
               ) : null}
 
-              {pdfState.status === "error" ? (
-                <p className="invoice-error" role="alert">{pdfState.error}</p>
-              ) : null}
-
-              {/* Sheet sync status — small, non-intrusive; always visible when there is info */}
-              {syncState.status === "success" && syncedLabel ? (
+              {/* Verified status line — driven by the pipeline; falls back to legacy sync status */}
+              {verifyState.status === "verified" && verifyState.message ? (
+                <p className="invoice-verify-status invoice-verify-status--ok">
+                  ✓ {verifyState.message}{verifiedLabel ? ` · ${verifiedLabel}` : ""}
+                </p>
+              ) : verifyState.status === "failed" ? (
+                <p className="invoice-verify-status invoice-verify-status--fail" role="alert">
+                  ⚠ {verifyState.message ?? VERIFY_FAIL_MESSAGE}
+                </p>
+              ) : verifyState.status === "verifying" ? (
+                <p className="invoice-verify-status">Verifying…</p>
+              ) : syncState.status === "success" && syncedLabel ? (
                 <p className="invoice-sheet-sync-status">
                   {syncState.message ?? "Sheet updated"} · {syncedLabel}
                 </p>
               ) : syncState.status === "error" ? (
                 <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn">
-                  Sheet sync warning — use Admin Tools to retry
-                </p>
-              ) : syncState.status === "syncing" ? (
-                <p className="invoice-sheet-sync-status">Sheet sync: Syncing…</p>
-              ) : null}
-              {hasCurrentSheetDuplicates ? (
-                <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn" role="alert">
-                  Sheet has duplicate rows — sync again to auto-fix, or use Admin Tools to clean up.
+                  Sheet sync warning — use Advanced Recovery Tools to retry
                 </p>
               ) : null}
 
-              {/* Admin Tools — collapsed by default; Download PDF / Regenerate / Sync live here */}
+              {pdfState.status === "error" ? (
+                <p className="invoice-error" role="alert">{pdfState.error}</p>
+              ) : null}
+
+              {/* Advanced Recovery Tools — collapsed by default; auto-expanded on verification failure */}
               <div className="invoice-advanced">
                 <button
                   type="button"
@@ -2896,10 +3058,13 @@ export function InvoiceSection({
                   onClick={() => setAdvancedOpen((v) => !v)}
                   aria-expanded={advancedOpen}
                 >
-                  Admin Tools {advancedOpen ? "▾" : "▸"}
+                  Advanced Recovery Tools {advancedOpen ? "▾" : "▸"}
                 </button>
                 {advancedOpen ? (
                   <div className="invoice-advanced-content">
+                    <p className="invoice-advanced-hint">
+                      Normal invoice actions verify PDF and Sheet automatically. Use these only if something looks wrong.
+                    </p>
                     <div className="invoice-advanced-buttons">
                       <button
                         type="button"
@@ -2925,16 +3090,13 @@ export function InvoiceSection({
                         type="button"
                         className="invoice-sync-button"
                         onClick={() => { void handleSyncSheet(); }}
-                        disabled={syncState.status === "syncing" || isSaving}
+                        disabled={syncState.status === "syncing" || isSaving || isVerifying}
                       >
                         {syncState.status === "syncing"
                           ? "Syncing…"
                           : "Sync / Update Google Sheet"}
                       </button>
                     </div>
-                    <p className="invoice-sheet-helper">
-                      This updates the existing Sheet row. It should not create duplicates.
-                    </p>
                     {sheetUrl ? (
                       <a
                         href={sheetUrl}
