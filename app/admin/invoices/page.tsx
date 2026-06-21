@@ -15,5 +15,10 @@
 import { InvoiceWorklist } from "@/components/InvoiceWorklist";
 
 export default function InvoicesPage() {
-  return <InvoiceWorklist />;
+  return (
+    <>
+      <a href="/" className="worklist-back-link">← Back to Schedule</a>
+      <InvoiceWorklist />
+    </>
+  );
 }

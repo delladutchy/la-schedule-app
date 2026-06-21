@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canProfileManageEvent,
+  isJeffLikeProfile,
   resolveProfileCreateMode,
   resolveEditorProfile,
   resolveProfileWriteCalendar,
@@ -98,5 +99,49 @@ describe("editor profiles", () => {
       calendarId: env.GOOGLE_CALENDAR_ID,
       ownerEditor: "mike",
     }, env)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invoices link visibility — Jeff-only
+// ---------------------------------------------------------------------------
+
+/**
+ * The "Invoices" link in the main app header is gated by isJeffLikeProfile().
+ * These tests confirm exactly which editor ids see the link vs. which don't.
+ */
+describe("isJeffLikeProfile — Invoices link visibility", () => {
+  it("jeff → sees Invoices link", () => {
+    expect(isJeffLikeProfile(resolveEditorProfile("jeff"))).toBe(true);
+  });
+
+  it("legacy → sees Invoices link (legacy maps to jeff scope)", () => {
+    expect(isJeffLikeProfile(resolveEditorProfile("legacy"))).toBe(true);
+  });
+
+  it("dave → does NOT see Invoices link", () => {
+    expect(isJeffLikeProfile(resolveEditorProfile("dave"))).toBe(false);
+  });
+
+  it("milos → does NOT see Invoices link", () => {
+    expect(isJeffLikeProfile(resolveEditorProfile("milos"))).toBe(false);
+  });
+
+  it("mike (Overture) → does NOT see Invoices link", () => {
+    expect(isJeffLikeProfile(resolveEditorProfile("mike"))).toBe(false);
+  });
+
+  it("unauthenticated (null editorId) → resolvedEditorId is null, link is hidden", () => {
+    // The page computes: isJeffEditor = resolvedEditorId !== null && isJeffLikeProfile(...)
+    // When resolvedEditorId is null (public visitor), the link is always hidden.
+    const resolvedEditorId: string | null = null;
+    const isJeffEditor = resolvedEditorId !== null && isJeffLikeProfile(resolveEditorProfile(resolvedEditorId));
+    expect(isJeffEditor).toBe(false);
+  });
+
+  it("jeff with null resolvedEditorId → still hidden (null check guards)", () => {
+    // Safety: even if editorId string happened to be empty, null check prevents crash.
+    const resolvedEditorId: string | null = null;
+    expect(resolvedEditorId !== null && isJeffLikeProfile(resolveEditorProfile(resolvedEditorId))).toBe(false);
   });
 });

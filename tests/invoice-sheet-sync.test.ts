@@ -2296,3 +2296,387 @@ describe("Reset — health report after clean reset", () => {
     expect(result.newRowNumber).toBe(4); // new row inserted at row 4, TOTALS shifts to 5
   });
 });
+
+// ---------------------------------------------------------------------------
+// Automatic Sheet Maintenance — full upsert simulation with TOTALS awareness,
+// clutter detection, and auto-repair (mirrors the new upsertSheetRow behavior)
+// ---------------------------------------------------------------------------
+
+interface FullUpsertEntry {
+  rowNumber: number;
+  cellA: string; // INV#
+  cellB: string; // DATE
+  cellC: string; // LA#
+  cellD: string; // GIG
+  cellE: string; // TOTAL
+  cellT: string; // STATUS
+}
+
+interface FullUpsertResult {
+  action: "updated" | "inserted" | "moved";
+  finalRow: number;
+  archivedRows: number[];
+  hasDuplicates: boolean;
+  autoRepaired: boolean;
+  hasUnrelatedClutter: boolean;
+  userMessage: string;
+}
+
+/**
+ * Pure-JS simulation of the new upsertSheetRow logic including:
+ *   - TOTALS-aware lastDataRow tracking
+ *   - below-TOTALS kept-row detection → moved action
+ *   - unrelated clutter detection (VOID rows or active-below-TOTALS for other keys)
+ *   - userMessage derivation
+ */
+function simulateFullUpsert(
+  entries: FullUpsertEntry[],
+  incomingLa: string,
+  incomingInv: string,
+  incomingTotal: number,
+): FullUpsertResult {
+  const normLa  = normalizeLA(incomingLa);
+  const normInv = incomingInv.trim();
+
+  // Pass 1: find TOTALS row (entries are 1-indexed starting from index 0 as row 1)
+  let totalsRowNum = -1;
+  for (const e of entries) {
+    if (isTotalsRow(e.cellA)) { totalsRowNum = e.rowNumber; break; }
+  }
+
+  // Pass 2: classify rows
+  const matchingRows: Array<{ rowNumber: number; score: number; cellA: string; cellB: string; cellC: string; cellD: string; cellE: string; cellT: string }> = [];
+  const oldVoidRows: number[] = [];
+  let lastDataRow = 1;
+  let unrelatedClutter = 0;
+
+  for (const e of entries) {
+    if (isTotalsRow(e.cellA)) continue;
+
+    const laMatch  = !!(normLa  && normalizeLA(e.cellC) === normLa);
+    const invMatch = !!(normInv && e.cellA && e.cellA === normInv);
+    const isThisKey = laMatch || invMatch;
+
+    if (e.cellT === VOID_STATUS) {
+      if (isThisKey) {
+        oldVoidRows.push(e.rowNumber);
+      } else {
+        unrelatedClutter++;
+      }
+      continue;
+    }
+    if (!isInvoiceDataRow(e.cellA, e.cellC, e.cellT)) continue;
+
+    if (totalsRowNum < 0 || e.rowNumber < totalsRowNum) {
+      lastDataRow = e.rowNumber;
+    } else if (!isThisKey) {
+      unrelatedClutter++;
+    }
+
+    if (isThisKey) {
+      const score = scoreKeepRow(e.cellA, e.cellB, e.cellC, e.cellE, e.rowNumber, normLa, normInv, incomingTotal);
+      matchingRows.push({ ...e, score });
+    }
+  }
+
+  const archivedRows: number[] = [];
+  let finalRow: number;
+  let action: FullUpsertResult["action"];
+  let autoRepaired = false;
+  let didInsert = false;
+
+  if (matchingRows.length > 0) {
+    const keepEntry = matchingRows.reduce((best, e) => e.score > best.score ? e : best);
+    const staleActive = matchingRows.filter(m => m.rowNumber !== keepEntry.rowNumber);
+    const keepIsBelowTotals = totalsRowNum > 0 && keepEntry.rowNumber >= totalsRowNum;
+
+    if (keepIsBelowTotals) {
+      // Archive all matches (including the keep row) and insert above TOTALS
+      const toArchive = [...matchingRows.map(e => e.rowNumber), ...oldVoidRows];
+      archivedRows.push(...toArchive);
+      autoRepaired = true;
+      action = "moved";
+      const insertAbove = totalsRowNum > 0 ? totalsRowNum : lastDataRow + 1;
+      finalRow = insertAbove;
+      didInsert = true;
+    } else {
+      // Update in-place
+      const allStale = [...staleActive.map(e => e.rowNumber), ...oldVoidRows];
+      if (allStale.length > 0) {
+        archivedRows.push(...allStale);
+        autoRepaired = true;
+      }
+      finalRow = keepEntry.rowNumber;
+      action = "updated";
+    }
+  } else {
+    if (oldVoidRows.length > 0) {
+      archivedRows.push(...oldVoidRows);
+      autoRepaired = oldVoidRows.length > 0;
+    }
+    const nextRowNum = lastDataRow + 1;
+    const nextEntry = entries.find(e => e.rowNumber === nextRowNum);
+    const nextIsAboveTotals = totalsRowNum < 0 || nextRowNum < totalsRowNum;
+    const nextIsBlank = !nextEntry?.cellA.trim() && !nextEntry?.cellC.trim() && !nextEntry?.cellT.trim() && nextIsAboveTotals;
+
+    if (nextIsBlank) {
+      finalRow = nextRowNum;
+    } else {
+      const insertAbove = totalsRowNum > 0 ? totalsRowNum : nextRowNum;
+      finalRow = insertAbove;
+      didInsert = true;
+    }
+    action = "inserted";
+  }
+
+  const hasUnrelatedClutter = unrelatedClutter > 0;
+  let userMessage: string;
+  if (autoRepaired && hasUnrelatedClutter) {
+    userMessage = "Sheet updated and cleaned. Old cleanup items remain; run Health Check when convenient.";
+  } else if (autoRepaired) {
+    userMessage = "Sheet updated and cleaned";
+  } else if (hasUnrelatedClutter) {
+    userMessage = "Sheet updated. Sheet has old cleanup items; run Health Check when convenient.";
+  } else {
+    userMessage = "Sheet updated";
+  }
+
+  return { action, finalRow, archivedRows, hasDuplicates: archivedRows.length > 0, autoRepaired, hasUnrelatedClutter, userMessage };
+}
+
+describe("Automatic Sheet Maintenance — auto-repair during normal sync", () => {
+  // Standard sheet layout helpers
+  function makeEntry(overrides: Partial<FullUpsertEntry> & { rowNumber: number; cellC: string }): FullUpsertEntry {
+    return {
+      cellA: "1001", cellB: "2026-06-01", cellD: "Corp Shoot",
+      cellE: "2000.00", cellT: "sheet_synced",
+      ...overrides,
+    };
+  }
+
+  // ── Row moved from below TOTALS to above TOTALS ────────────────────────────
+
+  it("matched row below TOTALS → action=moved, archives it, inserts above TOTALS", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",           cellE: "", cellT: "STATUS" },
+      { rowNumber: 2, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",           cellE: "", cellT: "" },
+      { rowNumber: 3, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "2000.00", cellT: "sheet_synced" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("moved");
+    expect(result.archivedRows).toContain(3);
+    expect(result.finalRow).toBe(2); // insert before TOTALS at row 2
+    expect(result.autoRepaired).toBe(true);
+    expect(result.userMessage).toBe("Sheet updated and cleaned");
+  });
+
+  it("matched row below TOTALS with duplicates → all archived, one row placed above TOTALS", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",           cellE: "", cellT: "STATUS" },
+      { rowNumber: 2, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",           cellE: "", cellT: "" },
+      { rowNumber: 3, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "2000.00", cellT: "sheet_synced" },
+      { rowNumber: 4, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "500.00",  cellT: "sheet_synced" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("moved");
+    expect(result.archivedRows).toContain(3);
+    expect(result.archivedRows).toContain(4);
+    expect(result.archivedRows).toHaveLength(2);
+    expect(result.autoRepaired).toBe(true);
+  });
+
+  // ── Stale duplicates archived ──────────────────────────────────────────────
+
+  it("match above TOTALS with one stale duplicate → updated in-place, stale archived", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",           cellE: "", cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "2000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "500.00",  cellT: "sheet_synced" },
+      { rowNumber: 4, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",           cellE: "", cellT: "" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("updated");
+    expect(result.finalRow).toBe(2); // best match stays at row 2
+    expect(result.archivedRows).toEqual([3]);
+    expect(result.autoRepaired).toBe(true);
+    expect(result.userMessage).toBe("Sheet updated and cleaned");
+  });
+
+  // ── Legacy VOID_DUPLICATE rows for this key are archived ──────────────────
+
+  it("VOID_DUPLICATE rows for this key are archived during normal sync", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",           cellE: "", cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "2000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "2000.00", cellT: "VOID_DUPLICATE" },
+      { rowNumber: 4, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",           cellE: "", cellT: "" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.archivedRows).toContain(3); // VOID row for this key archived
+    expect(result.finalRow).toBe(2);
+    expect(result.autoRepaired).toBe(true);
+  });
+
+  it("INSERT of new key also cleans up old VOID rows for same key", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",           cellE: "", cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1002",    cellB: "2026-05-01", cellC: "6666", cellD: "Other Job",  cellE: "1000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "2000.00", cellT: "VOID_DUPLICATE" },
+      { rowNumber: 4, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",           cellE: "", cellT: "" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("inserted");
+    expect(result.archivedRows).toContain(3); // old void row archived
+    expect(result.autoRepaired).toBe(true);
+  });
+
+  // ── Active row is never written below TOTALS ───────────────────────────────
+
+  it("INSERT when no match → always places row at or before TOTALS, never below", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",  cellE: "", cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1002",    cellB: "2026-05-01", cellC: "6666", cellD: "X", cellE: "1000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",  cellE: "", cellT: "" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("inserted");
+    // Row must be placed AT or BEFORE totals row (3), never after
+    expect(result.finalRow).toBeLessThanOrEqual(3);
+  });
+
+  // ── Blank rows above TOTALS are reused ────────────────────────────────────
+
+  it("blank row above TOTALS is reused (no insert needed)", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",  cellE: "", cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1002",    cellB: "2026-05-01", cellC: "6666", cellD: "X", cellE: "1000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "",        cellB: "",           cellC: "",     cellD: "",  cellE: "", cellT: "" }, // blank above TOTALS
+      { rowNumber: 4, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",  cellE: "", cellT: "" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("inserted");
+    expect(result.finalRow).toBe(3); // reuses blank row 3
+  });
+
+  // ── Blank rows below TOTALS are NOT reused ─────────────────────────────────
+
+  it("blank row below TOTALS is NOT reused — inserts above TOTALS instead", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",  cellE: "", cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1002",    cellB: "2026-05-01", cellC: "6666", cellD: "X", cellE: "1000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",  cellE: "", cellT: "" },
+      { rowNumber: 4, cellA: "",        cellB: "",           cellC: "",     cellD: "",  cellE: "", cellT: "" }, // blank BELOW TOTALS
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("inserted");
+    expect(result.finalRow).toBe(3); // inserts at TOTALS position, not below
+  });
+
+  // ── No blank rows above TOTALS → insert immediately above TOTALS ──────────
+
+  it("no blank rows above TOTALS → insert immediately above TOTALS row", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",  cellE: "", cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1002",    cellB: "2026-05-01", cellC: "6666", cellD: "X", cellE: "1000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "1003",    cellB: "2026-05-15", cellC: "7777", cellD: "Y", cellE: "800.00",  cellT: "sheet_synced" },
+      { rowNumber: 4, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",  cellE: "", cellT: "" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("inserted");
+    expect(result.finalRow).toBe(4); // inserts at TOTALS position (TOTALS shifts to 5)
+  });
+
+  // ── After sync: exactly one active row above TOTALS for this key ──────────
+
+  it("after sync: current invoice has exactly one active row above TOTALS", () => {
+    // Two stale duplicates + one void → after sync, keep best, archive the rest
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",           cellE: "", cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "2000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "500.00",  cellT: "sheet_synced" },
+      { rowNumber: 4, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "200.00",  cellT: "VOID_DUPLICATE" },
+      { rowNumber: 5, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",           cellE: "", cellT: "" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("updated");
+    expect(result.finalRow).toBe(2); // best match
+    expect(result.archivedRows.sort()).toEqual([3, 4]); // stale + void archived
+    expect(result.autoRepaired).toBe(true);
+    // After sync: only row 2 remains active for this key → one row above TOTALS
+  });
+
+  // ── Unrelated clutter does NOT block current invoice sync ─────────────────
+
+  it("unrelated VOID row does not block sync of current invoice", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",            cellE: "",       cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot",  cellE: "2000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "9999",    cellB: "2026-01-01", cellC: "8888", cellD: "Other Gig",   cellE: "100.00",  cellT: "VOID_DUPLICATE" }, // unrelated void
+      { rowNumber: 4, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",            cellE: "",       cellT: "" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("updated");
+    expect(result.finalRow).toBe(2); // current invoice synced correctly
+    expect(result.archivedRows).not.toContain(3); // unrelated row NOT touched
+    expect(result.hasUnrelatedClutter).toBe(true);
+    expect(result.userMessage).toContain("run Health Check");
+  });
+
+  it("unrelated active-below-TOTALS row does not block sync of current invoice", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",           cellE: "",       cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "2000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",           cellE: "",       cellT: "" },
+      { rowNumber: 4, cellA: "9999",    cellB: "2026-01-01", cellC: "8888", cellD: "Old Gig",    cellE: "100.00",  cellT: "sheet_synced" }, // unrelated active below TOTALS
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("updated");
+    expect(result.finalRow).toBe(2);
+    expect(result.archivedRows).not.toContain(4); // unrelated row NOT touched
+    expect(result.hasUnrelatedClutter).toBe(true);
+  });
+
+  // ── Unrelated real rows are never moved or deleted ────────────────────────
+
+  it("unrelated real rows above TOTALS are never moved or deleted", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",           cellE: "",       cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "2000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "1002",    cellB: "2026-05-01", cellC: "6666", cellD: "Other Job",  cellE: "800.00",  cellT: "sheet_synced" }, // different invoice
+      { rowNumber: 4, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",           cellE: "",       cellT: "" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.archivedRows).not.toContain(3); // row 3 is a different invoice — untouched
+    expect(result.hasUnrelatedClutter).toBe(false); // row 3 is fine (above TOTALS, different key)
+  });
+
+  // ── autoRepaired + hasUnrelatedClutter combined message ───────────────────
+
+  it("autoRepaired + hasUnrelatedClutter → combined user message", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",           cellE: "",       cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "2000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "500.00",  cellT: "sheet_synced" }, // stale dup for this key
+      { rowNumber: 4, cellA: "9999",    cellB: "2026-01-01", cellC: "8888", cellD: "Old Gig",    cellE: "100.00",  cellT: "VOID_DUPLICATE" }, // unrelated void
+      { rowNumber: 5, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",           cellE: "",       cellT: "" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.autoRepaired).toBe(true);
+    expect(result.hasUnrelatedClutter).toBe(true);
+    expect(result.userMessage).toBe("Sheet updated and cleaned. Old cleanup items remain; run Health Check when convenient.");
+  });
+
+  it("clean sheet + single match → 'Sheet updated' with no repair flags", () => {
+    const entries: FullUpsertEntry[] = [
+      { rowNumber: 1, cellA: "INV#",    cellB: "",           cellC: "LA#",  cellD: "",           cellE: "",       cellT: "STATUS" },
+      { rowNumber: 2, cellA: "1001",    cellB: "2026-06-01", cellC: "5555", cellD: "Corp Shoot", cellE: "2000.00", cellT: "sheet_synced" },
+      { rowNumber: 3, cellA: "TOTALS:", cellB: "",           cellC: "",     cellD: "",           cellE: "",       cellT: "" },
+    ];
+    const result = simulateFullUpsert(entries, "5555", "1001", 2000);
+    expect(result.action).toBe("updated");
+    expect(result.autoRepaired).toBe(false);
+    expect(result.hasUnrelatedClutter).toBe(false);
+    expect(result.userMessage).toBe("Sheet updated");
+  });
+
+});

@@ -210,12 +210,29 @@ function rowToValues(row: SheetRow): (string | number)[] {
 // ---------------------------------------------------------------------------
 
 export interface UpsertSheetRowResult {
-  action: "updated" | "inserted";
+  action: "updated" | "inserted" | "moved";
   rowNumber: number;
-  /** True when stale duplicate rows were found and archived during sync. */
+  /** True when stale duplicate rows were found and archived during this sync. */
   hasDuplicates: boolean;
   /** Row numbers that were archived to "Voided Duplicates" tab and removed from main sheet. */
   archivedRows: number[];
+  /**
+   * True when this sync performed automatic cleanup for the current invoice:
+   *   - duplicate rows archived
+   *   - row moved from below TOTALS to above TOTALS
+   *   - legacy VOID_DUPLICATE rows for this key removed
+   */
+  autoRepaired: boolean;
+  /** True when TOTALS row SUM formulas were rewritten during this sync. */
+  formulasRepaired: boolean;
+  /**
+   * True when OTHER rows (not this invoice's key) were detected with problems
+   * (unrelated VOID rows or active rows below TOTALS). Current invoice is
+   * still synced correctly; a Health Check is recommended to clean the rest.
+   */
+  hasUnrelatedClutter: boolean;
+  /** User-facing summary suitable for display in the sync status area. */
+  userMessage: string;
 }
 
 // Score a candidate sheet row for selection as the "keep" row when multiple
@@ -253,14 +270,25 @@ function scoreKeepRow(
  * normalised to prevent format-mismatch duplicates ("5555" vs "LA#5555").
  *
  * AUTOMATIC DUPLICATE HANDLING:
- * If multiple non-voided rows match the same key, the highest-scoring row is
- * updated with current data.  All other matching rows are immediately voided:
- * their money columns (E–S) are zeroed so existing SUM formulas exclude them,
- * and their STATUS (col T) is set to VOID_STATUS.  No manual cleanup needed.
+ *   If multiple non-voided rows match the same key, the highest-scoring row
+ *   is kept and all others are archived to "Voided Duplicates" + deleted.
  *
- * New rows are inserted with insertDimension immediately after the last
- * detected invoice-data row, so they are never placed inside totals/summary
- * sections.
+ * AUTOMATIC BELOW-TOTALS REPAIR:
+ *   If the best-matched row is below the TOTALS line, it is archived and the
+ *   current data is written to a new row inserted immediately above TOTALS.
+ *   Legacy VOID_DUPLICATE rows for this key are also removed automatically.
+ *
+ * FORMULA PROTECTION:
+ *   After any INSERT or MOVE the TOTALS row SUM formulas (E–S) are verified.
+ *   Missing or malformed formulas are rewritten so the ledger totals are always
+ *   correct. (Google Sheets auto-adjusts formula ranges on insertDimension, so
+ *   repair is only needed when formulas are absent or corrupted.)
+ *
+ * UNRELATED CLUTTER DETECTION:
+ *   Void rows or below-TOTALS rows belonging to *other* invoices are flagged in
+ *   the result but are NOT touched — single-invoice sync must not disturb
+ *   unrelated data.  The caller receives `hasUnrelatedClutter = true` and can
+ *   show a "run Health Check" nudge.
  *
  * Throws on auth/API failure so the caller can surface/log the error.
  */
@@ -271,7 +299,6 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
   const auth = await getSheetAuth();
   const sheets = google.sheets({ version: "v4", auth });
 
-  // Normalise the incoming keys once.
   const incomingLa  = normalizeLA(row.laJobNumber);
   const incomingInv = String(row.invoiceNumber ?? "").trim();
 
@@ -282,9 +309,6 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
     );
   }
 
-  // Parallel reads: spreadsheet metadata (needed for insertDimension's numeric sheet ID)
-  // + columns A:T (INV# through STATUS) for duplicate detection, void-row detection,
-  // placement, and keep-row scoring.
   const [spreadsheetRes, readRes] = await Promise.all([
     sheets.spreadsheets.get({ spreadsheetId: sheetId }),
     sheets.spreadsheets.values.get({
@@ -306,25 +330,24 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
 
   const existingRows = readRes.data.values ?? [];
 
-  // Pass 1: Locate the TOTALS row so all active data rows are guaranteed to land above it.
+  // ── Pass 1: locate TOTALS row ─────────────────────────────────────────────
   let totalsRowNum = -1;
   for (let i = 1; i < existingRows.length; i++) {
     if (isTotalsRow(String(existingRows[i]?.[0] ?? "").trim())) { totalsRowNum = i + 1; break; }
   }
 
-  // Active rows matching this invoice's key → candidates for the "keep" selection.
+  // ── Pass 2: classify every data row ──────────────────────────────────────
+  // matchingRows: active rows for THIS invoice's key (candidates to keep or archive)
   const matchingRows: Array<{
-    rowNumber: number;
-    score:     number;
-    cellA: string; cellB: string; cellC: string; cellD: string;
-    cellE: string; cellT: string;
+    rowNumber: number; score: number;
+    cellA: string; cellB: string; cellC: string; cellD: string; cellE: string; cellT: string;
   }> = [];
 
-  // Old VOID_DUPLICATE rows on the main sheet for this key → clean them up too.
-  const oldVoidRows: ArchiveEntry[] = [];
+  const oldVoidRows: ArchiveEntry[] = [];  // VOID rows for THIS key on the main sheet
+  let lastDataRow = 1;                     // highest active row strictly ABOVE TOTALS
 
-  // lastDataRow tracks only rows ABOVE the TOTALS line for INSERT placement.
-  let lastDataRow = 1;
+  // For unrelated clutter detection only (never modified during single-invoice sync)
+  let unrelatedClutterCount = 0;
 
   for (let i = 1; i < existingRows.length; i++) {
     const cellA = String(existingRows[i]?.[0]  ?? "").trim(); // A: INV#
@@ -335,122 +358,207 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
     const cellT = String(existingRows[i]?.[19] ?? "").trim(); // T: STATUS
     const sheetsRow = i + 1;
 
-    // Only advance lastDataRow for rows strictly above TOTALS.
-    if (isInvoiceDataRow(cellA, cellC, cellT) && (totalsRowNum < 0 || sheetsRow < totalsRowNum)) {
-      lastDataRow = sheetsRow;
-    }
+    if (isTotalsRow(cellA)) continue; // TOTALS sentinel — never classify
 
     const laMatch  = !!(incomingLa  && normalizeLA(cellC) === incomingLa);
     const invMatch = !!(incomingInv && cellA && cellA === incomingInv);
+    const isThisKey = laMatch || invMatch;
 
     if (cellT === VOID_STATUS) {
-      // Collect old void rows for the same key so they are cleaned off the main sheet.
-      if (laMatch || invMatch) {
+      if (isThisKey) {
         oldVoidRows.push({ rowNumber: sheetsRow, invNumber: cellA, date: cellB, laNumber: cellC, gigEvent: cellD, total: cellE, originalStatus: cellT });
+      } else {
+        unrelatedClutterCount++;  // VOID row for another invoice
       }
       continue;
     }
 
-    if (laMatch || invMatch) {
+    if (!isInvoiceDataRow(cellA, cellC, cellT)) continue;
+
+    // Track last active row that is strictly above TOTALS (for INSERT placement)
+    if (totalsRowNum < 0 || sheetsRow < totalsRowNum) {
+      lastDataRow = sheetsRow;
+    } else if (!isThisKey) {
+      // Active row for a different invoice that is AT or BELOW TOTALS
+      unrelatedClutterCount++;
+    }
+
+    if (isThisKey) {
       const score = scoreKeepRow(cellA, cellB, cellC, cellE, sheetsRow, incomingLa, incomingInv, row.totalPay);
       matchingRows.push({ rowNumber: sheetsRow, score, cellA, cellB, cellC, cellD, cellE, cellT });
     }
   }
 
   const values = [rowToValues(row)];
+  const archivedRows: number[] = [];
+  let finalRowNumber: number;
+  let action: UpsertSheetRowResult["action"];
+  let autoRepaired = false;
+  let didInsert = false;  // track whether we added a row (affects formula check)
 
   if (matchingRows.length > 0) {
-    // ── UPDATE the best-scored matching row ──────────────────────────────────
     const keepEntry = matchingRows.reduce((best, e) => e.score > best.score ? e : best);
     const staleActive = matchingRows.filter((m) => m.rowNumber !== keepEntry.rowNumber);
 
-    // Write current invoice data to the kept row.
+    // ── Check: is the best-matched row below the TOTALS line? ────────────────
+    const keepIsBelowTotals = totalsRowNum > 0 && keepEntry.rowNumber >= totalsRowNum;
+
+    if (keepIsBelowTotals) {
+      // Treat the below-TOTALS kept row as stale — archive it along with any
+      // other stale rows, then insert a fresh row above TOTALS.
+      const allToArchive: ArchiveEntry[] = [
+        keepEntry,
+        ...staleActive,
+        ...oldVoidRows,
+      ].map((e) => "cellA" in e
+        ? { rowNumber: e.rowNumber, invNumber: e.cellA, date: e.cellB, laNumber: e.cellC, gigEvent: e.cellD, total: e.cellE, originalStatus: e.cellT }
+        : e as ArchiveEntry
+      );
+      await archiveAndDeleteRows(sheets, sheetId, numericTabId, allToArchive, spreadsheetRes.data.sheets);
+      archivedRows.push(...allToArchive.map((e) => e.rowNumber));
+      autoRepaired = true;
+      action = "moved";
+
+      // INSERT above TOTALS (same logic as the fresh-insert path below,
+      // but lastDataRow is still valid since we only deleted below-TOTALS rows)
+      const insertAbove  = totalsRowNum > 0 ? totalsRowNum : lastDataRow + 1;
+      const insertStart0 = insertAbove - 1;
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: sheetId,
+        requestBody: { requests: [{ insertDimension: { range: { sheetId: numericTabId, dimension: "ROWS", startIndex: insertStart0, endIndex: insertStart0 + 1 }, inheritFromBefore: insertStart0 > 1 } }] },
+      });
+      finalRowNumber = insertAbove;
+      didInsert = true;
+    } else {
+      // ── UPDATE in-place (row is already above TOTALS) ───────────────────────
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: sheetId,
+        range: `${QUOTED_SHEET_NAME}!A${keepEntry.rowNumber}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values },
+      });
+
+      const allStale: ArchiveEntry[] = [
+        ...staleActive.map((e) => ({ rowNumber: e.rowNumber, invNumber: e.cellA, date: e.cellB, laNumber: e.cellC, gigEvent: e.cellD, total: e.cellE, originalStatus: e.cellT })),
+        ...oldVoidRows,
+      ];
+      if (allStale.length > 0) {
+        await archiveAndDeleteRows(sheets, sheetId, numericTabId, allStale, spreadsheetRes.data.sheets);
+        archivedRows.push(...allStale.map((e) => e.rowNumber));
+        autoRepaired = true;
+      }
+
+      finalRowNumber = keepEntry.rowNumber;
+      action = "updated";
+    }
+  } else {
+    // ── INSERT: no existing row for this key ──────────────────────────────────
+    if (oldVoidRows.length > 0) {
+      await archiveAndDeleteRows(sheets, sheetId, numericTabId, oldVoidRows, spreadsheetRes.data.sheets);
+      archivedRows.push(...oldVoidRows.map((e) => e.rowNumber));
+      autoRepaired = oldVoidRows.length > 0;
+    }
+
+    // Reuse blank row above TOTALS if available; otherwise insert above TOTALS.
+    const nextRowNum = lastDataRow + 1;
+    const nextIndex  = lastDataRow;
+    const nextRow    = existingRows[nextIndex];
+    const nextCellA  = String(nextRow?.[0]  ?? "").trim();
+    const nextCellC  = String(nextRow?.[2]  ?? "").trim();
+    const nextCellT  = String(nextRow?.[19] ?? "").trim();
+    const nextIsAboveTotals = totalsRowNum < 0 || nextRowNum < totalsRowNum;
+    const nextIsBlank = !nextCellA && !nextCellC && !nextCellT && nextIsAboveTotals;
+
+    if (nextIsBlank) {
+      finalRowNumber = nextRowNum;
+    } else {
+      const insertAbove  = totalsRowNum > 0 ? totalsRowNum : nextRowNum;
+      const insertStart0 = insertAbove - 1;
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: sheetId,
+        requestBody: { requests: [{ insertDimension: { range: { sheetId: numericTabId, dimension: "ROWS", startIndex: insertStart0, endIndex: insertStart0 + 1 }, inheritFromBefore: insertStart0 > 1 } }] },
+      });
+      finalRowNumber = insertAbove;
+      didInsert = true;
+    }
+    action = "inserted";
+  }
+
+  // Write the final row values (for both the moved/inserted paths)
+  if (action !== "updated") {
     await sheets.spreadsheets.values.update({
       spreadsheetId: sheetId,
-      range: `${QUOTED_SHEET_NAME}!A${keepEntry.rowNumber}`,
+      range: `${QUOTED_SHEET_NAME}!A${finalRowNumber}`,
       valueInputOption: "USER_ENTERED",
       requestBody: { values },
     });
+  }
 
-    // ── ARCHIVE + DELETE all stale rows (active duplicates + old void rows) ──
-    // Rows are moved to "Voided Duplicates" tab and deleted from the main sheet
-    // so the main sheet stays clean and SUM formulas are never inflated.
-    const allStale: ArchiveEntry[] = [
-      ...staleActive.map((e) => ({ rowNumber: e.rowNumber, invNumber: e.cellA, date: e.cellB, laNumber: e.cellC, gigEvent: e.cellD, total: e.cellE, originalStatus: e.cellT })),
-      ...oldVoidRows,
-    ];
-    if (allStale.length > 0) {
-      await archiveAndDeleteRows(sheets, sheetId, numericTabId, allStale, spreadsheetRes.data.sheets);
+  // ── Formula repair: check TOTALS row formulas after any INSERT/MOVE ────────
+  // Google Sheets auto-shifts formula ranges on insertDimension, but formulas
+  // can be missing if the sheet was set up without them. Repair only when needed.
+  let formulasRepaired = false;
+  if ((didInsert || action === "moved") && totalsRowNum > 0) {
+    // Re-read column A to find the final TOTALS position (it may have shifted)
+    const colARes = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${QUOTED_SHEET_NAME}!A:A`,
+    });
+    const colA = colARes.data.values ?? [];
+    let finalTotalsRow = -1;
+    for (let i = 1; i < colA.length; i++) {
+      if (isTotalsRow(String(colA[i]?.[0] ?? "").trim())) { finalTotalsRow = i + 1; break; }
     }
 
-    return {
-      action:        "updated",
-      rowNumber:     keepEntry.rowNumber,
-      hasDuplicates: staleActive.length > 0,
-      archivedRows:  allStale.map((e) => e.rowNumber),
-    };
+    if (finalTotalsRow > 1) {
+      // Read the TOTALS row money columns with formula rendering to check health.
+      // Cast through unknown: the Google API client's overloads don't expose
+      // valueRenderOption in the param type but the underlying HTTP call accepts it.
+      const formulaRes = await (sheets.spreadsheets.values.get as (p: unknown) => Promise<{ data: { values?: unknown[][] } }>)({
+        spreadsheetId: sheetId,
+        range: `${QUOTED_SHEET_NAME}!E${finalTotalsRow}:S${finalTotalsRow}`,
+        valueRenderOption: "FORMULA",
+      });
+      const formulaCells = (formulaRes.data.values?.[0] ?? []) as string[];
+      const needsRepair  = formulaCells.some((f) => !String(f ?? "").trim().startsWith("=SUM"));
+
+      if (needsRepair) {
+        const lastRow = finalTotalsRow - 1;
+        const moneyCols = ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S"];
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: sheetId,
+          range: `${QUOTED_SHEET_NAME}!E${finalTotalsRow}:S${finalTotalsRow}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: { values: [moneyCols.map((col) => `=SUM(${col}2:${col}${lastRow})`)] },
+        });
+        formulasRepaired = true;
+      }
+    }
   }
 
-  // ── INSERT new row — always above the TOTALS line ────────────────────────
-  //
-  // First clean any old void rows for this key that are still on the main sheet.
-  if (oldVoidRows.length > 0) {
-    await archiveAndDeleteRows(sheets, sheetId, numericTabId, oldVoidRows, spreadsheetRes.data.sheets);
-    // lastDataRow was calculated excluding void rows, so it remains valid after deletion.
-  }
+  const hasUnrelatedClutter = unrelatedClutterCount > 0;
 
-  // Check whether the row immediately after the last data row is a usable blank.
-  // A blank row is only reused if it is strictly ABOVE the TOTALS line.
-  const nextRowNum  = lastDataRow + 1;          // 1-indexed candidate row
-  const nextIndex   = lastDataRow;              // 0-indexed position in existingRows
-  const nextRow     = existingRows[nextIndex];
-  const nextCellA   = String(nextRow?.[0]  ?? "").trim();
-  const nextCellC   = String(nextRow?.[2]  ?? "").trim();
-  const nextCellT   = String(nextRow?.[19] ?? "").trim();
-  const nextIsAboveTotals = totalsRowNum < 0 || nextRowNum < totalsRowNum;
-  const nextIsBlank = !nextCellA && !nextCellC && !nextCellT && nextIsAboveTotals;
-
-  let newRowNumber: number;
-
-  if (nextIsBlank) {
-    // Reuse the existing blank row above TOTALS — no insertDimension needed.
-    newRowNumber = nextRowNum;
+  // ── Build user-facing message ─────────────────────────────────────────────
+  let userMessage: string;
+  if (autoRepaired && hasUnrelatedClutter) {
+    userMessage = "Sheet updated and cleaned. Old cleanup items remain; run Health Check when convenient.";
+  } else if (autoRepaired) {
+    userMessage = "Sheet updated and cleaned";
+  } else if (hasUnrelatedClutter) {
+    userMessage = "Sheet updated. Sheet has old cleanup items; run Health Check when convenient.";
   } else {
-    // Insert a new blank row. Always go immediately above TOTALS when known,
-    // so no active data ever lands in or below the TOTALS/summary area.
-    const insertAbove    = totalsRowNum > 0 ? totalsRowNum : nextRowNum;
-    const insertStart0   = insertAbove - 1; // 0-indexed: insert before this position
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: sheetId,
-      requestBody: {
-        requests: [{
-          insertDimension: {
-            range: {
-              sheetId:    numericTabId,
-              dimension:  "ROWS",
-              startIndex: insertStart0,
-              endIndex:   insertStart0 + 1,
-            },
-            inheritFromBefore: insertStart0 > 1,
-          },
-        }],
-      },
-    });
-    newRowNumber = insertAbove; // new blank row is now at this 1-indexed position
+    userMessage = "Sheet updated";
   }
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: sheetId,
-    range: `${QUOTED_SHEET_NAME}!A${newRowNumber}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values },
-  });
 
   return {
-    action:        "inserted",
-    rowNumber:     newRowNumber,
-    hasDuplicates: false,
-    archivedRows:  [],
+    action,
+    rowNumber:            finalRowNumber!,
+    hasDuplicates:        archivedRows.length > 0,
+    archivedRows,
+    autoRepaired,
+    formulasRepaired,
+    hasUnrelatedClutter,
+    userMessage,
   };
 }
 

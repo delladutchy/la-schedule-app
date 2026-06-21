@@ -1762,17 +1762,24 @@ export function InvoiceSection({
         hasDuplicates?: boolean;
         archivedRows?: number[];
         keptRow?: number;
+        autoRepaired?: boolean;
+        formulasRepaired?: boolean;
+        hasUnrelatedClutter?: boolean;
         sheetTarget?: { sheetId?: string | null; sheetName?: string };
       };
       if (res.ok) {
-        const voided = json.hasDuplicates === true;
         setSyncState({
           status: "success",
-          message: null,
+          message: json.message ?? null,
           syncedAt: json.syncedAt ?? null,
-          hasDuplicates: voided,
+          hasDuplicates: json.hasDuplicates === true,
         });
-        void handleCheckSheetDuplicates({ silent: true });
+        // Skip the silent duplicate check when the server already confirmed the
+        // sheet is clean for this invoice (autoRepaired covers current duplicates).
+        // If unrelated clutter exists, the message from the server already says so.
+        if (!json.autoRepaired && !json.hasUnrelatedClutter) {
+          void handleCheckSheetDuplicates({ silent: true });
+        }
       } else {
         // Use the server-classified message (auth error, tab not found, etc.) if available.
         setSyncState({
@@ -2865,18 +2872,15 @@ export function InvoiceSection({
 
               {/* Sheet sync status — small, non-intrusive; always visible when there is info */}
               {syncState.status === "success" && syncedLabel ? (
-                <p className="invoice-sheet-sync-status">Sheet sync: Updated {syncedLabel}</p>
+                <p className="invoice-sheet-sync-status">
+                  {syncState.message ?? "Sheet updated"} · {syncedLabel}
+                </p>
               ) : syncState.status === "error" ? (
                 <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn">
                   Sheet sync warning — use Admin Tools to retry
                 </p>
               ) : syncState.status === "syncing" ? (
                 <p className="invoice-sheet-sync-status">Sheet sync: Syncing…</p>
-              ) : null}
-              {syncState.status === "success" && syncState.hasDuplicates ? (
-                <p className="invoice-sheet-sync-status">
-                  Old duplicate rows were archived — main Sheet is clean.
-                </p>
               ) : null}
               {hasCurrentSheetDuplicates ? (
                 <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn" role="alert">

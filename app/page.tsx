@@ -1,6 +1,7 @@
 import { getConfig } from "@/lib/config";
 import { todayInZone } from "@/lib/time";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
+import { isJeffLikeProfile, resolveEditorProfile } from "@/lib/editor-profiles";
 import { ScheduleView } from "@/components/ScheduleView";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { EditorSyncButton } from "@/components/EditorSyncButton";
@@ -192,6 +193,7 @@ export default async function AvailabilityPage({
       : todayMonthKey;
 
   const resolvedEditorId = resolveInitialEditorId(initialEditorToken, env);
+  const isJeffEditor = resolvedEditorId !== null && isJeffLikeProfile(resolveEditorProfile(resolvedEditorId));
   const mikeShowWeekendsCookie = cookies().get("la_schedule_mike_show_weekends")?.value;
   const initialShowWeekends = resolvedEditorId === "mike"
     ? mikeShowWeekendsCookie === "1"
@@ -242,10 +244,16 @@ export default async function AvailabilityPage({
           <div className="header-editor-tools">
             <EditorSyncButton initialEditorToken={initialEditorToken} />
             <EditorHistoryButton initialEditorToken={initialEditorToken} />
+            {isJeffEditor ? (
+              <a href="/admin/invoices" className="header-invoices-link">Invoices</a>
+            ) : null}
           </div>
           <div className="mobile-header-editor-tools" aria-label="Editor tools">
             <EditorSyncButton initialEditorToken={initialEditorToken} />
             <EditorHistoryButton initialEditorToken={initialEditorToken} buttonLabel="History" />
+            {isJeffEditor ? (
+              <a href="/admin/invoices" className="header-invoices-link">Invoices</a>
+            ) : null}
           </div>
           <ThemeToggle />
         </div>

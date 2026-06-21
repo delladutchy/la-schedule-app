@@ -101,8 +101,12 @@ export async function POST(request: NextRequest) {
     success: true,
     syncedAt,
     sheetTarget,
-    hasDuplicates: upsertResult.hasDuplicates,
-    archivedRows: upsertResult.archivedRows,
-    keptRow: upsertResult.rowNumber,
+    hasDuplicates:        upsertResult.hasDuplicates,
+    archivedRows:         upsertResult.archivedRows,
+    keptRow:              upsertResult.rowNumber,
+    autoRepaired:         upsertResult.autoRepaired,
+    formulasRepaired:     upsertResult.formulasRepaired,
+    hasUnrelatedClutter:  upsertResult.hasUnrelatedClutter,
+    message:              upsertResult.userMessage,
   });
 }
