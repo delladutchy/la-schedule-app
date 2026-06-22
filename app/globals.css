@@ -6248,6 +6248,22 @@ html.modal-open body {
   margin: 0;
 }
 
+.invoice-gmail-draft-success {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.invoice-gmail-draft-link {
+  display: inline-block;
+  font-size: 0.78rem;
+  color: var(--accent, #4f8ef7);
+  text-decoration: none;
+}
+.invoice-gmail-draft-link:hover {
+  text-decoration: underline;
+}
+
 /* Collapsed sent-details section inside the invoice status card */
 .invoice-sent-summary {
   margin-top: 10px;
@@ -6560,7 +6576,18 @@ html.modal-open body {
 .invoice-attachments-email-note {
   font-size: 0.76rem;
   color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.invoice-attachments-email-note p {
   margin: 0;
+}
+.invoice-attachments-packet-note {
+  opacity: 0.75;
+}
+.invoice-attachments-packet-note-sub {
+  opacity: 0.8;
 }
 
 .invoice-attachments-upload {

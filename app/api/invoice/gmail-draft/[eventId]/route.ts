@@ -1,12 +1,24 @@
 /**
- * POST /api/invoice/email/[eventId]
+ * POST /api/invoice/gmail-draft/[eventId]
  *
- * Jeff-only. Regenerates the invoice PDF from current invoice_data, attaches
- * that freshly rendered PDF, then marks the invoice sent after Resend succeeds.
+ * Jeff-only. Renders the full invoice PDF packet (with receipt appendix),
+ * uploads it to storage, then creates a Gmail draft from jeffulsh@gmail.com
+ * for manual review and sending.
+ *
+ * Does NOT mark the invoice as sent — that happens when you send the draft
+ * from Gmail.  Does update the stored PDF URL and sheet row (same as Send
+ * Invoice), so the PDF link stays current.
+ *
+ * Required env vars:
+ *   GOOGLE_CLIENT_ID          — same OAuth client used for Calendar
+ *   GOOGLE_CLIENT_SECRET      — same OAuth client secret
+ *   GOOGLE_GMAIL_REFRESH_TOKEN — separate refresh token with gmail.compose scope
+ *
+ * Returns:
+ *   { ok, draftId, draftUrl, subject, attachmentFilename, ... }
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { Resend } from "resend";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
@@ -14,7 +26,6 @@ import {
   getAllInvoiceNumbers,
   getInvoiceData,
   markInvoicePdfCreated,
-  markInvoiceSent,
   markSheetSynced,
   markSheetSyncError,
 } from "@/lib/invoice-data";
@@ -24,14 +35,16 @@ import { renderInvoicePDF } from "@/lib/invoice-pdf";
 import { upsertSheetRow } from "@/lib/google-sheets";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { getEmailAttachments, getReceiptPagesForPdf } from "@/lib/invoice-attachments";
+import { createGmailDraft } from "@/lib/gmail-draft";
 
 export const dynamic = "force-dynamic";
 
 const PDF_BUCKET = "invoice-pdfs";
 const PDF_TEMPLATE = "orange-2026";
+const GMAIL_FROM = "Jeff Ulsh <jeffulsh@gmail.com>";
 
 // ---------------------------------------------------------------------------
-// Address helpers
+// Address helpers (shared with email route)
 // ---------------------------------------------------------------------------
 
 function normaliseTo(raw: unknown): string[] {
@@ -61,14 +74,11 @@ function cleanLaNumber(laNumber: string | null): string {
   return (laNumber ?? "").replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
 }
 
-// Parse LA digits out of a raw calendar event title as a fallback when la_number
-// is not saved in invoice_data.  "LA#5555 — test job" → "5555"
 function cleanLaFromGigSummary(summary: string): string {
   const match = summary.trim().match(/^\s*LA\s*#?\s*(\d{3,})\s*/i);
   return match?.[1] ?? "";
 }
 
-// Convert plain-text override body to a simple HTML email.
 function buildEmailHtmlFromOverride(text: string): string {
   const paras = text
     .split(/\n{2,}/)
@@ -93,22 +103,13 @@ ${paras}
 </html>`;
 }
 
-function formatClientInvoiceNumber(laNumber: string | null, invoiceNumber: string): string {
-  const cleanLa = cleanLaNumber(laNumber);
-  return cleanLa ? `${invoiceNumber} - LA #${cleanLa}` : invoiceNumber;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function formatJobTitle(gigSummary: string, laNumber: string | null): string {
   let title = gigSummary.trim();
   const cleanLa = cleanLaNumber(laNumber);
   if (cleanLa) {
     title = title
       .replace(
-        new RegExp(`^\\s*LA\\s*#?\\s*${escapeRegExp(cleanLa)}\\s*(?:[-–—:|]+\\s*)?`, "i"),
+        new RegExp(`^\\s*LA\\s*#?\\s*${cleanLa.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*(?:[-–—:|]+\\s*)?`, "i"),
         "",
       )
       .trim();
@@ -127,13 +128,11 @@ function fmtWorkDateRange(workdays: { date: string }[]): string {
   return `${fmtShort(dates[0]!)} - ${fmtShort(dates[dates.length - 1]!)}`;
 }
 
-// Subject: LA-centric. No internal invoice number. Job name only when no LA number.
 function buildSubject(cleanLa: string, jobTitle: string): string {
   if (cleanLa) return `Jeff Ulsh - Invoice LA #${cleanLa}`;
   return `Jeff Ulsh - Invoice${jobTitle ? ` ${jobTitle}` : ""}`;
 }
 
-// Attachment filename: client-facing. Invoice-LA71852-Wilm-U-Grad.pdf
 function buildAttachmentFilename(cleanLa: string, jobTitle: string, invoiceNumber: string): string {
   const nameSlug = jobTitle
     ? "-" + jobTitle.replace(/[^a-zA-Z0-9]/g, " ").trim().replace(/\s+/g, "-").slice(0, 30).replace(/-+$/, "")
@@ -143,44 +142,10 @@ function buildAttachmentFilename(cleanLa: string, jobTitle: string, invoiceNumbe
   return `Invoice-${numSlug}${nameSlug}.pdf`;
 }
 
-// ---------------------------------------------------------------------------
-// PDF storage helpers
-// ---------------------------------------------------------------------------
-
-async function ensureBucket(): Promise<void> {
-  const supabase = getSupabaseServerClient();
-  const { error } = await supabase.storage.createBucket(PDF_BUCKET, { public: true });
-  if (error && !error.message.toLowerCase().includes("already exists")) {
-    throw new Error(`[invoice/email] bucket create failed: ${error.message}`);
-  }
-}
-
-async function uploadPdf(path: string, buffer: Buffer): Promise<string> {
-  const supabase = getSupabaseServerClient();
-  const { error } = await supabase.storage
-    .from(PDF_BUCKET)
-    .upload(path, buffer, {
-      contentType: "application/pdf",
-      upsert: true,
-    });
-
-  if (error) throw new Error(`[invoice/email] upload failed: ${error.message}`);
-
-  const { data: { publicUrl } } = supabase.storage
-    .from(PDF_BUCKET)
-    .getPublicUrl(path);
-
-  return publicUrl;
-}
-
-// ---------------------------------------------------------------------------
-// Email templates
-// ---------------------------------------------------------------------------
-
 interface EmailParams {
-  cleanLa: string;     // "71852"
-  jobTitle: string;    // "Wilm U Grad"
-  workDateStr: string; // "5/31 - 6/1"
+  cleanLa: string;
+  jobTitle: string;
+  workDateStr: string;
 }
 
 function buildInvoiceLine(p: EmailParams): string {
@@ -212,6 +177,28 @@ function buildEmailText(p: EmailParams): string {
 }
 
 // ---------------------------------------------------------------------------
+// PDF storage helpers
+// ---------------------------------------------------------------------------
+
+async function ensureBucket(): Promise<void> {
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase.storage.createBucket(PDF_BUCKET, { public: true });
+  if (error && !error.message.toLowerCase().includes("already exists")) {
+    throw new Error(`[invoice/gmail-draft] bucket create failed: ${error.message}`);
+  }
+}
+
+async function uploadPdf(path: string, buffer: Buffer): Promise<string> {
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase.storage
+    .from(PDF_BUCKET)
+    .upload(path, buffer, { contentType: "application/pdf", upsert: true });
+  if (error) throw new Error(`[invoice/gmail-draft] upload failed: ${error.message}`);
+  const { data: { publicUrl } } = supabase.storage.from(PDF_BUCKET).getPublicUrl(path);
+  return publicUrl;
+}
+
+// ---------------------------------------------------------------------------
 // POST
 // ---------------------------------------------------------------------------
 
@@ -224,8 +211,11 @@ export async function POST(
   if (!auth.ok) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!isJeffEditorId(auth.editorId)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
-  if (!env.RESEND_API_KEY) {
-    return NextResponse.json({ error: "resend_not_configured", detail: "Set RESEND_API_KEY in env" }, { status: 503 });
+  if (!env.GOOGLE_GMAIL_REFRESH_TOKEN) {
+    return NextResponse.json(
+      { error: "gmail_not_configured", detail: "Set GOOGLE_GMAIL_REFRESH_TOKEN in env (needs gmail.compose scope)" },
+      { status: 503 },
+    );
   }
 
   let rawBody: Record<string, unknown>;
@@ -246,7 +236,7 @@ export async function POST(
   const allAddresses = [...toAddresses, ...ccAddresses];
   if (allAddresses.some((a) => a.startsWith("TODO_"))) {
     return NextResponse.json(
-      { error: "unconfigured_recipient", detail: "One or more recipient addresses are TODO placeholders and have not been configured yet." },
+      { error: "unconfigured_recipient", detail: "One or more recipient addresses are TODO placeholders." },
       { status: 400 },
     );
   }
@@ -258,8 +248,7 @@ export async function POST(
   const invoiceData = await getInvoiceData(params.eventId);
   if (!invoiceData) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
-  // Pre-flight: check receipt attachments BEFORE expensive PDF render
-  // Block send if any selected receipt is missing or inaccessible.
+  // Pre-flight: check receipt attachments before expensive PDF render.
   let receiptAttachments: Array<{ buffer: Buffer; filename: string; mimeType: string; id: string }> = [];
   let missingAttachmentIds: string[] = [];
   try {
@@ -267,7 +256,7 @@ export async function POST(
     receiptAttachments = result.attachments;
     missingAttachmentIds = result.missingIds;
   } catch (err) {
-    console.error(`[invoice/email] attachment fetch failed (non-fatal): ${err instanceof Error ? err.message : err}`);
+    console.error(`[invoice/gmail-draft] attachment fetch failed (non-fatal): ${err instanceof Error ? err.message : err}`);
   }
 
   if (missingAttachmentIds.length > 0) {
@@ -284,26 +273,22 @@ export async function POST(
   const packet = calculateInvoicePacket(invoiceData);
   const allNums = await getAllInvoiceNumbers();
   const invoiceNumber = resolveInvoiceNumber(invoiceData.invoice_number, allNums);
-  // Effective LA: stored la_number first; fall back to parsing from gigSummary title.
   const cleanLa = cleanLaNumber(invoiceData.la_number) || cleanLaFromGigSummary(gigSummary);
   const effectiveLaNumber = cleanLa ? `LA#${cleanLa}` : null;
-  const clientInvoiceNumber = formatClientInvoiceNumber(effectiveLaNumber, invoiceNumber);
   const autoJobTitle = formatJobTitle(gigSummary, effectiveLaNumber);
-  // If user set a job name override, use it in the email body instead of the auto-cleaned title.
   const jobTitle = invoiceData.invoice_job_name_override?.trim() || autoJobTitle;
   const workDateStr = fmtWorkDateRange(packet.workdays);
   const issuedDate = new Date().toISOString().slice(0, 10);
 
-  const laSlug = invoiceData.la_number
-    ? `-LA${cleanLaNumber(invoiceData.la_number)}`
-    : "";
+  const laSlug = invoiceData.la_number ? `-LA${cleanLaNumber(invoiceData.la_number)}` : "";
   const ts = new Date().toISOString().replace(/[-:T.]/g, "").slice(0, 14);
   const storagePath = `${params.eventId}/Invoice-${invoiceNumber}${laSlug}-${ts}.pdf`;
 
+  // Fetch receipt appendix pages (same as PDF route and email route).
   const receiptPages = await getReceiptPagesForPdf(params.eventId);
-  console.log(`[invoice/email] receipt appendix pages: ${receiptPages.length}`);
-  console.log(`[invoice/email] regenerating PDF before send template=${PDF_TEMPLATE} invoiceNumber=${invoiceNumber} clientInvoiceNumber=${clientInvoiceNumber} storagePath=${storagePath}`);
+  console.log(`[invoice/gmail-draft] receipt appendix pages: ${receiptPages.length}`);
 
+  // Render full PDF packet.
   let pdfBuffer: Buffer;
   try {
     pdfBuffer = await renderInvoicePDF({
@@ -313,36 +298,38 @@ export async function POST(
       issuedDate,
       receiptPages,
       overrides: {
-        jobNameOverride: invoiceData.invoice_job_name_override,
-        dayRateDescriptionOverride: invoiceData.invoice_day_rate_description_override,
-        otDescriptionOverride: invoiceData.invoice_ot_description_override,
-        perDiemDescriptionOverride: invoiceData.invoice_per_diem_description_override,
-        bagFeesDescriptionOverride: invoiceData.invoice_bag_fees_description_override,
-        parkingDescriptionOverride: invoiceData.invoice_parking_description_override,
-        uberDescriptionOverride: invoiceData.invoice_uber_description_override,
-        tollsDescriptionOverride: invoiceData.invoice_tolls_description_override,
-        hotelDescriptionOverride: invoiceData.invoice_hotel_description_override,
-        otherDescriptionOverride: invoiceData.invoice_other_description_override,
-        noteOverride: invoiceData.invoice_note_override,
+        jobNameOverride:               invoiceData.invoice_job_name_override,
+        dayRateDescriptionOverride:    invoiceData.invoice_day_rate_description_override,
+        otDescriptionOverride:         invoiceData.invoice_ot_description_override,
+        perDiemDescriptionOverride:    invoiceData.invoice_per_diem_description_override,
+        bagFeesDescriptionOverride:    invoiceData.invoice_bag_fees_description_override,
+        parkingDescriptionOverride:    invoiceData.invoice_parking_description_override,
+        uberDescriptionOverride:       invoiceData.invoice_uber_description_override,
+        tollsDescriptionOverride:      invoiceData.invoice_tolls_description_override,
+        hotelDescriptionOverride:      invoiceData.invoice_hotel_description_override,
+        otherDescriptionOverride:      invoiceData.invoice_other_description_override,
+        noteOverride:                  invoiceData.invoice_note_override,
       },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[invoice/email] PDF render failed: ${msg}`);
+    console.error(`[invoice/gmail-draft] PDF render failed: ${msg}`);
     return NextResponse.json({ error: "pdf_render_failed", detail: msg }, { status: 500 });
   }
 
+  // Upload PDF to storage (keeps the stored PDF URL current).
   let pdfUrl: string;
   try {
     await ensureBucket();
     pdfUrl = await uploadPdf(storagePath, pdfBuffer);
-    console.log(`[invoice/email] fresh PDF uploaded publicUrl=${pdfUrl}`);
+    console.log(`[invoice/gmail-draft] PDF uploaded publicUrl=${pdfUrl}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[invoice/email] PDF upload failed: ${msg}`);
+    console.error(`[invoice/gmail-draft] PDF upload failed: ${msg}`);
     return NextResponse.json({ error: "pdf_upload_failed", detail: msg }, { status: 500 });
   }
 
+  // Update invoice_data with current PDF URL.
   const createdAt = new Date().toISOString();
   let updatedInvoiceData: Awaited<ReturnType<typeof markInvoicePdfCreated>>;
   try {
@@ -354,103 +341,82 @@ export async function POST(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[invoice/email] PDF metadata update failed: ${msg}`);
+    console.error(`[invoice/gmail-draft] PDF metadata update failed: ${msg}`);
     return NextResponse.json({ error: "pdf_metadata_update_failed", detail: msg }, { status: 500 });
   }
 
+  // Sync Sheet row.
   try {
     const sheetRow = generateSheetRow(packet, gigSummary, invoiceNumber, undefined, {
-      sentTo: invoiceData.invoice_sent_to,
-      sentSubject: invoiceData.invoice_sent_subject,
+      sentTo:          invoiceData.invoice_sent_to,
+      sentSubject:     invoiceData.invoice_sent_subject,
       jobNameOverride: invoiceData.invoice_job_name_override,
     });
     await upsertSheetRow(sheetRow);
-  } catch (sheetErr) {
-    console.error(`[invoice/email] sheet sync failed after PDF regeneration (non-fatal): ${sheetErr instanceof Error ? sheetErr.message : sheetErr}`);
-  }
-
-  const attachmentFilename = buildAttachmentFilename(cleanLa, jobTitle, invoiceNumber);
-  // Use client-provided subject/body overrides (the user may have edited them in the Review panel).
-  // Fall back to server-generated defaults when not provided.
-  const emailParams: EmailParams = { cleanLa, jobTitle, workDateStr };
-  const subject = overrideSubject ?? buildSubject(cleanLa, jobTitle);
-  const emailHtml = overrideBody ? buildEmailHtmlFromOverride(overrideBody) : buildEmailHtml(emailParams);
-  const emailText = overrideBody ?? buildEmailText(emailParams);
-
-  const fromName = env.INVOICE_FROM_NAME ?? "Jeff Ulsh";
-  const fromEmail = env.NOTIFY_EMAIL_FROM?.trim() ?? "invoices@resend.dev";
-  const from = fromEmail.includes("<") ? fromEmail : `${fromName} <${fromEmail}>`;
-
-  const resend = new Resend(env.RESEND_API_KEY);
-  const sendPayload: Parameters<typeof resend.emails.send>[0] = {
-    from,
-    to: toAddresses,
-    subject,
-    html: emailHtml,
-    text: emailText,
-    attachments: [
-      {
-        filename: attachmentFilename,
-        content: pdfBuffer,
-        contentType: "application/pdf",
-      },
-      ...receiptAttachments.map((a) => ({
-        filename: a.filename,
-        content: a.buffer,
-        contentType: a.mimeType,
-      })),
-    ],
-  };
-  if (ccAddresses.length > 0) sendPayload.cc = ccAddresses;
-
-  const { error: sendError } = await resend.emails.send(sendPayload);
-
-  if (sendError) {
-    console.error(`[invoice/email] send failed: ${JSON.stringify(sendError)}`);
-    return NextResponse.json(
-      { error: "send_failed", detail: String(sendError) },
-      { status: 502 },
-    );
-  }
-
-  const sentAt = new Date().toISOString();
-  const sentTo = [...toAddresses, ...ccAddresses].join(", ");
-  const sentSubject = subject;
-  await markInvoiceSent(params.eventId, sentAt, sentTo, sentSubject);
-
-  // Re-sync Google Sheet with invoice_status = "sent", sent date, sentTo, and sentSubject.
-  // The earlier upsertSheetRow used status from packet (sheet_synced); this corrects it.
-  try {
-    const sentPacket = calculateInvoicePacket({ ...invoiceData, invoice_status: "sent", invoice_sent_at: sentAt });
-    const sentSheetRow = generateSheetRow(sentPacket, gigSummary, invoiceNumber, undefined, {
-      sentTo,
-      sentSubject,
-      jobNameOverride: invoiceData.invoice_job_name_override,
-    });
-    await upsertSheetRow(sentSheetRow);
     await markSheetSynced(params.eventId, new Date().toISOString());
   } catch (sheetErr) {
     const sheetMsg = sheetErr instanceof Error ? sheetErr.message : String(sheetErr);
-    console.error(`[invoice/email] post-send sheet re-sync failed (non-fatal): ${sheetMsg}`);
-    try { await markSheetSyncError(params.eventId, sheetMsg); } catch { /* ignore secondary failure */ }
+    console.error(`[invoice/gmail-draft] sheet sync failed (non-fatal): ${sheetMsg}`);
+    try { await markSheetSyncError(params.eventId, sheetMsg); } catch { /* ignore */ }
   }
+
+  // Build email content.
+  const attachmentFilename = buildAttachmentFilename(cleanLa, jobTitle, invoiceNumber);
+  const emailParams: EmailParams = { cleanLa, jobTitle, workDateStr };
+  const subject = overrideSubject ?? buildSubject(cleanLa, jobTitle);
+  const htmlBody = overrideBody ? buildEmailHtmlFromOverride(overrideBody) : buildEmailHtml(emailParams);
+  const textBody = overrideBody ?? buildEmailText(emailParams);
+
+  // Create Gmail draft.
+  let draftResult: Awaited<ReturnType<typeof createGmailDraft>>;
+  try {
+    draftResult = await createGmailDraft({
+      clientId:           env.GOOGLE_CLIENT_ID,
+      clientSecret:       env.GOOGLE_CLIENT_SECRET,
+      gmailRefreshToken:  env.GOOGLE_GMAIL_REFRESH_TOKEN,
+      from:               GMAIL_FROM,
+      to:                 toAddresses,
+      cc:                 ccAddresses,
+      subject,
+      textBody,
+      htmlBody,
+      attachments: [
+        {
+          filename:    attachmentFilename,
+          content:     pdfBuffer,
+          mimeType:    "application/pdf",
+        },
+        ...receiptAttachments.map((a) => ({
+          filename: a.filename,
+          content:  a.buffer,
+          mimeType: a.mimeType,
+        })),
+      ],
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[invoice/gmail-draft] Gmail draft creation failed: ${msg}`);
+    return NextResponse.json({ error: "gmail_draft_failed", detail: msg }, { status: 502 });
+  }
+
+  console.log(`[invoice/gmail-draft] draft created draftId=${draftResult.draftId} messageId=${draftResult.messageId}`);
 
   return NextResponse.json({
     ok: true,
-    to: toAddresses,
-    cc: ccAddresses,
-    sentAt,
-    sentTo,
-    sentSubject,
+    draftId:              draftResult.draftId,
+    messageId:            draftResult.messageId,
+    draftUrl:             draftResult.draftUrl,
     subject,
     attachmentFilename,
-    invoice_number: updatedInvoiceData.invoice_number,
-    client_invoice_number: clientInvoiceNumber,
-    invoice_pdf_url: updatedInvoiceData.invoice_pdf_url,
-    invoice_pdf_path: storagePath,
-    invoice_total: updatedInvoiceData.invoice_total,
-    remaining_balance: updatedInvoiceData.remaining_balance,
-    template: PDF_TEMPLATE,
-    receiptAttachmentCount: receiptAttachments.length,
+    to:                   toAddresses,
+    cc:                   ccAddresses,
+    invoice_number:       updatedInvoiceData.invoice_number,
+    invoice_pdf_url:      updatedInvoiceData.invoice_pdf_url,
+    invoice_pdf_path:     storagePath,
+    invoice_total:        updatedInvoiceData.invoice_total,
+    remaining_balance:    updatedInvoiceData.remaining_balance,
+    template:             PDF_TEMPLATE,
+    receiptAppendixPages: receiptPages.length,
+    receiptAttachments:   receiptAttachments.length,
   });
 }

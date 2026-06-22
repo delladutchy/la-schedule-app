@@ -22,37 +22,13 @@ import {
 } from "@react-pdf/renderer";
 import type { InvoicePacket } from "./invoice-types";
 import { buildMileageInvoicePresentationLines } from "./invoice-calculations";
+import type { ReceiptPageData } from "./invoice-attachments";
+
+export type { ReceiptPageData };
 
 // Logo hosted on Netlify CDN. Fetched at PDF render time and embedded as base64.
 // Falls back to text branding when unavailable (file not yet deployed, network error, etc.).
 const LOGO_PDF_URL = "https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png";
-
-// ---------------------------------------------------------------------------
-// Receipt appendix types
-// ---------------------------------------------------------------------------
-
-/**
- * Data for a single receipt appendix page appended after the invoice.
- * Populated by the PDF generation route from invoice_attachments records.
- */
-export interface ReceiptPageData {
-  /** Attachment DB id — used as React key */
-  id: string;
-  /** MIME type of the original file */
-  mimeType: string;
-  /** Base64 data URL for embeddable images (JPEG/PNG/WEBP/GIF), null for PDF/HEIC */
-  imageDataUrl: string | null;
-  /** YYYY-MM-DD from receipt_date column; falls back to created_at date in the route */
-  receiptDate: string | null;
-  /** la_job_number stored on the attachment record */
-  laJobNumber: string | null;
-  /** receipt_category from the attachment record */
-  category: string | null;
-  /** receipt_amount from the attachment record */
-  amount: number | null;
-  /** Original filename, shown on placeholder pages */
-  originalFilename: string;
-}
 
 // ---------------------------------------------------------------------------
 // Business info

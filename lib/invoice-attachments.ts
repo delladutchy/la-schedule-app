@@ -160,6 +160,105 @@ export async function getAttachmentSignedUrl(
   return urlData.signedUrl;
 }
 
+// ---------------------------------------------------------------------------
+// Receipt appendix types and page builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Data for one receipt appendix page in the invoice PDF.
+ * Exported so lib/invoice-pdf.tsx and both PDF-generation routes share this type
+ * without circular imports.
+ */
+export interface ReceiptPageData {
+  /** Attachment DB id — used as React key in the PDF Document */
+  id: string;
+  /** MIME type of the original file */
+  mimeType: string;
+  /** Base64 data URL for embeddable images (JPEG/PNG/WEBP/GIF), null for PDF/HEIC */
+  imageDataUrl: string | null;
+  /** YYYY-MM-DD from receipt_date column; falls back to created_at date */
+  receiptDate: string | null;
+  /** la_job_number stored on the attachment record */
+  laJobNumber: string | null;
+  /** receipt_category from the attachment record */
+  category: string | null;
+  /** receipt_amount from the attachment record */
+  amount: number | null;
+  /** Original filename, shown on placeholder pages */
+  originalFilename: string;
+}
+
+// react-pdf Image supports JPEG, PNG, WEBP, GIF; HEIC/HEIF and PDF fall back to placeholder pages.
+const EMBEDDABLE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+/**
+ * Fetch included receipt attachments for an event and build ReceiptPageData for
+ * each one.  Used by both the PDF route and the email route so both generate
+ * the same full invoice packet.
+ *
+ * Non-fatal per-file: download errors produce a placeholder page (imageDataUrl null)
+ * rather than aborting the whole PDF.
+ */
+export async function getReceiptPagesForPdf(googleEventId: string): Promise<ReceiptPageData[]> {
+  const supabase = getSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("invoice_attachments")
+    .select("id, storage_path, mime_type, original_filename, la_job_number, receipt_date, receipt_category, receipt_amount, created_at")
+    .eq("google_event_id", googleEventId)
+    .eq("include_in_email", true)
+    .is("archived_at", null)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.warn(`[invoice-attachments] receipt page fetch failed (non-fatal): ${error.message}`);
+    return [];
+  }
+
+  const pages: ReceiptPageData[] = [];
+
+  for (const rec of (data ?? []) as Array<{
+    id: string;
+    storage_path: string;
+    mime_type: string;
+    original_filename: string;
+    la_job_number: string | null;
+    receipt_date: string | null;
+    receipt_category: string | null;
+    receipt_amount: number | null;
+    created_at: string;
+  }>) {
+    const canEmbed = EMBEDDABLE_IMAGE_TYPES.has(rec.mime_type);
+    let imageDataUrl: string | null = null;
+
+    if (canEmbed) {
+      const { data: fileData, error: dlErr } = await supabase.storage
+        .from(ATTACHMENT_BUCKET)
+        .download(rec.storage_path);
+      if (dlErr || !fileData) {
+        console.warn(`[invoice-attachments] receipt download failed for ${rec.id} (non-fatal): ${dlErr?.message ?? "no data"}`);
+      } else {
+        const buf = Buffer.from(await fileData.arrayBuffer());
+        imageDataUrl = `data:${rec.mime_type};base64,${buf.toString("base64")}`;
+      }
+    }
+
+    pages.push({
+      id:               rec.id,
+      mimeType:         rec.mime_type,
+      imageDataUrl,
+      // Use explicit receipt_date when set; fall back to the upload date part.
+      receiptDate:      rec.receipt_date ?? rec.created_at.slice(0, 10),
+      laJobNumber:      rec.la_job_number,
+      category:         rec.receipt_category,
+      amount:           rec.receipt_amount,
+      originalFilename: rec.original_filename,
+    });
+  }
+
+  return pages;
+}
+
 /** Update metadata fields for an attachment (any subset of fields). */
 export async function updateAttachmentMetadata(
   id: string,

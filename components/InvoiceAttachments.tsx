@@ -323,9 +323,13 @@ export function InvoiceAttachments({ eventId, editorToken, expanded, onCountChan
       ) : null}
 
       {emailCount > 0 ? (
-        <p className="invoice-attachments-email-note">
-          {emailCount} {emailCount === 1 ? "receipt" : "receipts"} will be included with email.
-        </p>
+        <div className="invoice-attachments-email-note">
+          <p>{emailCount} {emailCount === 1 ? "receipt" : "receipts"} will be included with email.</p>
+          <p className="invoice-attachments-packet-note">
+            Included receipts appear at the end of the invoice PDF.{" "}
+            <span className="invoice-attachments-packet-note-sub">Original files also attached separately.</span>
+          </p>
+        </div>
       ) : null}
 
       <div className="invoice-attachments-upload">

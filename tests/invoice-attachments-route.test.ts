@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   archiveAttachment:        vi.fn(),
   getAttachmentSignedUrl:   vi.fn(),
   getEmailAttachments:      vi.fn(),
+  getReceiptPagesForPdf:    vi.fn(),
   createBucket:             vi.fn(),
 }));
 
@@ -41,6 +42,7 @@ vi.mock("@/lib/invoice-attachments", () => ({
   archiveAttachment:        mocks.archiveAttachment,
   getAttachmentSignedUrl:   mocks.getAttachmentSignedUrl,
   getEmailAttachments:      mocks.getEmailAttachments,
+  getReceiptPagesForPdf:    mocks.getReceiptPagesForPdf,
   ATTACHMENT_BUCKET:        "invoice-attachments",
   ALLOWED_MIME_TYPES: new Set([
     "image/jpeg", "image/png", "image/webp",
@@ -197,6 +199,7 @@ beforeEach(() => {
   mocks.archiveAttachment.mockResolvedValue(undefined);
   mocks.getAttachmentSignedUrl.mockResolvedValue("https://signed.example.com/file?token=abc");
   mocks.getEmailAttachments.mockResolvedValue({ attachments: [], missingIds: [] });
+  mocks.getReceiptPagesForPdf.mockResolvedValue([]);
 });
 
 // ── Lazy route loaders ────────────────────────────────────────────────────────
@@ -583,6 +586,73 @@ describe("Email send: receipt attachment blocking", () => {
     expect(body.error).not.toBe("attachment_missing");
     // getEmailAttachments must have been called
     expect(mocks.getEmailAttachments).toHaveBeenCalledWith("evt123");
+  });
+});
+
+// ── Email send: receipt appendix in PDF ──────────────────────────────────────
+
+describe("Email send: receipt appendix included in PDF", () => {
+  it("calls getReceiptPagesForPdf for the event and passes pages to renderInvoicePDF", async () => {
+    const fakeReceiptPages = [
+      {
+        id: "att-r1",
+        mimeType: "image/jpeg",
+        imageDataUrl: "data:image/jpeg;base64,abc",
+        receiptDate: "2026-06-01",
+        laJobNumber: "LA#5555",
+        category: "Parking",
+        amount: 25,
+        originalFilename: "parking.jpg",
+      },
+    ];
+    mocks.getReceiptPagesForPdf.mockResolvedValue(fakeReceiptPages);
+    mocks.getEmailAttachments.mockResolvedValue({ attachments: [], missingIds: [] });
+
+    // Import the mocked renderInvoicePDF so we can assert on its args
+    const { renderInvoicePDF } = await import("@/lib/invoice-pdf") as { renderInvoicePDF: ReturnType<typeof vi.fn> };
+    const { POST } = await import("@/app/api/invoice/email/[eventId]/route");
+
+    const req = new Request("https://app.local/api/invoice/email/evt123", {
+      method: "POST",
+      headers: { ...jeffHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gigSummary: "LA #5555 - Test Job",
+        to: "payroll@laproduction.com",
+        workdays: [{ date: "2026-06-01", hours: 8, overtime: 0 }],
+      }),
+    });
+
+    await POST(req as never, { params: { eventId: "evt123" } });
+
+    expect(mocks.getReceiptPagesForPdf).toHaveBeenCalledWith("evt123");
+    expect(renderInvoicePDF).toHaveBeenCalledWith(
+      expect.objectContaining({ receiptPages: fakeReceiptPages }),
+    );
+  });
+
+  it("passes empty receiptPages to renderInvoicePDF when no receipts are included", async () => {
+    mocks.getReceiptPagesForPdf.mockResolvedValue([]);
+    mocks.getEmailAttachments.mockResolvedValue({ attachments: [], missingIds: [] });
+
+    const { renderInvoicePDF } = await import("@/lib/invoice-pdf") as { renderInvoicePDF: ReturnType<typeof vi.fn> };
+    const { POST } = await import("@/app/api/invoice/email/[eventId]/route");
+
+    const req = new Request("https://app.local/api/invoice/email/evt123", {
+      method: "POST",
+      headers: { ...jeffHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gigSummary: "LA #5555 - Test Job",
+        to: "payroll@laproduction.com",
+        workdays: [{ date: "2026-06-01", hours: 8, overtime: 0 }],
+      }),
+    });
+
+    await POST(req as never, { params: { eventId: "evt123" } });
+
+    expect(mocks.getReceiptPagesForPdf).toHaveBeenCalledWith("evt123");
+    expect(renderInvoicePDF).toHaveBeenCalledWith(
+      expect.objectContaining({ receiptPages: [] }),
+    );
   });
 });
 

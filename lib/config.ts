@@ -139,6 +139,14 @@ const EnvSchema = z.object({
   /** Invoice email: override sender name shown in From field (defaults to "Jeff Ulsh"). */
   INVOICE_FROM_NAME: z.string().default("Jeff Ulsh"),
 
+  /**
+   * Gmail OAuth refresh token with gmail.compose scope.
+   * Required for the Gmail Draft invoice flow (POST /api/invoice/gmail-draft).
+   * Uses the same GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET as Calendar auth.
+   * If absent, the gmail-draft route returns 503.
+   */
+  GOOGLE_GMAIL_REFRESH_TOKEN: z.string().min(1).optional(),
+
   /** Optional shared secret for Google Calendar webhook receiver endpoint. */
   GOOGLE_WEBHOOK_TOKEN: z.string().optional(),
 

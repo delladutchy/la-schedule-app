@@ -296,11 +296,13 @@ interface EmailDialogState {
   error: string | null;
   editableSubject: string;
   editableBody: string;
+  /** Set on successful Gmail draft creation — used to show the "Open Draft" link. */
+  draftUrl: string | null;
 }
 
 const EMAIL_DIALOG_RESET: EmailDialogState = {
   open: false, presetId: "", customTo: "", status: "idle", error: null,
-  editableSubject: "", editableBody: "",
+  editableSubject: "", editableBody: "", draftUrl: null,
 };
 
 interface ExpenseFields {
@@ -873,6 +875,7 @@ function buildPreviewFilename(laNumber: string | null, jobTitle: string, invoice
 interface EmailDialogProps {
   dialog: EmailDialogState;
   onChange: React.Dispatch<React.SetStateAction<EmailDialogState>>;
+  /** Called when the user clicks the primary action (Create Gmail Draft). */
   onSend: () => void;
   onClose: () => void;
   filename: string;
@@ -920,7 +923,7 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
 
   return (
     <div className="invoice-email-dialog" role="dialog" aria-label="Review Invoice">
-      <p className="invoice-block-label">Review &amp; Send</p>
+      <p className="invoice-block-label">Review &amp; Draft</p>
 
       {!isDone ? (
         <>
@@ -1007,10 +1010,19 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
           </div>
         </>
       ) : (
-        <p className="invoice-sync-success">
-          Invoice sent to {previewTo.join(", ")}.
-          {ccLine ? ` CC: ${ccLine}` : ""}
-        </p>
+        <div className="invoice-gmail-draft-success">
+          <p className="invoice-sync-success">Gmail draft created.</p>
+          {dialog.draftUrl ? (
+            <a
+              href={dialog.draftUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="invoice-gmail-draft-link"
+            >
+              Open Draft in Gmail →
+            </a>
+          ) : null}
+        </div>
       )}
 
       {dialog.error ? (
@@ -1025,7 +1037,7 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
             onClick={onSend}
             disabled={!canSend}
           >
-            {isBusy ? "Sending…" : "Send Invoice"}
+            {isBusy ? "Creating draft…" : "Create Gmail Draft"}
           </button>
         ) : null}
         <button
@@ -2122,9 +2134,7 @@ export function InvoiceSection({
   async function handleSendEmail() {
     if (emailDialog.status === "sending") return;
 
-    // Block send if the verified pipeline has not confirmed this invoice.
-    // The dialog only opens after a successful pipeline run, so this guard
-    // catches the edge case where the user edits and the state goes stale.
+    // Block if the verified pipeline has not confirmed this invoice.
     if (isVerifyBlockingEmail(verifyState.status)) {
       setEmailDialog((prev) => ({
         ...prev,
@@ -2134,7 +2144,7 @@ export function InvoiceSection({
       return;
     }
 
-    // Resolve addresses from the selected preset or custom input.
+    // Resolve addresses.
     let toAddresses: string[] = [];
     let ccAddresses: string[] = [];
 
@@ -2154,7 +2164,7 @@ export function InvoiceSection({
       toAddresses = preset.to;
       ccAddresses = preset.cc;
     } else {
-      setEmailDialog((prev) => ({ ...prev, error: "Select a recipient before sending." }));
+      setEmailDialog((prev) => ({ ...prev, error: "Select a recipient before creating a draft." }));
       return;
     }
 
@@ -2165,12 +2175,12 @@ export function InvoiceSection({
         setEmailDialog((prev) => ({
           ...prev,
           status: "error",
-          error: "Could not save the latest invoice changes — email was not sent.",
+          error: "Could not save the latest invoice changes — draft was not created.",
         }));
         return;
       }
 
-      const res = await fetch(`/api/invoice/email/${encodeURIComponent(eventId)}`, {
+      const res = await fetch(`/api/invoice/gmail-draft/${encodeURIComponent(eventId)}`, {
         method: "POST",
         headers: buildAuthHeaders(editorToken),
         credentials: "same-origin",
@@ -2184,24 +2194,21 @@ export function InvoiceSection({
       });
       const json = await res.json() as {
         ok?: boolean; error?: string; detail?: string;
-        sentAt?: string; sentTo?: string; sentSubject?: string; subject?: string;
+        draftId?: string; draftUrl?: string; subject?: string;
+        invoice_pdf_url?: string;
       };
       if (!res.ok || !json.ok) {
         setEmailDialog((prev) => ({
           ...prev,
           status: "error",
-          error: json.detail ?? json.error ?? "Email failed to send",
+          error: json.detail ?? json.error ?? "Failed to create Gmail draft",
         }));
         return;
       }
-      // Optimistically patch sent fields so the card updates immediately without waiting for refresh.
-      setInvoiceData((prev) => prev ? {
-        ...prev,
-        invoice_status: "sent",
-        invoice_sent_at: json.sentAt ?? prev.invoice_sent_at,
-        invoice_sent_to: json.sentTo ?? prev.invoice_sent_to,
-        invoice_sent_subject: json.sentSubject ?? json.subject ?? prev.invoice_sent_subject,
-      } : prev);
+      // Optimistically update PDF URL if refreshed.
+      if (json.invoice_pdf_url) {
+        setInvoiceData((prev) => prev ? { ...prev, invoice_pdf_url: json.invoice_pdf_url! } : prev);
+      }
       // Background refresh to pick up any other server-side changes.
       void fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
         headers: buildAuthHeaders(editorToken),
@@ -2213,7 +2220,7 @@ export function InvoiceSection({
           if (j.invoiceData) { setInvoiceData(j.invoiceData); setPacket(j.packet); }
         }
       }).catch(() => { /* non-fatal */ });
-      setEmailDialog((prev) => ({ ...prev, status: "success", error: null }));
+      setEmailDialog((prev) => ({ ...prev, status: "success", error: null, draftUrl: json.draftUrl ?? null }));
     } catch {
       setEmailDialog((prev) => ({ ...prev, status: "error", error: "Network error — try again" }));
     }
@@ -2658,7 +2665,7 @@ export function InvoiceSection({
                     {isVerifying
                       ? "Verifying…"
                       : workflowState === "ready_to_send"
-                        ? "Send Invoice"
+                        ? "Create Gmail Draft"
                         : "Review Invoice"}
                   </button>
                 ) : null}

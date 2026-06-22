@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sync:local": "tsx scripts/sync-local.ts",
-    "google:auth": "tsx scripts/google-auth.ts"
+    "google:auth": "tsx scripts/google-auth.ts",
+    "gmail:token": "node scripts/get-gmail-refresh-token.mjs"
   },
   "dependencies": {
     "@netlify/blobs": "^8.1.0",
