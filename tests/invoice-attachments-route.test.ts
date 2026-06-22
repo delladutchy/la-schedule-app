@@ -19,26 +19,29 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ── Hoist mock functions so they can be referenced in vi.mock factories ───────
 
 const mocks = vi.hoisted(() => ({
-  listAttachments:        vi.fn(),
-  uploadAttachment:       vi.fn(),
-  ensureAttachmentBucket: vi.fn(),
-  setAttachmentEmailFlag: vi.fn(),
-  archiveAttachment:      vi.fn(),
-  getAttachmentSignedUrl: vi.fn(),
-  getEmailAttachments:    vi.fn(),
-  createBucket:           vi.fn(),
+  listAttachments:          vi.fn(),
+  uploadAttachment:         vi.fn(),
+  ensureAttachmentBucket:   vi.fn(),
+  setAttachmentEmailFlag:   vi.fn(),
+  updateAttachmentMetadata: vi.fn(),
+  archiveAttachment:        vi.fn(),
+  getAttachmentSignedUrl:   vi.fn(),
+  getEmailAttachments:      vi.fn(),
+  createBucket:             vi.fn(),
 }));
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
 vi.mock("@/lib/invoice-attachments", () => ({
-  listAttachments:        mocks.listAttachments,
-  uploadAttachment:       mocks.uploadAttachment,
-  ensureAttachmentBucket: mocks.ensureAttachmentBucket,
-  setAttachmentEmailFlag: mocks.setAttachmentEmailFlag,
-  archiveAttachment:      mocks.archiveAttachment,
-  getAttachmentSignedUrl: mocks.getAttachmentSignedUrl,
-  getEmailAttachments:    mocks.getEmailAttachments,
+  listAttachments:          mocks.listAttachments,
+  uploadAttachment:         mocks.uploadAttachment,
+  ensureAttachmentBucket:   mocks.ensureAttachmentBucket,
+  setAttachmentEmailFlag:   mocks.setAttachmentEmailFlag,
+  updateAttachmentMetadata: mocks.updateAttachmentMetadata,
+  archiveAttachment:        mocks.archiveAttachment,
+  getAttachmentSignedUrl:   mocks.getAttachmentSignedUrl,
+  getEmailAttachments:      mocks.getEmailAttachments,
+  ATTACHMENT_BUCKET:        "invoice-attachments",
   ALLOWED_MIME_TYPES: new Set([
     "image/jpeg", "image/png", "image/webp",
     "image/gif", "image/heic", "image/heif", "application/pdf",
@@ -375,7 +378,7 @@ describe("PATCH /api/invoice/attachments/[id]/update (toggle email flag)", () =>
     expect(res.status).toBe(401);
   });
 
-  it("returns 400 when include_in_email is missing", async () => {
+  it("returns 400 when no recognized fields are provided", async () => {
     const { PATCH } = await loadUpdateRoute();
     const req = new Request("https://app.local/api/invoice/attachments/att-uuid-1/update", {
       method: "PATCH",
@@ -385,7 +388,7 @@ describe("PATCH /api/invoice/attachments/[id]/update (toggle email flag)", () =>
     const res = await PATCH(req as never, { params: { id: "att-uuid-1" } });
     expect(res.status).toBe(400);
     const body = await res.json() as { error: string };
-    expect(body.error).toBe("include_in_email_required");
+    expect(body.error).toBe("no_fields_provided");
   });
 
   it("returns 400 when include_in_email is a string instead of boolean", async () => {
@@ -399,7 +402,7 @@ describe("PATCH /api/invoice/attachments/[id]/update (toggle email flag)", () =>
     expect(res.status).toBe(400);
   });
 
-  it("calls setAttachmentEmailFlag with correct args and returns ok", async () => {
+  it("calls updateAttachmentMetadata with correct args and returns ok", async () => {
     const { PATCH } = await loadUpdateRoute();
     const req = new Request("https://app.local/api/invoice/attachments/att-uuid-1/update", {
       method: "PATCH",
@@ -410,7 +413,23 @@ describe("PATCH /api/invoice/attachments/[id]/update (toggle email flag)", () =>
     expect(res.status).toBe(200);
     const body = await res.json() as { ok: boolean };
     expect(body.ok).toBe(true);
-    expect(mocks.setAttachmentEmailFlag).toHaveBeenCalledWith("att-uuid-1", false);
+    expect(mocks.updateAttachmentMetadata).toHaveBeenCalledWith("att-uuid-1", { include_in_email: false });
+  });
+
+  it("accepts receipt metadata fields in PATCH", async () => {
+    const { PATCH } = await loadUpdateRoute();
+    const req = new Request("https://app.local/api/invoice/attachments/att-uuid-1/update", {
+      method: "PATCH",
+      headers: { ...jeffHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ receipt_date: "2026-05-21", receipt_category: "Parking", receipt_amount: 25.20 }),
+    });
+    const res = await PATCH(req as never, { params: { id: "att-uuid-1" } });
+    expect(res.status).toBe(200);
+    expect(mocks.updateAttachmentMetadata).toHaveBeenCalledWith("att-uuid-1", {
+      receipt_date: "2026-05-21",
+      receipt_category: "Parking",
+      receipt_amount: 25.20,
+    });
   });
 });
 

@@ -1,6 +1,6 @@
 /**
  * GET    /api/invoice/attachments/[id]/update — get signed URL for viewing
- * PATCH  /api/invoice/attachments/[id]/update — toggle include_in_email
+ * PATCH  /api/invoice/attachments/[id]/update — update email flag and/or receipt metadata
  * DELETE /api/invoice/attachments/[id]/update — archive (soft-delete) attachment
  *
  * Jeff-only.
@@ -12,7 +12,7 @@ import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
 import {
   archiveAttachment,
-  setAttachmentEmailFlag,
+  updateAttachmentMetadata,
   getAttachmentSignedUrl,
 } from "@/lib/invoice-attachments";
 
@@ -57,12 +57,31 @@ export async function PATCH(
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  if (typeof body.include_in_email !== "boolean") {
-    return NextResponse.json({ error: "include_in_email_required" }, { status: 400 });
+  const updates: Parameters<typeof updateAttachmentMetadata>[1] = {};
+
+  if ("include_in_email" in body) {
+    if (typeof body.include_in_email !== "boolean") {
+      return NextResponse.json({ error: "include_in_email_must_be_boolean" }, { status: 400 });
+    }
+    updates.include_in_email = body.include_in_email;
+  }
+  if ("receipt_date" in body) {
+    updates.receipt_date = (typeof body.receipt_date === "string" && body.receipt_date) ? body.receipt_date : null;
+  }
+  if ("receipt_category" in body) {
+    updates.receipt_category = (typeof body.receipt_category === "string" && body.receipt_category) ? body.receipt_category : null;
+  }
+  if ("receipt_amount" in body) {
+    const amt = body.receipt_amount;
+    updates.receipt_amount = (typeof amt === "number" && !isNaN(amt)) ? amt : null;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "no_fields_provided" }, { status: 400 });
   }
 
   try {
-    await setAttachmentEmailFlag(params.id, body.include_in_email as boolean);
+    await updateAttachmentMetadata(params.id, updates);
     return NextResponse.json({ ok: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

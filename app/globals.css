@@ -6430,13 +6430,19 @@ html.modal-open body {
 
 .invoice-attachment-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-input, var(--bg));
   transition: opacity 0.15s;
+}
+
+.invoice-attachment-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .invoice-attachment-row--updating {
@@ -6480,6 +6486,43 @@ html.modal-open body {
 .invoice-attachment-meta {
   font-size: 0.7rem;
   color: var(--text-muted);
+}
+
+/* Receipt metadata inputs — date, category, amount for PDF appendix */
+.invoice-attachment-receipt-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-left: 28px; /* indent past the file-type icon */
+}
+
+.invoice-receipt-meta-input {
+  font-size: 0.72rem;
+  font-family: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 5px;
+  line-height: 1.4;
+  transition: border-color 0.1s;
+  min-width: 0;
+}
+
+.invoice-receipt-meta-input:hover,
+.invoice-receipt-meta-input:focus {
+  border-color: var(--border);
+  outline: none;
+}
+
+.invoice-receipt-meta-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.invoice-receipt-meta-input--amount {
+  width: 72px;
 }
 
 .invoice-attachment-email-toggle {

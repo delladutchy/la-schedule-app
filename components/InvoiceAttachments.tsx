@@ -38,6 +38,14 @@ function userFacingUploadError(detail: string | undefined, raw: string | undefin
 
 type UploadStatus = "idle" | "uploading" | "error";
 
+type MetaFields = {
+  receipt_date: string;
+  receipt_category: string;
+  receipt_amount: string;
+};
+
+const EMPTY_META: MetaFields = { receipt_date: "", receipt_category: "", receipt_amount: "" };
+
 export function InvoiceAttachments({ eventId, editorToken, expanded, onCountChange }: Props) {
   const [attachments, setAttachments] = useState<AttachmentRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,6 +53,7 @@ export function InvoiceAttachments({ eventId, editorToken, expanded, onCountChan
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>("idle");
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [attachmentMeta, setAttachmentMeta] = useState<Record<string, MetaFields>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -75,6 +84,66 @@ export function InvoiceAttachments({ eventId, editorToken, expanded, onCountChan
   useEffect(() => {
     onCountChange?.(attachments.length);
   }, [attachments.length, onCountChange]);
+
+  // Seed local meta state from loaded attachment records (preserves any in-progress edits).
+  useEffect(() => {
+    setAttachmentMeta((prev) => {
+      const next = { ...prev };
+      for (const att of attachments) {
+        if (!next[att.id]) {
+          next[att.id] = {
+            receipt_date:     att.receipt_date     ?? "",
+            receipt_category: att.receipt_category ?? "",
+            receipt_amount:   att.receipt_amount   != null ? String(att.receipt_amount) : "",
+          };
+        }
+      }
+      return next;
+    });
+  }, [attachments]);
+
+  function handleMetaChange(id: string, field: keyof MetaFields, value: string) {
+    setAttachmentMeta((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] ?? EMPTY_META), [field]: value },
+    }));
+  }
+
+  async function handleMetaBlur(att: AttachmentRecord, field: keyof MetaFields) {
+    const meta = attachmentMeta[att.id];
+    if (!meta) return;
+
+    const patch: Record<string, string | number | null> = {};
+    if (field === "receipt_date") {
+      patch.receipt_date = meta.receipt_date || null;
+    } else if (field === "receipt_category") {
+      patch.receipt_category = meta.receipt_category || null;
+    } else if (field === "receipt_amount") {
+      const num = parseFloat(meta.receipt_amount);
+      patch.receipt_amount = isNaN(num) ? null : num;
+    }
+
+    try {
+      await fetch(`/api/invoice/attachments/${att.id}/update`, {
+        method: "PATCH",
+        headers: { ...authHeaders(editorToken), "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(patch),
+      });
+      setAttachments((prev) =>
+        prev.map((a) => {
+          if (a.id !== att.id) return a;
+          if (field === "receipt_date")     return { ...a, receipt_date: meta.receipt_date || null };
+          if (field === "receipt_category") return { ...a, receipt_category: meta.receipt_category || null };
+          if (field === "receipt_amount") {
+            const num = parseFloat(meta.receipt_amount);
+            return { ...a, receipt_amount: isNaN(num) ? null : num };
+          }
+          return a;
+        }),
+      );
+    } catch { /* ignore — data still synced locally */ }
+  }
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -176,43 +245,80 @@ export function InvoiceAttachments({ eventId, editorToken, expanded, onCountChan
 
       {attachments.length > 0 ? (
         <ul className="invoice-attachments-list">
-          {attachments.map((att) => (
-            <li
-              key={att.id}
-              className={`invoice-attachment-row${updatingId === att.id ? " invoice-attachment-row--updating" : ""}`}
-            >
-              <span className="invoice-attachment-icon">{fileIcon(att.mime_type)}</span>
-              <div className="invoice-attachment-info">
-                <button
-                  type="button"
-                  className="invoice-attachment-name"
-                  onClick={() => { void handleView(att); }}
-                  title="View attachment"
-                >
-                  {att.original_filename}
-                </button>
-                <span className="invoice-attachment-meta">{fmtBytes(att.size_bytes)}</span>
-              </div>
-              <label className="invoice-attachment-email-toggle" title="Include with invoice email">
-                <input
-                  type="checkbox"
-                  checked={att.include_in_email}
-                  onChange={() => { void handleToggleEmail(att); }}
-                  disabled={updatingId === att.id}
-                />
-                <span>Email</span>
-              </label>
-              <button
-                type="button"
-                className="invoice-attachment-remove"
-                onClick={() => { void handleRemove(att); }}
-                disabled={updatingId === att.id}
-                aria-label={`Remove ${att.original_filename}`}
+          {attachments.map((att) => {
+            const meta = attachmentMeta[att.id] ?? EMPTY_META;
+            return (
+              <li
+                key={att.id}
+                className={`invoice-attachment-row${updatingId === att.id ? " invoice-attachment-row--updating" : ""}`}
               >
-                ✕
-              </button>
-            </li>
-          ))}
+                {/* Main row: icon · filename · email toggle · remove */}
+                <div className="invoice-attachment-row-main">
+                  <span className="invoice-attachment-icon">{fileIcon(att.mime_type)}</span>
+                  <div className="invoice-attachment-info">
+                    <button
+                      type="button"
+                      className="invoice-attachment-name"
+                      onClick={() => { void handleView(att); }}
+                      title="View attachment"
+                    >
+                      {att.original_filename}
+                    </button>
+                    <span className="invoice-attachment-meta">{fmtBytes(att.size_bytes)}</span>
+                  </div>
+                  <label className="invoice-attachment-email-toggle" title="Include with invoice email">
+                    <input
+                      type="checkbox"
+                      checked={att.include_in_email}
+                      onChange={() => { void handleToggleEmail(att); }}
+                      disabled={updatingId === att.id}
+                    />
+                    <span>Email</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="invoice-attachment-remove"
+                    onClick={() => { void handleRemove(att); }}
+                    disabled={updatingId === att.id}
+                    aria-label={`Remove ${att.original_filename}`}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Receipt metadata row — used for PDF appendix header */}
+                <div className="invoice-attachment-receipt-meta">
+                  <input
+                    type="date"
+                    className="invoice-receipt-meta-input"
+                    title="Receipt date (shown in PDF appendix)"
+                    value={meta.receipt_date}
+                    onChange={(e) => handleMetaChange(att.id, "receipt_date", e.target.value)}
+                    onBlur={() => { void handleMetaBlur(att, "receipt_date"); }}
+                  />
+                  <input
+                    type="text"
+                    className="invoice-receipt-meta-input"
+                    placeholder="Category"
+                    title="Receipt category (e.g. Parking, Hotel)"
+                    value={meta.receipt_category}
+                    onChange={(e) => handleMetaChange(att.id, "receipt_category", e.target.value)}
+                    onBlur={() => { void handleMetaBlur(att, "receipt_category"); }}
+                  />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="invoice-receipt-meta-input invoice-receipt-meta-input--amount"
+                    placeholder="Amount"
+                    title="Receipt amount"
+                    value={meta.receipt_amount}
+                    onChange={(e) => handleMetaChange(att.id, "receipt_amount", e.target.value)}
+                    onBlur={() => { void handleMetaBlur(att, "receipt_amount"); }}
+                  />
+                </div>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 

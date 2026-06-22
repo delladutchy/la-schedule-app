@@ -23,6 +23,8 @@ import { renderInvoicePDF } from "@/lib/invoice-pdf";
 import { upsertSheetRow } from "@/lib/google-sheets";
 import { generateSheetRow } from "@/lib/invoice-calculations";
 import { getSupabaseServerClient } from "@/lib/supabase";
+import { ATTACHMENT_BUCKET } from "@/lib/invoice-attachments";
+import type { ReceiptPageData } from "@/lib/invoice-pdf";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +72,77 @@ function storagePathFromPublicUrl(publicUrl: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+// react-pdf Image supports JPEG, PNG, WEBP, GIF; HEIC/HEIF and PDF get placeholder pages.
+const EMBEDDABLE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+/**
+ * Download included receipt attachments and build ReceiptPageData for each.
+ * Image files are fetched from private storage and encoded as base64 data URLs.
+ * PDF and unsupported image types produce placeholder pages.
+ * Non-fatal: any per-file download error logs a warning and skips that receipt.
+ */
+async function fetchReceiptPages(googleEventId: string): Promise<ReceiptPageData[]> {
+  const supabase = getSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("invoice_attachments")
+    .select("id, storage_path, mime_type, original_filename, la_job_number, receipt_date, receipt_category, receipt_amount, created_at")
+    .eq("google_event_id", googleEventId)
+    .eq("include_in_email", true)
+    .is("archived_at", null)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.warn(`[invoice/pdf] receipt fetch failed (non-fatal): ${error.message}`);
+    return [];
+  }
+
+  const pages: ReceiptPageData[] = [];
+
+  for (const rec of (data ?? []) as Array<{
+    id: string;
+    storage_path: string;
+    mime_type: string;
+    original_filename: string;
+    la_job_number: string | null;
+    receipt_date: string | null;
+    receipt_category: string | null;
+    receipt_amount: number | null;
+    created_at: string;
+  }>) {
+    const canEmbed = EMBEDDABLE_IMAGE_TYPES.has(rec.mime_type);
+    let imageDataUrl: string | null = null;
+
+    if (canEmbed) {
+      const { data: fileData, error: dlErr } = await supabase.storage
+        .from(ATTACHMENT_BUCKET)
+        .download(rec.storage_path);
+      if (dlErr || !fileData) {
+        console.warn(`[invoice/pdf] receipt download failed for ${rec.id} (non-fatal): ${dlErr?.message ?? "no data"}`);
+      } else {
+        const buf = Buffer.from(await fileData.arrayBuffer());
+        imageDataUrl = `data:${rec.mime_type};base64,${buf.toString("base64")}`;
+      }
+    }
+
+    // Use explicit receipt_date when set; fall back to the upload date.
+    const receiptDate = rec.receipt_date ?? rec.created_at.slice(0, 10);
+
+    pages.push({
+      id:               rec.id,
+      mimeType:         rec.mime_type,
+      imageDataUrl,
+      receiptDate,
+      laJobNumber:      rec.la_job_number,
+      category:         rec.receipt_category,
+      amount:           rec.receipt_amount,
+      originalFilename: rec.original_filename,
+    });
+  }
+
+  return pages;
 }
 
 // ── GET ──────────────────────────────────────────────────────────────────────
@@ -145,6 +218,10 @@ export async function POST(
 
   console.log(`[invoice/pdf] template=${PDF_TEMPLATE} invoiceNumber=${invoiceNumber} storagePath=${storagePath} logoUrl=https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png`);
 
+  // Fetch receipt pages for the PDF appendix (non-fatal: empty array on any error).
+  const receiptPages = await fetchReceiptPages(params.eventId);
+  console.log(`[invoice/pdf] receipt appendix pages: ${receiptPages.length}`);
+
   // 1. Render PDF
   let pdfBuffer: Buffer;
   try {
@@ -166,6 +243,7 @@ export async function POST(
         otherDescriptionOverride: invoiceData.invoice_other_description_override,
         noteOverride: invoiceData.invoice_note_override,
       },
+      receiptPages,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

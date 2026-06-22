@@ -30,6 +30,10 @@ export interface AttachmentRecord {
   uploaded_by: string | null;
   created_at: string;
   archived_at: string | null;
+  // Receipt metadata — used for the PDF appendix header/subtitle
+  receipt_date: string | null;     // YYYY-MM-DD
+  receipt_category: string | null; // e.g. "Parking", "Hotel"
+  receipt_amount: number | null;   // dollar amount
 }
 
 /** Ensure the storage bucket exists (idempotent). */
@@ -154,6 +158,25 @@ export async function getAttachmentSignedUrl(
   if (urlError || !urlData?.signedUrl) return null;
 
   return urlData.signedUrl;
+}
+
+/** Update metadata fields for an attachment (any subset of fields). */
+export async function updateAttachmentMetadata(
+  id: string,
+  fields: Partial<{
+    include_in_email: boolean;
+    receipt_date: string | null;
+    receipt_category: string | null;
+    receipt_amount: number | null;
+  }>,
+): Promise<void> {
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase
+    .from("invoice_attachments")
+    .update(fields)
+    .eq("id", id)
+    .is("archived_at", null);
+  if (error) throw new Error(`[invoice-attachments] update failed: ${error.message}`);
 }
 
 /**

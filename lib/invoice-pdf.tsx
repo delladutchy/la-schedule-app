@@ -28,6 +28,33 @@ import { buildMileageInvoicePresentationLines } from "./invoice-calculations";
 const LOGO_PDF_URL = "https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png";
 
 // ---------------------------------------------------------------------------
+// Receipt appendix types
+// ---------------------------------------------------------------------------
+
+/**
+ * Data for a single receipt appendix page appended after the invoice.
+ * Populated by the PDF generation route from invoice_attachments records.
+ */
+export interface ReceiptPageData {
+  /** Attachment DB id — used as React key */
+  id: string;
+  /** MIME type of the original file */
+  mimeType: string;
+  /** Base64 data URL for embeddable images (JPEG/PNG/WEBP/GIF), null for PDF/HEIC */
+  imageDataUrl: string | null;
+  /** YYYY-MM-DD from receipt_date column; falls back to created_at date in the route */
+  receiptDate: string | null;
+  /** la_job_number stored on the attachment record */
+  laJobNumber: string | null;
+  /** receipt_category from the attachment record */
+  category: string | null;
+  /** receipt_amount from the attachment record */
+  amount: number | null;
+  /** Original filename, shown on placeholder pages */
+  originalFilename: string;
+}
+
+// ---------------------------------------------------------------------------
 // Business info
 // ---------------------------------------------------------------------------
 
@@ -313,6 +340,67 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
 
+  // ── Receipt appendix pages ────────────────────────────────────────────────
+  receiptPage: {
+    fontFamily: "Helvetica",
+    fontSize: 9,
+    color: C.body,
+    paddingTop: 40,
+    paddingBottom: 40,
+    paddingHorizontal: 46,
+    backgroundColor: C.white,
+  },
+  receiptPageHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+    marginBottom: 6,
+  },
+  receiptPageDate: {
+    fontSize: 11,
+    fontFamily: "Helvetica-Bold",
+    color: C.black,
+  },
+  receiptPageLa: {
+    fontSize: 11,
+    fontFamily: "Helvetica-Bold",
+    color: C.black,
+  },
+  receiptPageSubheader: {
+    fontSize: 9,
+    color: C.muted,
+    marginBottom: 18,
+  },
+  receiptPageImageWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  receiptPageImage: {
+    objectFit: "contain",
+    width: 520,
+    height: 560,
+  },
+  receiptPagePlaceholderWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  receiptPagePlaceholder: {
+    fontSize: 11,
+    color: C.muted,
+    textAlign: "center",
+  },
+  receiptPagePlaceholderFilename: {
+    fontSize: 8.5,
+    color: C.light,
+    textAlign: "center",
+    marginTop: 6,
+  },
+
 });
 
 // ---------------------------------------------------------------------------
@@ -424,6 +512,60 @@ function resolveDescription(override: string | null | undefined, fallback = ""):
   return override?.trim() || fallback;
 }
 
+/** "May 21, 2026" — used in receipt appendix page header. */
+function fmtReceiptLongDate(isoDate: string): string {
+  const parts = isoDate.split("-").map(Number);
+  const y = parts[0] ?? 0;
+  const mo = parts[1] ?? 1;
+  const d = parts[2] ?? 1;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[mo - 1] ?? ""} ${d}, ${y}`;
+}
+
+// ---------------------------------------------------------------------------
+// Receipt appendix page component
+// ---------------------------------------------------------------------------
+
+function ReceiptPage({ receipt }: { receipt: ReceiptPageData }) {
+  const dateStr = receipt.receiptDate ? fmtReceiptLongDate(receipt.receiptDate) : "";
+  const laStr   = receipt.laJobNumber ? (formatLaJobNumber(receipt.laJobNumber) ?? "") : "";
+  const subParts = [
+    receipt.category?.trim() || null,
+    receipt.amount != null ? fmt(receipt.amount) : null,
+  ].filter((v): v is string => v != null);
+  const subheader = subParts.join(" · ");
+  const isPdf = receipt.mimeType === "application/pdf";
+
+  return (
+    <Page size="LETTER" style={styles.receiptPage}>
+      {/* Header row: date left, LA# right */}
+      <View style={styles.receiptPageHeader}>
+        <Text style={styles.receiptPageDate}>{dateStr}</Text>
+        {laStr ? <Text style={styles.receiptPageLa}>{laStr}</Text> : <Text> </Text>}
+      </View>
+
+      {/* Optional sub-line: category · $amount */}
+      {subheader ? (
+        <Text style={styles.receiptPageSubheader}>{subheader}</Text>
+      ) : null}
+
+      {/* Receipt image or placeholder */}
+      {receipt.imageDataUrl ? (
+        <View style={styles.receiptPageImageWrap}>
+          <Image src={receipt.imageDataUrl} style={styles.receiptPageImage} />
+        </View>
+      ) : (
+        <View style={styles.receiptPagePlaceholderWrap}>
+          <Text style={styles.receiptPagePlaceholder}>
+            {isPdf ? "Receipt PDF attached separately" : "Receipt attached separately"}
+          </Text>
+          <Text style={styles.receiptPagePlaceholderFilename}>{receipt.originalFilename}</Text>
+        </View>
+      )}
+    </Page>
+  );
+}
+
 interface PdfLineItem {
   service: string;
   description: string;
@@ -457,9 +599,10 @@ interface InvoicePDFProps {
   issuedDate:    string; // YYYY-MM-DD
   logoSrc:       string | null;
   overrides?:    InvoicePDFOverrides;
+  receiptPages?: ReceiptPageData[];
 }
 
-function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, overrides }: InvoicePDFProps) {
+function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, overrides, receiptPages }: InvoicePDFProps) {
   const m       = packet.mileage;
   const hasOT   = packet.overtimeTotal > 0;
   const hasPD   = packet.perDiemTotal > 0;
@@ -681,6 +824,12 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
         </View>
 
       </Page>
+
+      {/* ── Receipt appendix pages (one per included receipt) ── */}
+      {(receiptPages ?? []).map((receipt) => (
+        <ReceiptPage key={receipt.id} receipt={receipt} />
+      ))}
+
     </Document>
   );
 }
@@ -695,6 +844,7 @@ export interface RenderInvoicePDFOptions {
   gigSummary:    string;
   issuedDate:    string;
   overrides?:    InvoicePDFOverrides;
+  receiptPages?: ReceiptPageData[];
 }
 
 export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<Buffer> {
@@ -723,6 +873,7 @@ export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<B
     issuedDate,
     logoSrc,
     overrides:     opts.overrides,
+    receiptPages:  opts.receiptPages,
   });
   return renderToBuffer(element as React.ReactElement);
 }
