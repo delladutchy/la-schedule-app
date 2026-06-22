@@ -11,6 +11,7 @@ import {
   type RecipientPreset,
 } from "@/lib/invoice-recipients";
 import {
+  buildMileageInvoicePresentationLines,
   calculateInvoicePacket,
   calculateWorkdayMileage,
   getDefaultDeductionForMode,
@@ -2223,6 +2224,7 @@ export function InvoiceSection({
   const mileageRate = invoiceData?.mileage_rate ?? 0.52;
   const isVerifying = verifyState.status === "verifying";
   const showMileage = m != null && m.totalMiles > 0;
+  const mileagePreviewLines = buildMileageInvoicePresentationLines(m);
 
   const syncedLabel = syncState.syncedAt
     ? (() => {
@@ -3036,20 +3038,18 @@ export function InvoiceSection({
                 <span className="invoice-preview-amount">{fmtCurrency(p.perDiemTotal)}</span>
               </div>
             ) : null}
-            {showMileage && m ? (
+            {showMileage ? (
               <>
-                <div className="invoice-preview-row">
-                  <span>Mileage</span>
-                  <span className="invoice-preview-qty">{m.reimbursedMiles} mi × ${mileageRate}</span>
-                  <span className="invoice-preview-amount">{fmtCurrency(m.mileageAmount)}</span>
-                </div>
-                {m.deductionMiles > 0 ? (
-                  <div className="invoice-preview-row invoice-preview-row--adj">
-                    <span>Mileage Adjustment</span>
-                    <span className="invoice-preview-qty">–{m.deductionMiles} mi × ${mileageRate}</span>
-                    <span className="invoice-preview-amount">{fmtCurrency(m.mileageAdjustmentAmount)}</span>
+                {mileagePreviewLines.map((line) => (
+                  <div
+                    className={`invoice-preview-row${line.amount < 0 ? " invoice-preview-row--adj" : ""}`}
+                    key={line.service}
+                  >
+                    <InvoicePreviewLabel label={line.service} description={line.description} />
+                    <span className="invoice-preview-qty">{line.qty} mi × {fmtCurrency(line.rate)}</span>
+                    <span className="invoice-preview-amount">{fmtCurrency(line.amount)}</span>
                   </div>
-                ) : null}
+                ))}
               </>
             ) : null}
             {p.bagFees > 0 ? (

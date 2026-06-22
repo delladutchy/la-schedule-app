@@ -29,6 +29,14 @@ const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 /** IRS standard business mileage deduction rate for 2026. */
 export const IRS_MILEAGE_RATE_2026 = 0.725;
 
+export interface MileageInvoicePresentationLine {
+  service: "Mileage" | "Mileage Adjustment";
+  description: string;
+  qty: number;
+  rate: number;
+  amount: number;
+}
+
 /** Convert a human time string to minutes-since-midnight. Returns null on parse failure. */
 export function parseTimeToMinutes(raw: string): number | null {
   const s = raw.trim();
@@ -177,17 +185,45 @@ export function calculateMileage(
 ): MileageCalc {
   const reimbursedMiles = Math.max(0, totalMiles - deductionMiles);
   const unreimbursedMiles = totalMiles - reimbursedMiles;
+  const grossMileageAmount = round2(totalMiles * rate);
   const mileageAmount = round2(reimbursedMiles * rate);
-  const mileageAdjustmentAmount = totalMiles > 0 ? round2(-deductionMiles * rate) : 0;
+  const mileageAdjustmentAmount = unreimbursedMiles > 0 ? round2(-unreimbursedMiles * rate) : 0;
   return {
     totalMiles,
     deductionMiles,
     reimbursedMiles,
     unreimbursedMiles,
+    grossMileageAmount,
     mileageAmount,
     mileageAdjustmentAmount,
     mileageRate: rate,
   };
+}
+
+export function buildMileageInvoicePresentationLines(
+  mileage: MileageCalc | null,
+): MileageInvoicePresentationLine[] {
+  if (!mileage || mileage.totalMiles <= 0) return [];
+
+  const lines: MileageInvoicePresentationLine[] = [{
+    service: "Mileage",
+    description: `${mileage.totalMiles} miles × ${mileage.mileageRate.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 })}`,
+    qty: mileage.totalMiles,
+    rate: mileage.mileageRate,
+    amount: mileage.grossMileageAmount,
+  }];
+
+  if (mileage.unreimbursedMiles > 0 && mileage.mileageAdjustmentAmount < 0) {
+    lines.push({
+      service: "Mileage Adjustment",
+      description: `Per company policy: ${mileage.unreimbursedMiles} miles excluded`,
+      qty: -mileage.unreimbursedMiles,
+      rate: mileage.mileageRate,
+      amount: mileage.mileageAdjustmentAmount,
+    });
+  }
+
+  return lines;
 }
 
 /**
@@ -286,8 +322,9 @@ export function calculateInvoicePacket(data: InvoiceData): InvoicePacket {
       deductionMiles: totalDeduction,
       reimbursedMiles,
       unreimbursedMiles,
+      grossMileageAmount: round2(totalMiles * rate),
       mileageAmount: round2(reimbursedMiles * rate),
-      mileageAdjustmentAmount: totalDeduction > 0 ? round2(-totalDeduction * rate) : 0,
+      mileageAdjustmentAmount: unreimbursedMiles > 0 ? round2(-unreimbursedMiles * rate) : 0,
       mileageRate: rate,
     };
   } else if (data.total_miles != null && data.total_miles > 0) {

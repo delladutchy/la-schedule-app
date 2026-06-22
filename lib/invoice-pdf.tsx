@@ -21,6 +21,7 @@ import {
   renderToBuffer,
 } from "@react-pdf/renderer";
 import type { InvoicePacket } from "./invoice-types";
+import { buildMileageInvoicePresentationLines } from "./invoice-calculations";
 
 // Logo hosted on Netlify CDN. Fetched at PDF render time and embedded as base64.
 // Falls back to text branding when unavailable (file not yet deployed, network error, etc.).
@@ -461,7 +462,6 @@ interface InvoicePDFProps {
 function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, overrides }: InvoicePDFProps) {
   const m       = packet.mileage;
   const hasOT   = packet.overtimeTotal > 0;
-  const hasMile = m !== null && m.totalMiles > 0;
   const hasPD   = packet.perDiemTotal > 0;
   const workDateStr = fmtWorkDates(packet.workdays);
   const workedDateTimes = fmtWorkedDateTimes(packet.workdays);
@@ -530,13 +530,13 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
       amount: packet.perDiemTotal,
     });
   }
-  if (hasMile) {
+  for (const mileageLine of buildMileageInvoicePresentationLines(m)) {
     lineItems.push({
-      service: "Mileage",
-      description: "Billable mileage after deduction",
-      qty: `${m!.reimbursedMiles}`,
-      rate: fmt(m!.mileageRate),
-      amount: m!.mileageAmount,
+      service: mileageLine.service,
+      description: mileageLine.description,
+      qty: String(mileageLine.qty),
+      rate: fmt(mileageLine.rate),
+      amount: mileageLine.amount,
     });
   }
   for (const exp of expenses) {

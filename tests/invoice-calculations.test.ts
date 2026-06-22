@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildMileageInvoicePresentationLines,
   buildInvoiceWorkDates,
   parseTimeToMinutes,
   calculateHours,
@@ -79,6 +80,7 @@ describe("calculateMileage", () => {
     const result = calculateMileage(420, 60, 0.52);
     expect(result.reimbursedMiles).toBe(360);
     expect(result.unreimbursedMiles).toBe(60);
+    expect(result.grossMileageAmount).toBeCloseTo(218.4);
     expect(result.mileageAmount).toBeCloseTo(187.2);
     expect(result.mileageAdjustmentAmount).toBeCloseTo(-31.2);
   });
@@ -87,8 +89,9 @@ describe("calculateMileage", () => {
     const result = calculateMileage(50, 60, 0.52);
     expect(result.reimbursedMiles).toBe(0);
     expect(result.unreimbursedMiles).toBe(50);
+    expect(result.grossMileageAmount).toBe(26);
     expect(result.mileageAmount).toBe(0);
-    expect(result.mileageAdjustmentAmount).toBeCloseTo(-31.2);
+    expect(result.mileageAdjustmentAmount).toBeCloseTo(-26);
   });
 
   it("exactly 60 miles → 0 reimbursed", () => {
@@ -102,7 +105,58 @@ describe("calculateMileage", () => {
     const result = calculateMileage(120, 60, 0.52);
     expect(result.totalMiles).toBe(120);
     expect(result.reimbursedMiles).toBe(60);
+    expect(result.grossMileageAmount).toBeCloseTo(62.4);
     expect(result.mileageAmount).toBeCloseTo(31.2);
+  });
+});
+
+describe("buildMileageInvoicePresentationLines", () => {
+  it("mileage with no deduction shows one Mileage line", () => {
+    const mileage = calculateMileage(300, 0, 0.52);
+    const lines = buildMileageInvoicePresentationLines(mileage);
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      service: "Mileage",
+      description: "300 miles × $0.52",
+      qty: 300,
+      rate: 0.52,
+      amount: 156,
+    });
+  });
+
+  it("mileage with deduction shows Mileage plus negative Mileage Adjustment", () => {
+    const mileage = calculateMileage(300, 60, 0.52);
+    const lines = buildMileageInvoicePresentationLines(mileage);
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({
+      service: "Mileage",
+      description: "300 miles × $0.52",
+      qty: 300,
+      amount: 156,
+    });
+    expect(lines[1]).toMatchObject({
+      service: "Mileage Adjustment",
+      description: "Per company policy: 60 miles excluded",
+      qty: -60,
+      amount: -31.2,
+    });
+    expect(round2(lines.reduce((sum, line) => sum + line.amount, 0))).toBe(mileage.mileageAmount);
+    expect(mileage.mileageAmount).toBeCloseTo(240 * 0.52);
+  });
+
+  it("existing test-gig shape shows gross 300 miles and negative 120-mile adjustment", () => {
+    const mileage = calculateMileage(300, 120, 0.52);
+    const lines = buildMileageInvoicePresentationLines(mileage);
+
+    expect(mileage.reimbursedMiles).toBe(180);
+    expect(mileage.unreimbursedMiles).toBe(120);
+    expect(lines.map((line) => line.service)).toEqual(["Mileage", "Mileage Adjustment"]);
+    expect(lines[0]?.amount).toBe(156);
+    expect(lines[1]?.amount).toBe(-62.4);
+    expect(round2(lines.reduce((sum, line) => sum + line.amount, 0))).toBe(93.6);
+    expect(mileage.mileageAmount).toBe(93.6);
   });
 });
 
@@ -327,6 +381,24 @@ describe("calculateInvoicePacket — per-day mileage aggregation", () => {
     expect(p.mileage!.mileageAmount).toBeCloseTo(187.2);
   });
 
+  it("invoice total uses net mileage after the adjustment", () => {
+    const data = makeInvoiceData({
+      day_rate: 0,
+      per_diem_rate: 0,
+      total_miles: 300,
+      mileage_deduction_miles: 60,
+      workday_entries: [{ date: "2026-06-01", startTime: "", endTime: "" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const mileageLines = buildMileageInvoicePresentationLines(p.mileage);
+
+    expect(p.mileage!.grossMileageAmount).toBe(156);
+    expect(p.mileage!.mileageAdjustmentAmount).toBe(-31.2);
+    expect(p.mileage!.mileageAmount).toBe(124.8);
+    expect(p.estimatedTotal).toBe(124.8);
+    expect(round2(mileageLines.reduce((sum, line) => sum + line.amount, 0))).toBe(p.estimatedTotal);
+  });
+
   it("per-day mileage takes precedence over legacy total_miles", () => {
     const data = makeInvoiceData({
       total_miles: 999,
@@ -376,6 +448,23 @@ describe("generateSheetRow — mileage columns", () => {
     expect(row.laPaidMiles).toBe(60);
     expect(row.unreimbursedMiles).toBe(60);
     expect(row.mileagePaid).toBeCloseTo(31.2);
+  });
+
+  it("keeps Sheet mileage fields as tax/payment tracking values for 300 total / 240 paid / 60 excluded", () => {
+    const data = makeInvoiceData({
+      total_miles: 300,
+      mileage_deduction_miles: 60,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "Mileage Test");
+
+    expect(row.totalBusinessMiles).toBe(300);
+    expect(row.laPaidMiles).toBe(240);
+    expect(row.unreimbursedMiles).toBe(60);
+    expect(row.mileagePaid).toBe(124.8);
+    expect(row.mileage).toBe(124.8);
+    expect(row.unreimbursedMileageValue).toBe(43.5);
   });
 
   it("all mileage sheet columns are 0 when no mileage set", () => {
