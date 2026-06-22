@@ -33,6 +33,7 @@ import {
   isVerifyBlockingEmail,
   VERIFY_FAIL_MESSAGE,
 } from "@/lib/invoice-pipeline";
+import { InvoiceAttachments } from "@/components/InvoiceAttachments";
 
 // ---------------------------------------------------------------------------
 // Time dropdown helpers
@@ -1052,6 +1053,7 @@ export function InvoiceSection({
   const [workDaysExpanded, setWorkDaysExpanded] = useState(false);
   const [expensesExpanded, setExpensesExpanded] = useState(false);
   const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [attachmentsExpanded, setAttachmentsExpanded] = useState(false);
   const [overrides, setOverrides] = useState<OverrideFields>({ ...EMPTY_OVERRIDE_FIELDS });
   const [editInvoiceExpanded, setEditInvoiceExpanded] = useState(false);
   const [adjustmentOverridesExpanded, setAdjustmentOverridesExpanded] = useState(false);
@@ -3120,6 +3122,26 @@ export function InvoiceSection({
           ) : null}
         </div>
       ) : null}
+
+      {/* ── Attachments / Receipts ──────────────────────────── */}
+      <div className="invoice-block">
+        <button
+          type="button"
+          className="invoice-collapsible-toggle"
+          onClick={() => setAttachmentsExpanded((prev) => !prev)}
+          aria-expanded={attachmentsExpanded}
+        >
+          <span className="invoice-block-label">Attachments / Receipts</span>
+          <span className="invoice-collapsible-meta">
+            <span className="invoice-collapsible-chevron">{attachmentsExpanded ? "▲" : "▼"}</span>
+          </span>
+        </button>
+        {attachmentsExpanded ? (
+          <div className="invoice-collapsible-content">
+            <InvoiceAttachments eventId={eventId} editorToken={editorToken} />
+          </div>
+        ) : null}
+      </div>
 
       {/* ── Advanced Recovery Tools ── */}
       {p && hasPdf ? (

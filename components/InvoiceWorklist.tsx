@@ -108,33 +108,20 @@ function entryMatchesSearch(entry: WorklistEntry, term: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Today
-// ---------------------------------------------------------------------------
-
-function getTodayIso(): string {
-  const now = new Date();
-  return [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-  ].join("-");
-}
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export function InvoiceWorklist() {
-  const [entries,   setEntries]   = useState<WorklistEntry[]>([]);
-  const [loading,   setLoading]   = useState(true);
-  const [fetchErr,  setFetchErr]  = useState<string | null>(null);
-  const [filter,    setFilter]    = useState<WorklistFilter>("all");
-  const [search,    setSearch]    = useState("");
-  const [selected,  setSelected]  = useState<WorklistEntry | null>(null);
-  const [months,    setMonths]    = useState(18);
+  const [entries,     setEntries]     = useState<WorklistEntry[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [fetchErr,    setFetchErr]    = useState<string | null>(null);
+  const [filter,      setFilter]      = useState<WorklistFilter>("all");
+  const [search,      setSearch]      = useState("");
+  const [selected,    setSelected]    = useState<WorklistEntry | null>(null);
+  const [months,      setMonths]      = useState(18);
+  const [listVisible, setListVisible] = useState(true);
   const panelRef = useRef<HTMLDivElement>(null);
   const token    = typeof window !== "undefined" ? getEditorToken() : null;
-  const today    = getTodayIso();
 
   const load = useCallback(async (m: number) => {
     setLoading(true);
@@ -186,17 +173,23 @@ export function InvoiceWorklist() {
     paid:  entries.filter((e) => e.invoiceStatus === "paid").length,
   };
 
-  const canClockIn = selected ? selected.workDates.includes(today) : false;
-
   return (
-    <div className="worklist-shell">
+    <div className={`worklist-shell${!listVisible ? " worklist-shell--list-hidden" : ""}`}>
       {/* ── Sidebar: list + controls ────────────────────────── */}
+      {listVisible ? (
       <aside className={`worklist-sidebar${selected ? " worklist-sidebar--narrow" : ""}`}>
         <header className="worklist-header">
           <h1 className="worklist-title">Invoice Worklist</h1>
           <p className="worklist-subtitle">
             All LA gig jobs from Google Calendar · Jeff only
           </p>
+          <button
+            type="button"
+            className="worklist-list-toggle"
+            onClick={() => setListVisible(false)}
+          >
+            Hide List
+          </button>
         </header>
 
         {/* Filter tabs */}
@@ -290,6 +283,17 @@ export function InvoiceWorklist() {
           {!loading && !fetchErr ? `${visible.length} of ${entries.length} job${entries.length !== 1 ? "s" : ""}` : ""}
         </p>
       </aside>
+      ) : !selected ? (
+        <div className="worklist-show-list-bar">
+          <button
+            type="button"
+            className="worklist-list-toggle worklist-list-toggle--show"
+            onClick={() => setListVisible(true)}
+          >
+            ☰ Jobs
+          </button>
+        </div>
+      ) : null}
 
       {/* ── Detail panel: InvoiceSection ────────────────────── */}
       {selected ? (
@@ -297,6 +301,16 @@ export function InvoiceWorklist() {
           <div className="worklist-panel-header">
             <div className="worklist-panel-title-row">
               <h2 className="worklist-panel-title">{selected.gigName}</h2>
+              {!listVisible ? (
+                <button
+                  type="button"
+                  className="worklist-list-toggle worklist-list-toggle--show"
+                  onClick={() => setListVisible(true)}
+                  style={{ marginRight: "auto", marginLeft: 0 }}
+                >
+                  ☰ Jobs
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="worklist-panel-close"
@@ -310,11 +324,6 @@ export function InvoiceWorklist() {
               {fmtDateRange(selected.startDate, selected.endDate)}
               {selected.laJobNumber ? ` · ${selected.laJobNumber}` : ""}
             </p>
-            {!canClockIn ? (
-              <p className="worklist-panel-past-note">
-                Past job — clock-in is not available. Edit invoice, generate PDF, sync Sheet, or send from below.
-              </p>
-            ) : null}
           </div>
 
           {/*

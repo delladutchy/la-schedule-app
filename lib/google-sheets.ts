@@ -133,6 +133,132 @@ const INTERNAL_RESERVED_COLUMN_START_INDEX = 30; // AE, zero-indexed
 const INTERNAL_RESERVED_COLUMN_END_INDEX = 33;   // AG + 1, zero-indexed exclusive
 
 // ---------------------------------------------------------------------------
+// Column formatting helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Build Google Sheets RepeatCellRequest objects to apply data-row formatting.
+ *
+ * Column mapping (0-indexed):
+ *   Currency   : E(4), F(5), G(6), H(7), I(8), J(9), K(10), L(11), M(12), N(13), O(14), S(18), X(23), Y(24), AH(33)
+ *   Plain num  : P(15), Q(16), R(17)  — miles, not currency
+ *   Date       : B(1), U(20), W(22), AA(26)
+ *   Clear val  : all app-owned columns (0–33) to remove stale validation warnings
+ */
+function buildColumnFormatRequests(
+  numericTabId: number,
+): object[] {
+  const DATA_START_ROW = 1; // 0-indexed; row 0 is the header
+  const DATA_END_ROW   = 2000;
+
+  const currencyIndices = [4,5,6,7,8,9,10,11,12,13,14,18,23,24,33];
+  const milesIndices    = [15,16,17];
+  const dateIndices     = [1,20,22,26];
+
+  const requests: object[] = [];
+
+  // Currency format
+  for (const col of currencyIndices) {
+    requests.push({
+      repeatCell: {
+        range: {
+          sheetId: numericTabId,
+          startRowIndex: DATA_START_ROW,
+          endRowIndex: DATA_END_ROW,
+          startColumnIndex: col,
+          endColumnIndex: col + 1,
+        },
+        cell: {
+          userEnteredFormat: {
+            numberFormat: { type: "CURRENCY", pattern: "#,##0.00" },
+          },
+        },
+        fields: "userEnteredFormat.numberFormat",
+      },
+    });
+  }
+
+  // Plain number format for miles columns
+  for (const col of milesIndices) {
+    requests.push({
+      repeatCell: {
+        range: {
+          sheetId: numericTabId,
+          startRowIndex: DATA_START_ROW,
+          endRowIndex: DATA_END_ROW,
+          startColumnIndex: col,
+          endColumnIndex: col + 1,
+        },
+        cell: {
+          userEnteredFormat: {
+            numberFormat: { type: "NUMBER", pattern: "#,##0.##" },
+          },
+        },
+        fields: "userEnteredFormat.numberFormat",
+      },
+    });
+  }
+
+  // Date format
+  for (const col of dateIndices) {
+    requests.push({
+      repeatCell: {
+        range: {
+          sheetId: numericTabId,
+          startRowIndex: DATA_START_ROW,
+          endRowIndex: DATA_END_ROW,
+          startColumnIndex: col,
+          endColumnIndex: col + 1,
+        },
+        cell: {
+          userEnteredFormat: {
+            numberFormat: { type: "DATE", pattern: "M/d/yyyy" },
+          },
+        },
+        fields: "userEnteredFormat.numberFormat",
+      },
+    });
+  }
+
+  // Clear data validation on all app-owned columns (prevents stale Sheets warnings)
+  requests.push({
+    repeatCell: {
+      range: {
+        sheetId: numericTabId,
+        startRowIndex: DATA_START_ROW,
+        endRowIndex: DATA_END_ROW,
+        startColumnIndex: 0,
+        endColumnIndex: 34, // A–AH
+      },
+      cell: { dataValidation: null },
+      fields: "dataValidation",
+    },
+  });
+
+  return requests;
+}
+
+/**
+ * Apply column formats to data rows. Non-fatal — logs errors but does not throw.
+ */
+async function applyColumnFormats(
+  sheets: ReturnType<typeof google.sheets>,
+  sheetId: string,
+  numericTabId: number,
+): Promise<void> {
+  const requests = buildColumnFormatRequests(numericTabId);
+  try {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: { requests },
+    });
+  } catch (err) {
+    // Format failures are non-fatal — data is already written
+    console.error("[google-sheets] applyColumnFormats failed (non-fatal):", err instanceof Error ? err.message : err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Row-matching helpers
 // ---------------------------------------------------------------------------
 
@@ -627,6 +753,9 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
   }
 
   const hasUnrelatedClutter = unrelatedClutterCount > 0;
+
+  // ── Apply column formatting (non-fatal) ──────────────────────────────────
+  await applyColumnFormats(sheets, sheetId, numericTabId);
 
   // ── Build user-facing message ─────────────────────────────────────────────
   let userMessage: string;
