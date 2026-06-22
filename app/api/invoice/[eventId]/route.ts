@@ -55,8 +55,6 @@ function syncSheetBackground(eventId: string, data: InvoiceData, packet: Invoice
           sentTo: data.invoice_sent_to,
           sentSubject: data.invoice_sent_subject,
           jobNameOverride: data.invoice_job_name_override,
-          dayRateDescriptionOverride: data.invoice_day_rate_description_override,
-          noteOverride: data.invoice_note_override,
         },
       );
       await upsertSheetRow(sheetRow);

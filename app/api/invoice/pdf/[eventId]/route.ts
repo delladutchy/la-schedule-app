@@ -211,8 +211,6 @@ export async function POST(
       sentTo: invoiceData.invoice_sent_to,
       sentSubject: invoiceData.invoice_sent_subject,
       jobNameOverride: invoiceData.invoice_job_name_override,
-      dayRateDescriptionOverride: invoiceData.invoice_day_rate_description_override,
-      noteOverride: invoiceData.invoice_note_override,
     });
     await upsertSheetRow(sheetRow);
     await markSheetSynced(params.eventId, new Date().toISOString());

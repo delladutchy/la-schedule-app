@@ -37,9 +37,12 @@ const QUOTED_SHEET_NAME = `'${SHEET_NAME}'`;
 //   V  PDF LINK   W  SENT DATE   X  AMOUNT PAID   Y  REMAINING BALANCE
 //   Z  PAYMENT METHOD   AA  PAYMENT RECEIVED DATE   AB  PAYMENT BATCH REF
 //
-// Optional extended columns (AC–AG, indices 28–32):
-//   AC  SENT TO   AD  SENT SUBJECT   AE  JOB NAME OVERRIDE
-//   AF  DAY RATE DESC OVERRIDE   AG  INVOICE NOTE OVERRIDE
+// Optional visible email metadata columns (AC–AD, indices 28–29):
+//   AC  SENT TO   AD  SENT SUBJECT
+//
+// Hidden internal spacer columns (AE–AG, indices 30–32):
+//   Reserved to preserve the existing AH tax column position. Invoice text
+//   overrides live in Supabase invoice_data, not in the visible tax/payment Sheet.
 //
 // Tax deduction column (AH, index 33 — optional, added after existing columns):
 //   AH  UNREIMBURSED MILEAGE VALUE (unreimbursed miles × IRS standard rate)
@@ -73,12 +76,13 @@ export const COLUMN_ORDER: Array<keyof SheetRow> = [
   "paymentMethod",          // Z
   "paymentReceivedDate",    // AA
   "paymentBatchRef",        // AB
-  // Optional extended columns (AC–AG).
+  // Optional visible email metadata columns (AC–AD).
   "sentTo",                        // AC
   "sentSubject",                   // AD
-  "jobNameOverride",               // AE
-  "dayRateDescriptionOverride",    // AF
-  "noteOverride",                  // AG
+  // Hidden internal spacer columns (AE–AG). Keep blank; do not store overrides here.
+  "internalReservedAe",            // AE
+  "internalReservedAf",            // AF
+  "internalReservedAg",            // AG
   // Tax deduction column (AH) — unreimbursed miles × IRS standard mileage rate.
   "unreimbursedMileageValue",      // AH
 ];
@@ -114,9 +118,9 @@ export const SHEET_HEADERS: string[] = [
   "PAYMENT BATCH REF",           // AB
   "SENT TO",                     // AC
   "SENT SUBJECT",                // AD
-  "JOB NAME OVERRIDE",           // AE
-  "DAY RATE DESC OVERRIDE",      // AF
-  "INVOICE NOTE OVERRIDE",       // AG
+  "INTERNAL RESERVED",           // AE — hidden
+  "INTERNAL RESERVED",           // AF — hidden
+  "INTERNAL RESERVED",           // AG — hidden
   "UNREIMBURSED MILEAGE VALUE",  // AH
 ];
 
@@ -125,6 +129,8 @@ if (SHEET_HEADERS.length !== COLUMN_ORDER.length) {
 }
 
 export const MAIN_SHEET_HEADER_RANGE = `${QUOTED_SHEET_NAME}!A1:AH1`;
+const INTERNAL_RESERVED_COLUMN_START_INDEX = 30; // AE, zero-indexed
+const INTERNAL_RESERVED_COLUMN_END_INDEX = 33;   // AG + 1, zero-indexed exclusive
 
 // ---------------------------------------------------------------------------
 // Row-matching helpers
@@ -258,6 +264,34 @@ async function ensureMainSheetHeaders(
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [SHEET_HEADERS] },
   });
+
+  try {
+    const spreadsheetRes = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
+    const tabMeta = spreadsheetRes.data.sheets?.find((s) => s.properties?.title === SHEET_NAME);
+    const numericTabId = tabMeta?.properties?.sheetId;
+    if (numericTabId == null) return;
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: {
+        requests: [{
+          updateDimensionProperties: {
+            range: {
+              sheetId: numericTabId,
+              dimension: "COLUMNS",
+              startIndex: INTERNAL_RESERVED_COLUMN_START_INDEX,
+              endIndex: INTERNAL_RESERVED_COLUMN_END_INDEX,
+            },
+            properties: { hiddenByUser: true },
+            fields: "hiddenByUser",
+          },
+        }],
+      },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[google-sheets] could not hide internal reserved columns AE:AG: ${msg}`);
+  }
 }
 
 // ---------------------------------------------------------------------------

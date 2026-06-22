@@ -20,6 +20,7 @@ import type {
 } from "./invoice-types";
 import { sanitizeInvoiceLineItemOverrides } from "./invoice-line-item-overrides";
 import type { InvoiceLineItemKey } from "./invoice-line-item-overrides";
+import { parseLaJobSummary } from "./gigs";
 
 const TIME_12_RE = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i;
 const TIME_24_RE = /^(\d{1,2}):(\d{2})$/;
@@ -353,8 +354,6 @@ export interface GenerateSheetRowExtras {
   sentTo?: string | null;
   sentSubject?: string | null;
   jobNameOverride?: string | null;
-  dayRateDescriptionOverride?: string | null;
-  noteOverride?: string | null;
 }
 
 export function generateSheetRow(
@@ -370,11 +369,12 @@ export function generateSheetRow(
 ): SheetRow {
   const m = packet.mileage;
   const pm = paymentMeta ?? {};
+  const finalGigEvent = resolveSheetGigEvent(gigSummary, extras?.jobNameOverride);
   return {
     invoiceNumber: invoiceNumber ?? packet.invoiceNumber ?? packet.laNumber ?? "",
     date: new Date().toISOString().slice(0, 10),
     laJobNumber: packet.laNumber ?? "",
-    gigEvent: gigSummary,
+    gigEvent: finalGigEvent,
     totalPay: packet.estimatedTotal,
     labor: packet.dayRateTotal,
     ot: packet.overtimeTotal,
@@ -400,13 +400,22 @@ export function generateSheetRow(
     paymentMethod:        pm.paymentMethod            ?? "",
     paymentReceivedDate:  pm.paymentReceivedDate      ?? "",
     paymentBatchRef:      pm.paymentBatchRef          ?? "",
-    // Optional extended columns (AC–AG) — write when extras provided
-    sentTo:                     extras?.sentTo                     ?? "",
-    sentSubject:                extras?.sentSubject                ?? "",
-    jobNameOverride:            extras?.jobNameOverride            ?? "",
-    dayRateDescriptionOverride: extras?.dayRateDescriptionOverride ?? "",
-    noteOverride:               extras?.noteOverride               ?? "",
+    // Optional visible email metadata columns (AC–AD)
+    sentTo:      extras?.sentTo      ?? "",
+    sentSubject: extras?.sentSubject ?? "",
+    // Hidden internal spacer columns (AE–AG). Overrides stay in Supabase invoice_data.
+    internalReservedAe: "",
+    internalReservedAf: "",
+    internalReservedAg: "",
     // Tax column AH: unreimbursed miles × IRS rate = Schedule C deduction value
     unreimbursedMileageValue: Math.round((m?.unreimbursedMiles ?? 0) * IRS_MILEAGE_RATE_2026 * 100) / 100,
   };
+}
+
+export function resolveSheetGigEvent(gigSummary: string, jobNameOverride?: string | null): string {
+  const override = jobNameOverride?.trim();
+  if (override) return override;
+
+  const parsed = parseLaJobSummary(gigSummary);
+  return parsed.jobName.trim() || gigSummary.trim();
 }

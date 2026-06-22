@@ -211,13 +211,13 @@ export interface SheetRow {
   paymentMethod: string;
   paymentReceivedDate: string;
   paymentBatchRef: string;
-  // Optional extended columns (AC–AG). Add matching headers in the Sheet to label them.
-  // Omit or leave undefined to skip writing these columns.
+  // Optional visible email metadata columns (AC–AD).
   sentTo?: string;
   sentSubject?: string;
-  jobNameOverride?: string;
-  dayRateDescriptionOverride?: string;
-  noteOverride?: string;
+  // Hidden internal spacer columns (AE–AG). Kept blank to preserve AH's tax-column position.
+  internalReservedAe?: string;
+  internalReservedAf?: string;
+  internalReservedAg?: string;
   // Tax column (AH) — unreimbursed business miles × IRS standard mileage rate.
   // Helps with Schedule C deduction without mixing miles (col R) and dollars.
   unreimbursedMileageValue?: number;

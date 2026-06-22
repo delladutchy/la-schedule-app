@@ -344,6 +344,26 @@ describe("calculateInvoicePacket — per-day mileage aggregation", () => {
 // ---------------------------------------------------------------------------
 
 describe("generateSheetRow — mileage columns", () => {
+  it("writes job name override to D GIG", () => {
+    const data = makeInvoiceData({
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "LA#5555 — test job", "1001", undefined, {
+      jobNameOverride: "Wilm U Grad",
+    });
+    expect(row.gigEvent).toBe("Wilm U Grad");
+  });
+
+  it("falls back to clean calendar job name in D GIG when no override exists", () => {
+    const data = makeInvoiceData({
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "LA#5555 — test job", "1001");
+    expect(row.gigEvent).toBe("test job");
+  });
+
   it("exports totalBusinessMiles, laPaidMiles, unreimbursedMiles, mileagePaid correctly", () => {
     const data = makeInvoiceData({
       workday_entries: [

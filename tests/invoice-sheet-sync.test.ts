@@ -14,6 +14,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { COLUMN_ORDER, MAIN_SHEET_HEADER_RANGE, SHEET_HEADERS } from "@/lib/google-sheets";
+import { resolveSheetGigEvent } from "@/lib/invoice-calculations";
 
 // ---------------------------------------------------------------------------
 // Mirrors of generateSheetRow pure logic (no Sheets API calls)
@@ -43,8 +44,6 @@ interface FakeExtras {
   sentTo?: string | null;
   sentSubject?: string | null;
   jobNameOverride?: string | null;
-  dayRateDescriptionOverride?: string | null;
-  noteOverride?: string | null;
 }
 
 function calcRemainingBalance(estimatedTotal: number, amountPaid: number): number {
@@ -56,7 +55,7 @@ function buildSheetRow(packet: FakePacket, gigSummary: string, invoiceNumber?: s
   return {
     invoiceNumber: invoiceNumber ?? packet.invoiceNumber ?? packet.laNumber ?? "",
     laJobNumber: packet.laNumber ?? "",
-    gigEvent: gigSummary,
+    gigEvent: resolveSheetGigEvent(gigSummary, extras?.jobNameOverride),
     totalPay: packet.estimatedTotal,
     labor: packet.dayRateTotal,
     ot: packet.overtimeTotal,
@@ -76,9 +75,9 @@ function buildSheetRow(packet: FakePacket, gigSummary: string, invoiceNumber?: s
     // Optional extras
     sentTo: extras?.sentTo ?? "",
     sentSubject: extras?.sentSubject ?? "",
-    jobNameOverride: extras?.jobNameOverride ?? "",
-    dayRateDescriptionOverride: extras?.dayRateDescriptionOverride ?? "",
-    noteOverride: extras?.noteOverride ?? "",
+    internalReservedAe: "",
+    internalReservedAf: "",
+    internalReservedAg: "",
   };
 }
 
@@ -215,11 +214,11 @@ describe("Invoice status in sheet row", () => {
 });
 
 // ---------------------------------------------------------------------------
-// D. Optional extras (sentTo, sentSubject, overrides)
+// D. Visible email metadata and hidden internal spacer columns
 // ---------------------------------------------------------------------------
 
-describe("Optional extended columns (AC–AG)", () => {
-  it("missing extras: sentTo, sentSubject, overrides default to empty string (does not throw)", () => {
+describe("Visible Sheet metadata and hidden internal spacer columns", () => {
+  it("missing extras: sentTo and sentSubject default to empty string (does not throw)", () => {
     const row = buildSheetRow({
       estimatedTotal: 1000, amountPaid: 0,
       invoiceStatus: "sent", invoiceSentAt: null, invoicePdfUrl: null,
@@ -230,18 +229,15 @@ describe("Optional extended columns (AC–AG)", () => {
     // Must not throw; optional fields fall back to ""
     expect(row.sentTo).toBe("");
     expect(row.sentSubject).toBe("");
-    expect(row.jobNameOverride).toBe("");
-    expect(row.dayRateDescriptionOverride).toBe("");
-    expect(row.noteOverride).toBe("");
+    expect(row.internalReservedAe).toBe("");
+    expect(row.internalReservedAf).toBe("");
+    expect(row.internalReservedAg).toBe("");
   });
 
-  it("provided extras: all five optional fields are written to row", () => {
+  it("provided extras: sentTo and sentSubject are written to visible Sheet columns", () => {
     const extras: FakeExtras = {
       sentTo: "client@example.com, cc@example.com",
       sentSubject: "Jeff Ulsh - Invoice LA #5555",
-      jobNameOverride: "Wilm U Grad",
-      dayRateDescriptionOverride: "6/18 - 7:30am-11:30pm",
-      noteOverride: "Thanks!",
     };
     const row = buildSheetRow({
       estimatedTotal: 1000, amountPaid: 0,
@@ -252,9 +248,33 @@ describe("Optional extended columns (AC–AG)", () => {
     }, "test job", "1001", extras);
     expect(row.sentTo).toBe("client@example.com, cc@example.com");
     expect(row.sentSubject).toBe("Jeff Ulsh - Invoice LA #5555");
-    expect(row.jobNameOverride).toBe("Wilm U Grad");
-    expect(row.dayRateDescriptionOverride).toBe("6/18 - 7:30am-11:30pm");
-    expect(row.noteOverride).toBe("Thanks!");
+    expect(row.internalReservedAe).toBe("");
+    expect(row.internalReservedAf).toBe("");
+    expect(row.internalReservedAg).toBe("");
+  });
+
+  it("overridden job name writes the final customer-facing name to D GIG", () => {
+    const row = buildSheetRow({
+      estimatedTotal: 1000, amountPaid: 0,
+      invoiceStatus: "sent", invoiceSentAt: null, invoicePdfUrl: null,
+      invoiceNumber: "1001", laNumber: "LA#5555",
+      dayRateTotal: 1000, overtimeTotal: 0, perDiemTotal: 0,
+      parking: 0, hotel: 0, tolls: 0, bagFees: 0, uber: 0, otherExpenses: 0, mileage: null,
+    }, "LA#5555 — test job", "1001", { jobNameOverride: "Wilm U Grad" });
+
+    expect(row.gigEvent).toBe("Wilm U Grad");
+  });
+
+  it("blank job override falls back to the clean calendar job name in D GIG", () => {
+    const row = buildSheetRow({
+      estimatedTotal: 1000, amountPaid: 0,
+      invoiceStatus: "sent", invoiceSentAt: null, invoicePdfUrl: null,
+      invoiceNumber: "1001", laNumber: "LA#5555",
+      dayRateTotal: 1000, overtimeTotal: 0, perDiemTotal: 0,
+      parking: 0, hotel: 0, tolls: 0, bagFees: 0, uber: 0, otherExpenses: 0, mileage: null,
+    }, "LA#5555 — test job", "1001", { jobNameOverride: "   " });
+
+    expect(row.gigEvent).toBe("test job");
   });
 
   it("null extras values default to empty string (not null or undefined)", () => {
@@ -268,7 +288,7 @@ describe("Optional extended columns (AC–AG)", () => {
     }, "test job", "1003", extras);
     expect(row.sentTo).toBe("");
     expect(row.sentSubject).toBe("");
-    expect(row.jobNameOverride).toBe("");
+    expect(row.internalReservedAe).toBe("");
   });
 });
 
@@ -1874,9 +1894,9 @@ const COLUMN_ORDER_MIRROR = [
   "paymentBatchRef",       // AB (27)
   "sentTo",                // AC (28)
   "sentSubject",           // AD (29)
-  "jobNameOverride",       // AE (30)
-  "dayRateDescriptionOverride", // AF (31)
-  "noteOverride",          // AG (32)
+  "internalReservedAe",    // AE (30) — hidden internal spacer
+  "internalReservedAf",    // AF (31) — hidden internal spacer
+  "internalReservedAg",    // AG (32) — hidden internal spacer
   "unreimbursedMileageValue",  // AH (33) — unreimbursedMiles × IRS rate
 ] as const;
 
@@ -1933,11 +1953,17 @@ describe("Google Sheet headers for app-written columns", () => {
       "PAYMENT BATCH REF",
       "SENT TO",
       "SENT SUBJECT",
-      "JOB NAME OVERRIDE",
-      "DAY RATE DESC OVERRIDE",
-      "INVOICE NOTE OVERRIDE",
+      "INTERNAL RESERVED",
+      "INTERNAL RESERVED",
+      "INTERNAL RESERVED",
       "UNREIMBURSED MILEAGE VALUE",
     ]);
+  });
+
+  it("does not expose duplicate override columns in the app-written headers", () => {
+    expect(SHEET_HEADERS).not.toContain("JOB NAME OVERRIDE");
+    expect(SHEET_HEADERS).not.toContain("DAY RATE DESC OVERRIDE");
+    expect(SHEET_HEADERS).not.toContain("INVOICE NOTE OVERRIDE");
   });
 
   it("invoice PDF URL still writes to column V", () => {
@@ -1973,9 +1999,9 @@ describe("Google Sheet headers for app-written columns", () => {
       paymentBatchRef: "",
       sentTo: "",
       sentSubject: "",
-      jobNameOverride: "",
-      dayRateDescriptionOverride: "",
-      noteOverride: "",
+      internalReservedAe: "",
+      internalReservedAf: "",
+      internalReservedAg: "",
       unreimbursedMileageValue: 0,
     };
     const values = COLUMN_ORDER.map((key) => sampleRow[key as keyof typeof sampleRow] ?? "");
