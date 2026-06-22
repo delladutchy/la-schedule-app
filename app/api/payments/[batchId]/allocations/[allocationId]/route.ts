@@ -55,10 +55,10 @@ async function syncPaymentSheet(googleEventId: string): Promise<void> {
       getLatestPaymentMeta(googleEventId),
     ]);
 
-    if (!invoiceData?.la_number) return;
+    if (!invoiceData?.la_number && !invoiceData?.invoice_number) return;
 
     await updateSheetPaymentColumns({
-      laJobNumber:         invoiceData.la_number,
+      laJobNumber:         invoiceData.la_number ?? "",
       invoiceNumber:       invoiceData.invoice_number ?? "",
       status:              invoiceData.invoice_status,
       paidDate:            invoiceData.paid_date ?? "",

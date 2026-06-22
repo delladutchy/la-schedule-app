@@ -130,8 +130,10 @@ if (SHEET_HEADERS.length !== COLUMN_ORDER.length) {
 
 export const MAIN_SHEET_HEADER_RANGE = `${QUOTED_SHEET_NAME}!A1:AH1`;
 export const MAIN_SHEET_LAST_COLUMN = "AH";
-const INTERNAL_RESERVED_COLUMN_START_INDEX = 30; // AE, zero-indexed
-const INTERNAL_RESERVED_COLUMN_END_INDEX = 33;   // AG + 1, zero-indexed exclusive
+export const MAIN_SHEET_HIDDEN_COLUMN_RANGES = [
+  { label: "AB:AD", startIndex: 27, endIndex: 30 },
+  { label: "AE:AG", startIndex: 30, endIndex: 33 },
+] as const;
 
 // ---------------------------------------------------------------------------
 // Column formatting helpers
@@ -142,7 +144,7 @@ const INTERNAL_RESERVED_COLUMN_END_INDEX = 33;   // AG + 1, zero-indexed exclusi
  *
  * Column mapping (0-indexed):
  *   Currency   : E(4), F(5), G(6), H(7), I(8), J(9), K(10), L(11), M(12), N(13), O(14), S(18), X(23), Y(24), AH(33)
- *   Plain num  : P(15), Q(16), R(17)  — miles, not currency
+ *   Whole num  : P(15), Q(16), R(17)  — miles, not currency
  *   Date       : B(1), U(20), W(22), AA(26)
  *   Clear val  : all app-owned columns (0–33) to remove stale validation warnings
  */
@@ -179,7 +181,7 @@ function buildColumnFormatRequests(
     });
   }
 
-  // Plain number format for miles columns
+  // Whole number format for miles columns
   for (const col of milesIndices) {
     requests.push({
       repeatCell: {
@@ -192,7 +194,7 @@ function buildColumnFormatRequests(
         },
         cell: {
           userEnteredFormat: {
-            numberFormat: { type: "NUMBER", pattern: "#,##0.##" },
+            numberFormat: { type: "NUMBER", pattern: "#,##0" },
           },
         },
         fields: "userEnteredFormat.numberFormat",
@@ -270,6 +272,22 @@ async function applyColumnFormats(
  */
 export function normalizeLA(la: string): string {
   return la.replace(/^LA\s*#?\s*/i, "").trim();
+}
+
+export function extractNormalizedLAFromText(value: string): string {
+  const match = /\bLA\s*#?\s*(\d{3,})\b/i.exec(value.trim());
+  return match?.[1] ? match[1] : "";
+}
+
+function existingRowLaKey(cellA: string, cellC: string): string {
+  return normalizeLA(cellC) || extractNormalizedLAFromText(cellA);
+}
+
+function sanitizeSheetDateValue(value: string | number): string | number {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (/^https?:\/\//i.test(trimmed)) return "";
+  return value;
 }
 
 /**
@@ -377,6 +395,7 @@ export function sheetRowToValues(row: SheetRow): (string | number)[] {
   return COLUMN_ORDER.map((key) => {
     const val = row[key];
     if (val == null) return "";
+    if (key === "paidDate" || key === "paymentReceivedDate") return sanitizeSheetDateValue(val);
     return val;
   });
 }
@@ -405,23 +424,23 @@ async function ensureMainSheetHeaders(
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId: sheetId,
       requestBody: {
-        requests: [{
+        requests: MAIN_SHEET_HIDDEN_COLUMN_RANGES.map((range) => ({
           updateDimensionProperties: {
             range: {
               sheetId: numericTabId,
               dimension: "COLUMNS",
-              startIndex: INTERNAL_RESERVED_COLUMN_START_INDEX,
-              endIndex: INTERNAL_RESERVED_COLUMN_END_INDEX,
+              startIndex: range.startIndex,
+              endIndex: range.endIndex,
             },
             properties: { hiddenByUser: true },
             fields: "hiddenByUser",
           },
-        }],
+        })),
       },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[google-sheets] could not hide internal reserved columns AE:AG: ${msg}`);
+    console.warn(`[google-sheets] could not hide low-priority Sheet columns: ${msg}`);
   }
 }
 
@@ -469,7 +488,7 @@ function scoreKeepRow(
   incomingTotal: number | string | null | undefined,
 ): number {
   let score = 0;
-  if (incomingLa && normalizeLA(cellC) === incomingLa) score += 200;
+  if (incomingLa && existingRowLaKey(cellA, cellC) === incomingLa) score += 200;
   if (incomingInv && cellA.trim() === incomingInv) score += 100;
   const dateMs = parseSheetDateValue(cellB);
   if (dateMs !== null) score += dateMs / 1e13;  // small recency boost
@@ -581,7 +600,8 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
 
     if (isTotalsRow(cellA)) continue; // TOTALS sentinel — never classify
 
-    const laMatch  = !!(incomingLa  && normalizeLA(cellC) === incomingLa);
+    const existingLa = existingRowLaKey(cellA, cellC);
+    const laMatch  = !!(incomingLa && existingLa === incomingLa);
     const invMatch = !!(incomingInv && cellA && cellA === incomingInv);
     const isThisKey = laMatch || invMatch;
 
@@ -838,7 +858,7 @@ export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Pro
     const cellC = String(rows[i]?.[2]  ?? "").trim();
     const cellT = String(rows[i]?.[19] ?? "").trim(); // T: STATUS
     if (cellT === VOID_STATUS) continue; // skip voided rows — they are neutralised
-    if (normLa && normalizeLA(cellC) === normLa) {
+    if (normLa && existingRowLaKey(cellA, cellC) === normLa) {
       matchRowIndex = i + 1;
       break;
     }
@@ -854,15 +874,16 @@ export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Pro
 
   // Columns T:AB = COLUMN_ORDER indices 19–27 (status → paymentBatchRef).
   // We also refresh column A (invoiceNumber) via a separate range.
+  const paymentMethod = update.paymentMethod.trim() || (update.amountPaid > 0 ? "Direct Deposit" : "");
   const tAbValues = [
     update.status,               // T  col 20
-    update.paidDate,             // U  col 21
+    sanitizeSheetDateValue(update.paidDate), // U  col 21
     update.invoicePdfUrl,        // V  col 22
     update.invoiceSentDate,      // W  col 23
     update.amountPaid,           // X  col 24
     update.remainingBalance,     // Y  col 25
-    update.paymentMethod,        // Z  col 26
-    update.paymentReceivedDate,  // AA col 27
+    paymentMethod,               // Z  col 26
+    sanitizeSheetDateValue(update.paymentReceivedDate), // AA col 27
     update.paymentBatchRef,      // AB col 28
   ];
 

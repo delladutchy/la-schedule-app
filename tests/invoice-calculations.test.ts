@@ -436,6 +436,26 @@ describe("generateSheetRow — mileage columns", () => {
     expect(row.gigEvent).toBe("test job");
   });
 
+  it("populates LA JOB # from the gig summary when stored la_number is missing", () => {
+    const data = makeInvoiceData({
+      la_number: null,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "LA#5555 — test job", "1002");
+    expect(row.laJobNumber).toBe("LA#5555");
+  });
+
+  it("populates LA JOB # from a combined invoice number when needed", () => {
+    const data = makeInvoiceData({
+      la_number: null,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "test job", "1002 - LA #5555");
+    expect(row.laJobNumber).toBe("LA#5555");
+  });
+
   it("passes paid_date through to the Sheet PAID DATE field only when present", () => {
     const unpaidPacket = calculateInvoicePacket(makeInvoiceData({
       invoice_status: "draft_created",
@@ -463,6 +483,25 @@ describe("generateSheetRow — mileage columns", () => {
     expect(paidRow.invoicePdfUrl).toBe("https://example.com/invoices/paid.pdf");
   });
 
+  it("defaults payment method to Direct Deposit only when payment is recorded", () => {
+    const unpaidPacket = calculateInvoicePacket(makeInvoiceData({
+      invoice_status: "draft_created",
+      amount_paid: 0,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    }));
+    const unpaidRow = generateSheetRow(unpaidPacket, "LA#5555 — test job", "1001");
+    expect(unpaidRow.paymentMethod).toBe("");
+
+    const paidPacket = calculateInvoicePacket(makeInvoiceData({
+      invoice_status: "paid",
+      amount_paid: 800,
+      paid_date: "2026-06-22",
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    }));
+    const paidRow = generateSheetRow(paidPacket, "LA#5555 — test job", "1001");
+    expect(paidRow.paymentMethod).toBe("Direct Deposit");
+  });
+
   it("exports totalBusinessMiles, laPaidMiles, unreimbursedMiles, mileagePaid correctly", () => {
     const data = makeInvoiceData({
       workday_entries: [
@@ -475,6 +514,25 @@ describe("generateSheetRow — mileage columns", () => {
     expect(row.laPaidMiles).toBe(60);
     expect(row.unreimbursedMiles).toBe(60);
     expect(row.mileagePaid).toBeCloseTo(31.2);
+  });
+
+  it("exports mile columns as whole numbers while keeping money columns decimal-capable", () => {
+    const data = makeInvoiceData({
+      total_miles: 186.2,
+      mileage_deduction_miles: 60.2,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "Mileage Test");
+
+    expect(row.totalBusinessMiles).toBe(186);
+    expect(row.laPaidMiles).toBe(126);
+    expect(row.unreimbursedMiles).toBe(60);
+    expect(Number.isInteger(row.totalBusinessMiles)).toBe(true);
+    expect(Number.isInteger(row.laPaidMiles)).toBe(true);
+    expect(Number.isInteger(row.unreimbursedMiles)).toBe(true);
+    expect(row.mileagePaid).toBeCloseTo(65.52);
+    expect(row.unreimbursedMileageValue).toBeCloseTo(43.65);
   });
 
   it("keeps Sheet mileage fields as tax/payment tracking values for 300 total / 240 paid / 60 excluded", () => {

@@ -16,9 +16,12 @@ import { describe, it, expect } from "vitest";
 import {
   COLUMN_ORDER,
   MAIN_SHEET_HEADER_RANGE,
+  MAIN_SHEET_HIDDEN_COLUMN_RANGES,
   MAIN_SHEET_LAST_COLUMN,
   SHEET_HEADERS,
+  extractNormalizedLAFromText,
   mainSheetDataRowRange,
+  normalizeLA as normalizeSheetLA,
   sheetRowToValues,
 } from "@/lib/google-sheets";
 import { resolveSheetGigEvent } from "@/lib/invoice-calculations";
@@ -577,9 +580,11 @@ function normalizeLA(la: string): string {
 describe("normalizeLA — strips prefix for dedup matching", () => {
   it("bare number passes through unchanged", () => {
     expect(normalizeLA("5555")).toBe("5555");
+    expect(normalizeSheetLA("5555")).toBe("5555");
   });
   it("LA#5555 → 5555", () => {
     expect(normalizeLA("LA#5555")).toBe("5555");
+    expect(normalizeSheetLA("LA#5555")).toBe("5555");
   });
   it("LA #5555 (space before hash) → 5555", () => {
     expect(normalizeLA("LA #5555")).toBe("5555");
@@ -597,6 +602,12 @@ describe("normalizeLA — strips prefix for dedup matching", () => {
   });
   it("empty string stays empty", () => {
     expect(normalizeLA("")).toBe("");
+  });
+
+  it("extracts LA# from combined invoice-number text", () => {
+    expect(extractNormalizedLAFromText("1002 - LA #5555")).toBe("5555");
+    expect(extractNormalizedLAFromText("Invoice 1002 / LA#5555")).toBe("5555");
+    expect(extractNormalizedLAFromText("1002")).toBe("");
   });
 });
 
@@ -720,8 +731,9 @@ describe("Duplicate detection — same invoice synced twice finds existing row",
     for (let i = 0; i < existingRows.length; i++) {
       const cellA = existingRows[i]!.rowA.trim();
       const cellC = existingRows[i]!.rowC.trim();
+      const cellLa = normalizeLA(cellC) || extractNormalizedLAFromText(cellA);
       const sheetsRow = i + 2; // +1 for header, +1 for 1-indexed
-      if (incomingLa && normalizeLA(cellC) === normalizeLA(incomingLa)) return sheetsRow;
+      if (incomingLa && cellLa === normalizeLA(incomingLa)) return sheetsRow;
       if (incomingInv && cellA && cellA === incomingInv) return sheetsRow;
     }
     return -1; // not found
@@ -746,6 +758,11 @@ describe("Duplicate detection — same invoice synced twice finds existing row",
     // Row was written before la_number was set — col C is empty, col A has invoice#
     const existing = [{ rowA: "1001", rowC: "" }];
     expect(findMatch(existing, "", "1001")).toBe(2);
+  });
+
+  it("combined INV # with blank LA JOB # still matches by parsed LA number and repairs same row", () => {
+    const existing = [{ rowA: "1002 - LA #5555", rowC: "" }];
+    expect(findMatch(existing, "LA#5555", "1002")).toBe(2);
   });
 
   it("completely new invoice (no LA# or inv# in sheet) → returns -1 (insert)", () => {
@@ -1112,7 +1129,8 @@ function scoreKeepRow(
   incomingTotal: number | string | null | undefined,
 ): number {
   let score = 0;
-  if (incomingLa && normalizeLA(cellC) === incomingLa) score += 200;
+  const cellLa = normalizeLA(cellC) || extractNormalizedLAFromText(cellA);
+  if (incomingLa && cellLa === incomingLa) score += 200;
   if (incomingInv && cellA.trim() === incomingInv) score += 100;
   const dateMs = parseSheetDateValue(cellB);
   if (dateMs !== null) score += dateMs / 1e13;
@@ -1139,6 +1157,12 @@ describe("scoreKeepRow — keep-row selection priority", () => {
     const bothMatch = scoreKeepRow("1001", "2026-01-15", "5555", "2500", 3, la, inv, null);
     const laOnly    = scoreKeepRow("9999", "2026-01-15", "5555", "2500", 3, la, inv, null);
     expect(bothMatch).toBeGreaterThan(laOnly);
+  });
+
+  it("LA# embedded in INV # scores as a match for repairing old combined rows", () => {
+    const combinedInvScore = scoreKeepRow("1002 - LA #5555", "2026-01-15", "", "2500", 3, la, "1002", null);
+    const unrelatedScore = scoreKeepRow("1002", "2026-01-15", "", "2500", 3, la, "1002", null);
+    expect(combinedInvScore).toBeGreaterThan(unrelatedScore);
   });
 
   it("total match adds +50 when within $0.01", () => {
@@ -1997,6 +2021,16 @@ describe("Google Sheet headers for app-written columns", () => {
     expect(SHEET_HEADERS).not.toContain("INVOICE NOTE OVERRIDE");
   });
 
+  it("hides low-priority tracking columns without removing their app-written data", () => {
+    expect(MAIN_SHEET_HIDDEN_COLUMN_RANGES).toEqual([
+      { label: "AB:AD", startIndex: 27, endIndex: 30 },
+      { label: "AE:AG", startIndex: 30, endIndex: 33 },
+    ]);
+    expect(SHEET_HEADERS[27]).toBe("PAYMENT BATCH REF");
+    expect(SHEET_HEADERS[28]).toBe("SENT TO");
+    expect(SHEET_HEADERS[29]).toBe("SENT SUBJECT");
+  });
+
   it("invoice PDF URL still writes to column V", () => {
     const freshUrl = "https://example.com/invoices/Invoice-LA5555.pdf";
     const sampleRow: SheetRow = {
@@ -2041,6 +2075,102 @@ describe("Google Sheet headers for app-written columns", () => {
     expect(values[21]).toBe(freshUrl);
     expect(values[20]).toBe("");
     expect(SHEET_HEADERS[21]).toBe("PDF LINK");
+  });
+
+  it("URL-like dirty paidDate values are never serialized into PAID DATE", () => {
+    const freshUrl = "https://example.com/invoices/Invoice-LA5555.pdf";
+    const sampleRow: SheetRow = {
+      invoiceNumber: "1001",
+      date: "2026-06-18",
+      laJobNumber: "LA#5555",
+      gigEvent: "test job",
+      totalPay: 1000,
+      labor: 1000,
+      ot: 0,
+      perDiem: 0,
+      mileage: 0,
+      parking: 0,
+      hotel: 0,
+      tolls: 0,
+      bagFees: 0,
+      uber: 0,
+      otherExpenses: 0,
+      totalBusinessMiles: 186,
+      laPaidMiles: 126,
+      unreimbursedMiles: 60,
+      mileagePaid: 65.52,
+      status: "draft_created",
+      paidDate: freshUrl,
+      invoicePdfUrl: freshUrl,
+      invoiceSentDate: "",
+      amountPaid: 0,
+      remainingBalance: 1000,
+      paymentMethod: "",
+      paymentReceivedDate: "",
+      paymentBatchRef: "",
+      sentTo: "",
+      sentSubject: "",
+      internalReservedAe: "",
+      internalReservedAf: "",
+      internalReservedAg: "",
+      unreimbursedMileageValue: 43.5,
+    };
+
+    const values = sheetRowToValues(sampleRow);
+
+    expect(values[20]).toBe("");
+    expect(values[21]).toBe(freshUrl);
+    expect(String(values[20])).not.toContain("http");
+  });
+
+  it("whole-mile columns serialize as integers while money columns keep decimal values", () => {
+    const sampleRow: SheetRow = {
+      invoiceNumber: "1001",
+      date: "2026-06-18",
+      laJobNumber: "LA#5555",
+      gigEvent: "test job",
+      totalPay: 1065.52,
+      labor: 1000,
+      ot: 0,
+      perDiem: 0,
+      mileage: 65.52,
+      parking: 0,
+      hotel: 0,
+      tolls: 0,
+      bagFees: 0,
+      uber: 0,
+      otherExpenses: 0,
+      totalBusinessMiles: 186,
+      laPaidMiles: 126,
+      unreimbursedMiles: 60,
+      mileagePaid: 65.52,
+      status: "sheet_synced",
+      paidDate: "",
+      invoicePdfUrl: "https://example.com/invoices/Invoice-LA5555.pdf",
+      invoiceSentDate: "",
+      amountPaid: 0,
+      remainingBalance: 1065.52,
+      paymentMethod: "",
+      paymentReceivedDate: "",
+      paymentBatchRef: "",
+      sentTo: "",
+      sentSubject: "",
+      internalReservedAe: "",
+      internalReservedAf: "",
+      internalReservedAg: "",
+      unreimbursedMileageValue: 43.5,
+    };
+
+    const values = sheetRowToValues(sampleRow);
+
+    expect(values[15]).toBe(186);
+    expect(values[16]).toBe(126);
+    expect(values[17]).toBe(60);
+    expect(Number.isInteger(values[15] as number)).toBe(true);
+    expect(Number.isInteger(values[16] as number)).toBe(true);
+    expect(Number.isInteger(values[17] as number)).toBe(true);
+    expect(values[18]).toBe(65.52);
+    expect(values[33]).toBe(43.5);
   });
 
   it("draft_created writes status to T, keeps PAID DATE blank, and writes PDF URL to V", () => {

@@ -394,6 +394,42 @@ export interface GenerateSheetRowExtras {
   jobNameOverride?: string | null;
 }
 
+function resolveSheetLaJobNumber(
+  storedLaNumber: string | null | undefined,
+  gigSummary: string,
+  invoiceNumber?: string,
+  packetInvoiceNumber?: string | null,
+): string {
+  const normalizeStoredLa = (value: string | null | undefined): string | null => {
+    const trimmed = value?.trim();
+    if (!trimmed) return null;
+    const explicit = /\bLA\s*#?\s*(\d{3,})\b/i.exec(trimmed);
+    if (explicit?.[1]) return `LA#${explicit[1]}`;
+    if (/^\d{3,}$/.test(trimmed)) return `LA#${trimmed}`;
+    return null;
+  };
+
+  const extractExplicitLa = (value: string | null | undefined): string | null => {
+    const trimmed = value?.trim();
+    if (!trimmed) return null;
+    const parsed = parseLaJobSummary(trimmed).jobNumber;
+    if (parsed) return parsed;
+    const explicit = /\bLA\s*#?\s*(\d{3,})\b/i.exec(trimmed);
+    return explicit?.[1] ? `LA#${explicit[1]}` : null;
+  };
+
+  return normalizeStoredLa(storedLaNumber)
+    ?? extractExplicitLa(gigSummary)
+    ?? extractExplicitLa(invoiceNumber)
+    ?? extractExplicitLa(packetInvoiceNumber)
+    ?? "";
+}
+
+function wholeMilesForSheet(value: number | null | undefined): number {
+  const numeric = Number(value ?? 0);
+  return Number.isFinite(numeric) ? Math.round(numeric) : 0;
+}
+
 export function generateSheetRow(
   packet: InvoicePacket,
   gigSummary: string,
@@ -408,10 +444,13 @@ export function generateSheetRow(
   const m = packet.mileage;
   const pm = paymentMeta ?? {};
   const finalGigEvent = resolveSheetGigEvent(gigSummary, extras?.jobNameOverride);
+  const amountPaid = packet.amountPaid ?? 0;
+  const hasPaymentRecorded = amountPaid > 0 || packet.invoiceStatus === "paid" || packet.invoiceStatus === "partially_paid";
+  const paymentMethod = pm.paymentMethod?.trim() || (hasPaymentRecorded ? "Direct Deposit" : "");
   return {
     invoiceNumber: invoiceNumber ?? packet.invoiceNumber ?? packet.laNumber ?? "",
     date: new Date().toISOString().slice(0, 10),
-    laJobNumber: packet.laNumber ?? "",
+    laJobNumber: resolveSheetLaJobNumber(packet.laNumber, gigSummary, invoiceNumber, packet.invoiceNumber),
     gigEvent: finalGigEvent,
     totalPay: packet.estimatedTotal,
     labor: packet.dayRateTotal,
@@ -424,18 +463,18 @@ export function generateSheetRow(
     bagFees: packet.bagFees,
     uber: packet.uber,
     otherExpenses: packet.otherExpenses,
-    totalBusinessMiles: m?.totalMiles ?? 0,
-    laPaidMiles: m?.reimbursedMiles ?? 0,
-    unreimbursedMiles: m?.unreimbursedMiles ?? 0,
+    totalBusinessMiles: wholeMilesForSheet(m?.totalMiles),
+    laPaidMiles: wholeMilesForSheet(m?.reimbursedMiles),
+    unreimbursedMiles: wholeMilesForSheet(m?.unreimbursedMiles),
     mileagePaid: m?.mileageAmount ?? 0,
     status: packet.invoiceStatus,
     paidDate: packet.paidDate ?? "",
     // Native invoicing columns (appended to preserve existing positions)
     invoicePdfUrl:        packet.invoicePdfUrl       ?? "",
     invoiceSentDate:      packet.invoiceSentAt        ? packet.invoiceSentAt.slice(0, 10)  : "",
-    amountPaid:           packet.amountPaid           ?? 0,
-    remainingBalance:     Math.max(0, Number((packet.estimatedTotal - (packet.amountPaid ?? 0)).toFixed(2))),
-    paymentMethod:        pm.paymentMethod            ?? "",
+    amountPaid,
+    remainingBalance:     Math.max(0, Number((packet.estimatedTotal - amountPaid).toFixed(2))),
+    paymentMethod,
     paymentReceivedDate:  pm.paymentReceivedDate      ?? "",
     paymentBatchRef:      pm.paymentBatchRef          ?? "",
     // Optional visible email metadata columns (AC–AD)
