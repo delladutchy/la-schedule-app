@@ -40,6 +40,20 @@ export interface MatchOptions {
   maxSuggestions?:     number;
 }
 
+export interface OldestFirstAllocationLine {
+  invoice: InvoiceForMatching;
+  balance: number;
+  allocatedAmount: number;
+  resultingStatus: "paid" | "partially_paid";
+}
+
+export interface OldestFirstPaymentPlan {
+  paymentAmount: number;
+  allocatedTotal: number;
+  unappliedAmount: number;
+  lines: OldestFirstAllocationLine[];
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -81,6 +95,78 @@ export function sortByMatchPriority(invoices: InvoiceForMatching[]): InvoiceForM
     if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
     return (a.invoice_number ?? "").localeCompare(b.invoice_number ?? "");
   });
+}
+
+/**
+ * Sort open invoices for actual payment application:
+ *   1. Oldest sent date first when available
+ *   2. Lowest invoice number first
+ *   3. Stable event id as a final tiebreaker
+ *
+ * Unlike smart matching, this does not prioritize "sent" over partially paid;
+ * a partially-paid older invoice should still be settled before newer invoices.
+ */
+export function sortByOldestOpenInvoice(invoices: InvoiceForMatching[]): InvoiceForMatching[] {
+  return [...invoices].sort((a, b) => {
+    const aDate = a.invoice_sent_at ?? "9999-99-99";
+    const bDate = b.invoice_sent_at ?? "9999-99-99";
+    if (aDate < bDate) return -1;
+    if (aDate > bDate) return 1;
+
+    const aNum = Number(a.invoice_number ?? "NaN");
+    const bNum = Number(b.invoice_number ?? "NaN");
+    if (!isNaN(aNum) && !isNaN(bNum) && aNum !== bNum) return aNum - bNum;
+    const invCompare = (a.invoice_number ?? "").localeCompare(b.invoice_number ?? "");
+    if (invCompare !== 0) return invCompare;
+
+    return a.google_event_id.localeCompare(b.google_event_id);
+  });
+}
+
+/**
+ * Build a deterministic payment allocation preview: oldest open invoice first,
+ * allocating up to each invoice's current remaining balance.
+ *
+ * Pure function only. It does not write payment records, mark invoices paid, or
+ * sync Sheets. The caller must explicitly save the returned allocations.
+ */
+export function buildOldestFirstPaymentPlan(
+  paymentAmount: number,
+  invoices: InvoiceForMatching[],
+): OldestFirstPaymentPlan {
+  const amount = r2(Math.max(0, paymentAmount));
+  let remaining = amount;
+  const lines: OldestFirstAllocationLine[] = [];
+
+  const eligible = sortByOldestOpenInvoice(
+    invoices.filter(
+      (inv) =>
+        !["paid", "void"].includes(inv.invoice_status) &&
+        getInvoiceRemainingBalance(inv) > 0,
+    ),
+  );
+
+  for (const invoice of eligible) {
+    if (remaining <= 0.005) break;
+    const balance = r2(getInvoiceRemainingBalance(invoice));
+    const allocatedAmount = r2(Math.min(balance, remaining));
+    if (allocatedAmount <= 0) continue;
+    lines.push({
+      invoice,
+      balance,
+      allocatedAmount,
+      resultingStatus: allocatedAmount + 0.005 >= balance ? "paid" : "partially_paid",
+    });
+    remaining = r2(remaining - allocatedAmount);
+  }
+
+  const allocatedTotal = r2(lines.reduce((sum, line) => sum + line.allocatedAmount, 0));
+  return {
+    paymentAmount: amount,
+    allocatedTotal,
+    unappliedAmount: r2(Math.max(0, amount - allocatedTotal)),
+    lines,
+  };
 }
 
 // ---------------------------------------------------------------------------
