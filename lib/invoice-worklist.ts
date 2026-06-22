@@ -3,7 +3,7 @@ import { google } from "googleapis";
 import { DateTime } from "luxon";
 import { getConfig } from "./config";
 import { buildCalendarAuth } from "./google";
-import { parseLaJobSummary, enumerateIsoDatesInRange } from "./gigs";
+import { parseLaJobSummary, enumerateIsoDatesInRange, parseGigDescription } from "./gigs";
 import { getSupabaseServerClient } from "./supabase";
 import type { InvoiceStatus } from "./invoice-types";
 
@@ -35,6 +35,13 @@ export interface WorklistEntry {
    * Used to seed the default End time in invoice workday rows.
    */
   endTimeUtc: string | null;
+  /**
+   * callTime value from the app-owned JSON block in the event description,
+   * e.g. "6:00 AM". Only populated for all-day/date-only events where
+   * startTimeUtc is null. Used as the Start-time default for invoice workday
+   * rows when no dateTime is available from the calendar event itself.
+   */
+  callTimeDefault: string | null;
   /** Invoice status from Supabase (defaults to "none" if no invoice_data row exists) */
   invoiceStatus: InvoiceStatus;
   invoiceNumber: string | null;
@@ -76,6 +83,8 @@ export async function listWorklistEntries(opts: {
     startTimeUtc: string | null;
     /** UTC ISO string of the event end time; null for all-day events. */
     endTimeUtc: string | null;
+    /** callTime from app-owned description block; only set for all-day events. */
+    callTimeDefault: string | null;
   }> = [];
 
   const TIME_CHUNK_MS = 60 * 24 * 60 * 60 * 1000; // 60-day chunks
@@ -93,7 +102,7 @@ export async function listWorklistEntries(opts: {
         maxResults:   2500,
         pageToken,
         timeZone:     tz,
-        fields:       "items(id,status,transparency,summary,location,start(date,dateTime),end(date,dateTime)),nextPageToken",
+        fields:       "items(id,status,transparency,summary,location,description,start(date,dateTime),end(date,dateTime)),nextPageToken",
       });
 
       for (const item of resp.data.items ?? []) {
@@ -115,6 +124,13 @@ export async function listWorklistEntries(opts: {
           ? new Date(endMs).toISOString()
           : null;
 
+        // For all-day events only: parse the app-owned description block to
+        // extract callTime (e.g. "6:00 AM") as a start-time default for invoice
+        // workday rows. Timed events already provide startTimeUtc for this purpose.
+        const callTimeDefault = startTimeUtc == null && item.description
+          ? (parseGigDescription(item.description).callTime ?? null)
+          : null;
+
         rawEvents.push({
           eventId:  item.id,
           summary:  (item.summary ?? "").trim() || "Untitled",
@@ -123,6 +139,7 @@ export async function listWorklistEntries(opts: {
           location: (item.location ?? "").trim() || null,
           startTimeUtc,
           endTimeUtc,
+          callTimeDefault,
         });
       }
       pageToken = resp.data.nextPageToken ?? undefined;
@@ -190,6 +207,7 @@ export async function listWorklistEntries(opts: {
       invoicePdfUrl:    inv?.invoice_pdf_url  ?? null,
       amountPaid:       inv?.amount_paid      ?? 0,
       remainingBalance: inv?.remaining_balance ?? null,
+      callTimeDefault:  ev.callTimeDefault,
     };
   });
 
@@ -252,6 +270,7 @@ export function dedupeWorklistEntries(entries: WorklistEntry[]): WorklistEntry[]
       location: primary.location ?? group.find((entry) => entry.location)?.location ?? null,
       startTimeUtc: startTimeUtc ?? primary.startTimeUtc,
       endTimeUtc: endTimeUtc ?? primary.endTimeUtc,
+      callTimeDefault: primary.callTimeDefault ?? group.find((e) => e.callTimeDefault)?.callTimeDefault ?? null,
     });
   }
 

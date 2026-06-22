@@ -32,6 +32,7 @@ function makeEntry(overrides: Partial<WorklistEntry> = {}): WorklistEntry {
     location:         null,
     startTimeUtc:     null,
     endTimeUtc:       null,
+    callTimeDefault:  null,
     invoiceStatus:    "none",
     invoiceNumber:    null,
     invoiceTotal:     null,
@@ -402,6 +403,46 @@ describe("dedupeWorklistEntries — one row per LA invoice job", () => {
     ]);
 
     expect(entries.map((entry) => entry.eventId)).toEqual(["non-la-a", "non-la-b"]);
+  });
+
+  it("passes callTimeDefault through for single all-day event", () => {
+    const entry = makeEntry({ callTimeDefault: "6:00 AM", startTimeUtc: null });
+    const result = dedupeWorklistEntries([entry]);
+    expect(result[0]!.callTimeDefault).toBe("6:00 AM");
+  });
+
+  it("prefers primary entry callTimeDefault when merging duplicates", () => {
+    const withInvoice = makeEntry({
+      eventId: "evt-with-inv",
+      invoiceNumber: "42",
+      callTimeDefault: "7:00 AM",
+      startTimeUtc: null,
+    });
+    const withoutInvoice = makeEntry({
+      eventId: "evt-no-inv",
+      callTimeDefault: "6:00 AM",
+      startTimeUtc: null,
+    });
+    const result = dedupeWorklistEntries([withInvoice, withoutInvoice]);
+    expect(result).toHaveLength(1);
+    // Primary is the entry with invoice data; its callTime takes precedence
+    expect(result[0]!.callTimeDefault).toBe("7:00 AM");
+  });
+
+  it("falls back to any group member's callTimeDefault when primary has none", () => {
+    const primary = makeEntry({ eventId: "evt-a", invoiceNumber: "55", callTimeDefault: null, startTimeUtc: null });
+    const secondary = makeEntry({ eventId: "evt-b", callTimeDefault: "5:30 AM", startTimeUtc: null });
+    const result = dedupeWorklistEntries([primary, secondary]);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.callTimeDefault).toBe("5:30 AM");
+  });
+
+  it("callTimeDefault is null for timed events where startTimeUtc is set", () => {
+    const entry = makeEntry({
+      startTimeUtc: "2026-06-08T11:00:00.000Z",
+      callTimeDefault: null,
+    });
+    expect(entry.callTimeDefault).toBeNull();
   });
 });
 

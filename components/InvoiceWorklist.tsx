@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InvoiceSection, snapUtcToTimeOption } from "@/components/InvoiceSection";
+import { snapCallTimeToOption } from "@/lib/invoice-calculations";
 import type { WorklistEntry, WorklistFilter } from "@/lib/invoice-worklist";
 
 // ---------------------------------------------------------------------------
@@ -330,7 +331,13 @@ export function InvoiceWorklist() {
             gigSummary={selected.summary}
             editorToken={token}
             jobLocation={selected.location ?? undefined}
-            defaultStartTime={selected.startTimeUtc ? snapUtcToTimeOption(selected.startTimeUtc) : undefined}
+            defaultStartTime={
+              selected.startTimeUtc
+                ? snapUtcToTimeOption(selected.startTimeUtc)
+                : selected.callTimeDefault
+                  ? snapCallTimeToOption(selected.callTimeDefault)
+                  : undefined
+            }
             defaultEndTime={selected.endTimeUtc ? snapUtcToTimeOption(selected.endTimeUtc) : undefined}
           />
         </div>

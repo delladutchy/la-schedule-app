@@ -806,6 +806,74 @@ describe("initWorkdayEntries — default time behavior", () => {
 });
 
 // ---------------------------------------------------------------------------
+// snapCallTimeToOption — all-day event callTime → invoice workday default
+// ---------------------------------------------------------------------------
+
+import { snapCallTimeToOption } from "@/lib/invoice-calculations";
+
+describe("snapCallTimeToOption — all-day event callTime to snapped time option", () => {
+  it("returns call time on the hour as-is (6:00 AM)", () => {
+    expect(snapCallTimeToOption("6:00 AM")).toBe("6:00 AM");
+  });
+
+  it("returns call time on the half-hour as-is (7:30 AM)", () => {
+    expect(snapCallTimeToOption("7:30 AM")).toBe("7:30 AM");
+  });
+
+  it("snaps 6:10 AM down to 6:00 AM", () => {
+    expect(snapCallTimeToOption("6:10 AM")).toBe("6:00 AM");
+  });
+
+  it("snaps 6:20 AM up to 6:30 AM", () => {
+    expect(snapCallTimeToOption("6:20 AM")).toBe("6:30 AM");
+  });
+
+  it("handles PM times correctly (2:00 PM)", () => {
+    expect(snapCallTimeToOption("2:00 PM")).toBe("2:00 PM");
+  });
+
+  it("handles noon (12:00 PM)", () => {
+    expect(snapCallTimeToOption("12:00 PM")).toBe("12:00 PM");
+  });
+
+  it("handles midnight (12:00 AM)", () => {
+    expect(snapCallTimeToOption("12:00 AM")).toBe("12:00 AM");
+  });
+
+  it("returns undefined for unparseable string", () => {
+    expect(snapCallTimeToOption("TBD")).toBeUndefined();
+    expect(snapCallTimeToOption("")).toBeUndefined();
+    expect(snapCallTimeToOption("not a time")).toBeUndefined();
+  });
+
+  it("all-day event with callTime '6:00 AM' seeds workday Start via initWorkdayEntries", () => {
+    const callTimeDefault = snapCallTimeToOption("6:00 AM");
+    const entries = initWorkdayEntries([], ["2026-06-08"], callTimeDefault, undefined);
+    expect(entries[0]!.startTime).toBe("6:00 AM");
+    expect(entries[0]!.endTime).toBe("");
+  });
+
+  it("saved manual override wins over callTime default", () => {
+    const saved: WorkdayEntry[] = [
+      { date: "2026-06-08", startTime: "9:00 AM", endTime: "6:00 PM" },
+    ];
+    const callTimeDefault = snapCallTimeToOption("6:00 AM");
+    const entries = initWorkdayEntries(saved, ["2026-06-08"], callTimeDefault, undefined);
+    expect(entries[0]!.startTime).toBe("9:00 AM");
+    expect(entries[0]!.endTime).toBe("6:00 PM");
+  });
+
+  it("End stays blank for all-day event with only callTime (no end time)", () => {
+    const callTimeDefault = snapCallTimeToOption("6:00 AM");
+    const entries = initWorkdayEntries([], ["2026-06-08", "2026-06-09"], callTimeDefault);
+    for (const e of entries) {
+      expect(e.startTime).toBe("6:00 AM");
+      expect(e.endTime).toBe("");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Complete workday pipeline — preview/PDF/sheet source data
 // ---------------------------------------------------------------------------
 

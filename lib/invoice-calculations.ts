@@ -64,6 +64,26 @@ export function parseTimeToMinutes(raw: string): number | null {
   return null;
 }
 
+/**
+ * Convert an app-block callTime string (e.g. "6:00 AM") to a snapped time-option
+ * string, using the same 30-minute rounding as snapUtcToTimeOption.
+ * Returns undefined when the string is unparseable.
+ *
+ * This is the all-day-event complement of snapUtcToTimeOption: when a Calendar
+ * event has no dateTime start (all-day / date-only), the app block's callTime
+ * field is the only available start-time signal.
+ */
+export function snapCallTimeToOption(callTime: string): string | undefined {
+  const totalMins = parseTimeToMinutes(callTime);
+  if (totalMins == null) return undefined;
+  const snapped = Math.round(totalMins / 30) * 30;
+  const hSnapped = Math.floor(snapped / 60) % 24;
+  const mSnapped = snapped % 60;
+  const period = hSnapped >= 12 ? "PM" : "AM";
+  const h12 = hSnapped % 12 || 12;
+  return `${h12}:${String(mSnapped).padStart(2, "0")} ${period}`;
+}
+
 /** Calculate total hours (decimal) and overtime hours from start/end time strings. */
 export function calculateHours(startTime: string, endTime: string): {
   totalHours: number;
