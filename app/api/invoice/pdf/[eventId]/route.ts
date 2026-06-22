@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
-import { getInvoiceData, getAllInvoiceNumbers, markInvoicePdfCreated, markSheetSynced, markSheetSyncError } from "@/lib/invoice-data";
+import { getInvoiceData, getAllInvoiceNumbers, markInvoicePdfCreated, markSheetSynced, markSheetSyncError, upsertInvoiceData } from "@/lib/invoice-data";
 import { calculateInvoicePacket } from "@/lib/invoice-calculations";
 import { resolveInvoiceNumber } from "@/lib/invoice-number";
 import { renderInvoicePDF } from "@/lib/invoice-pdf";
@@ -220,6 +220,18 @@ export async function POST(
       { error: "pdf_metadata_update_failed", detail: msg, invoice_pdf_url: pdfUrl, invoice_pdf_path: storagePath, storagePath },
       { status: 500 },
     );
+  }
+
+  // Store la_number (digits only) if it was extracted from gigSummary but not yet saved.
+  // This is the stable fallback key used by the invoice worklist when a Calendar event is
+  // recreated and gets a new google_event_id — without la_number, the worklist can't find
+  // the existing invoice row and incorrectly shows "Needs Invoice".
+  if (cleanLa && !invoiceData.la_number) {
+    try {
+      await upsertInvoiceData(params.eventId, { la_number: cleanLa });
+    } catch (e) {
+      console.error("[invoice/pdf] la_number store (non-fatal):", e instanceof Error ? e.message : String(e));
+    }
   }
 
   // 4. Sync Google Sheets (best-effort — don't fail the PDF if sheets is down)

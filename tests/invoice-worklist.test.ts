@@ -444,6 +444,125 @@ describe("dedupeWorklistEntries — one row per LA invoice job", () => {
     });
     expect(entry.callTimeDefault).toBeNull();
   });
+
+  it("entry with invoice data (invoiceNumber, PDF, total) wins dedup — preserves draft_created status", () => {
+    const withInvoice = makeEntry({
+      eventId:       "evt-with-data",
+      laJobNumber:   "LA#71601",
+      summary:       "LA#71601 — Klinger Middle School",
+      invoiceStatus: "draft_created",
+      invoiceNumber: "1003",
+      invoiceTotal:  1081.89,
+      invoicePdfUrl: "https://example.com/Invoice-1003.pdf",
+    });
+    const withoutInvoice = makeEntry({
+      eventId:       "evt-no-data",
+      laJobNumber:   "LA#71601",
+      summary:       "LA#71601 — Klinger Middle School",
+      invoiceStatus: "none",
+      invoiceNumber: null,
+      invoiceTotal:  null,
+      invoicePdfUrl: null,
+    });
+    const result = dedupeWorklistEntries([withoutInvoice, withInvoice]);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.invoiceStatus).toBe("draft_created");
+    expect(result[0]!.invoiceNumber).toBe("1003");
+    expect(result[0]!.invoiceTotal).toBe(1081.89);
+  });
+});
+
+// ── Worklist status filter correctness ───────────────────────────────────────
+
+describe("worklist status: invoice statuses must not appear as 'Needs Invoice'", () => {
+  it("draft_created does not match 'none' (Needs Invoice) filter", () => {
+    const entry = makeEntry({ invoiceStatus: "draft_created", invoiceNumber: "1003" });
+    expect(worklistEntryMatchesFilter(entry, "none")).toBe(false);
+    expect(worklistEntryMatchesFilter(entry, "draft")).toBe(true);
+  });
+
+  it("sheet_synced does not match 'none' (Needs Invoice) filter", () => {
+    const entry = makeEntry({ invoiceStatus: "sheet_synced" });
+    expect(worklistEntryMatchesFilter(entry, "none")).toBe(false);
+    expect(worklistEntryMatchesFilter(entry, "draft")).toBe(true);
+  });
+
+  it("sent does not match 'none' (Needs Invoice) filter", () => {
+    const entry = makeEntry({ invoiceStatus: "sent", invoiceNumber: "1003" });
+    expect(worklistEntryMatchesFilter(entry, "none")).toBe(false);
+    expect(worklistEntryMatchesFilter(entry, "sent")).toBe(true);
+  });
+
+  it("partially_paid does not match 'none' (Needs Invoice) filter", () => {
+    const entry = makeEntry({ invoiceStatus: "partially_paid", invoiceNumber: "1003", amountPaid: 500 });
+    expect(worklistEntryMatchesFilter(entry, "none")).toBe(false);
+    expect(worklistEntryMatchesFilter(entry, "sent")).toBe(true);
+  });
+
+  it("paid does not match 'none' (Needs Invoice) filter", () => {
+    const entry = makeEntry({ invoiceStatus: "paid", invoiceNumber: "1003", amountPaid: 1081.89 });
+    expect(worklistEntryMatchesFilter(entry, "none")).toBe(false);
+    expect(worklistEntryMatchesFilter(entry, "paid")).toBe(true);
+  });
+
+  it("entry with no invoice record (status none) matches Needs Invoice filter", () => {
+    const entry = makeEntry({ invoiceStatus: "none", invoiceNumber: null, invoiceTotal: null });
+    expect(worklistEntryMatchesFilter(entry, "none")).toBe(true);
+    expect(worklistEntryMatchesFilter(entry, "draft")).toBe(false);
+    expect(worklistEntryMatchesFilter(entry, "paid")).toBe(false);
+  });
+
+  it("entry with existing invoice number is not Needs Invoice (draft_created)", () => {
+    const entry = makeEntry({
+      invoiceStatus: "draft_created",
+      invoiceNumber: "1003",
+      invoiceTotal:  1081.89,
+      laJobNumber:   "LA#71601",
+    });
+    // Must NOT appear in "Needs Invoice" tab
+    expect(worklistEntryMatchesFilter(entry, "none")).toBe(false);
+    // Must appear in "Draft" tab
+    expect(worklistEntryMatchesFilter(entry, "draft")).toBe(true);
+    // Must appear in "All" tab
+    expect(worklistEntryMatchesFilter(entry, "all")).toBe(true);
+  });
+});
+
+// ── LA# normalization: INV # vs LA JOB # are distinct ───────────────────────
+
+describe("LA# vs INV# are distinct — normalization and matching", () => {
+  it("LA#71601 summary normalizes to digits 71601 for worklist matching", () => {
+    const parsed = parseLaJobSummary("LA#71601 — Klinger Middle School");
+    expect(parsed.jobNumber).toBe("LA#71601");
+    // Digits-only extraction used for dedup key and la_number fallback
+    const laDigits = parsed.jobNumber?.replace(/\D/g, "");
+    expect(laDigits).toBe("71601");
+  });
+
+  it("INV # 1003 and LA JOB # 71601 are stored as separate fields and do not collide", () => {
+    const entry = makeEntry({
+      laJobNumber:   "LA#71601",
+      invoiceNumber: "1003",
+      invoiceStatus: "draft_created",
+      invoiceTotal:  1081.89,
+    });
+    expect(entry.laJobNumber).toBe("LA#71601");
+    expect(entry.invoiceNumber).toBe("1003");
+    // They must not equal each other
+    expect(entry.laJobNumber).not.toBe(entry.invoiceNumber);
+  });
+
+  it("LA# summary with space variant parses to same digits", () => {
+    const r = parseLaJobSummary("LA #71601 — Klinger Middle School");
+    expect(r.jobNumber?.replace(/\D/g, "")).toBe("71601");
+  });
+
+  it("LA# digits-only extraction is idempotent for both 'LA#71601' and '71601' stored forms", () => {
+    // Worklist fallback query compares laDigits (from summary) vs la_number (from DB, digits only)
+    const fromSummary = "LA#71601".replace(/\D/g, ""); // → "71601"
+    const fromDb      = "71601".replace(/\D/g, "");      // → "71601"
+    expect(fromSummary).toBe(fromDb);
+  });
 });
 
 // ── Filter + search combined ──────────────────────────────────────────────────

@@ -160,25 +160,58 @@ export async function listWorklistEntries(opts: {
     console.error("[invoice-worklist] supabase select failed:", error.message);
   }
 
-  const invoiceByEventId = new Map<string, {
+  type InvoiceRowSnapshot = {
     invoice_number: string | null;
     invoice_status: InvoiceStatus;
     invoice_total:  number | null;
     invoice_pdf_url: string | null;
     amount_paid:    number;
     remaining_balance: number | null;
-  }>();
+  };
+
+  function coerceInvoiceRowSnapshot(row: Record<string, unknown>): InvoiceRowSnapshot {
+    return {
+      invoice_number:    row.invoice_number    != null ? String(row.invoice_number)    : null,
+      invoice_status:    (row.invoice_status   as InvoiceStatus) ?? "none",
+      invoice_total:     row.invoice_total     != null ? Number(row.invoice_total)     : null,
+      invoice_pdf_url:   row.invoice_pdf_url   != null ? String(row.invoice_pdf_url)   : null,
+      amount_paid:       Number(row.amount_paid ?? 0),
+      remaining_balance: row.remaining_balance != null ? Number(row.remaining_balance) : null,
+    };
+  }
+
+  const invoiceByEventId = new Map<string, InvoiceRowSnapshot>();
   for (const row of (invoiceRows ?? []) as Record<string, unknown>[]) {
     const id = String(row.google_event_id ?? "");
     if (!id) continue;
-    invoiceByEventId.set(id, {
-      invoice_number:   row.invoice_number   != null ? String(row.invoice_number)   : null,
-      invoice_status:   (row.invoice_status  as InvoiceStatus) ?? "none",
-      invoice_total:    row.invoice_total    != null ? Number(row.invoice_total)    : null,
-      invoice_pdf_url:  row.invoice_pdf_url  != null ? String(row.invoice_pdf_url)  : null,
-      amount_paid:      Number(row.amount_paid ?? 0),
-      remaining_balance: row.remaining_balance != null ? Number(row.remaining_balance) : null,
-    });
+    invoiceByEventId.set(id, coerceInvoiceRowSnapshot(row));
+  }
+
+  // LA# fallback: for events not matched by google_event_id, try matching via
+  // invoice_data.la_number. This handles Calendar events that were deleted and
+  // recreated (gaining a new google_event_id) while the invoice row still holds
+  // the old one. la_number is stored during PDF creation as a stable fallback key.
+  const unmatchedLaDigits = new Map<string, string>(); // laDigits → current eventId
+  for (const ev of rawEvents) {
+    if (invoiceByEventId.has(ev.eventId)) continue;
+    const laDigits = parseLaJobSummary(ev.summary).jobNumber?.replace(/\D/g, "") ?? "";
+    if (laDigits) unmatchedLaDigits.set(laDigits, ev.eventId);
+  }
+
+  if (unmatchedLaDigits.size > 0) {
+    const { data: laRows, error: laError } = await client
+      .from("invoice_data")
+      .select("la_number,invoice_number,invoice_status,invoice_total,invoice_pdf_url,amount_paid,remaining_balance")
+      .in("la_number", [...unmatchedLaDigits.keys()]);
+    if (laError) {
+      console.error("[invoice-worklist] la_number fallback query failed:", laError.message);
+    }
+    for (const row of (laRows ?? []) as Record<string, unknown>[]) {
+      const laDigits = String(row.la_number ?? "").replace(/\D/g, "");
+      const matchedEventId = unmatchedLaDigits.get(laDigits);
+      if (!matchedEventId) continue;
+      invoiceByEventId.set(matchedEventId, coerceInvoiceRowSnapshot(row));
+    }
   }
 
   // ── Build WorklistEntry[] ─────────────────────────────────────────────────
