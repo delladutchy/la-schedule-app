@@ -5,7 +5,7 @@
  * They cover:
  *   1.  fetchReceiptPages filtering: only include_in_email=true receipts
  *   2.  Image type detection: JPEG/PNG/WEBP/GIF are embeddable; PDF/HEIC are not
- *   3.  receiptDate fallback: explicit receipt_date wins; else created_at date part
+ *   3.  receiptDate resolution: explicit receipt_date only; no upload/today fallback
  *   4.  ReceiptPageData field mapping from attachment records
  *   5.  PDF placeholder logic (isPdf vs other unsupported type)
  *   6.  Receipt appendix page header content: date + LA number
@@ -16,6 +16,8 @@
  *   11. Regression: invoice without receipts renders same as before (empty receiptPages)
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import { isVerifyBlockingEmail } from "@/lib/invoice-pipeline";
 
@@ -57,24 +59,24 @@ describe("image type detection for receipt appendix", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. receiptDate fallback logic
+// 2. receiptDate resolution logic
 // ---------------------------------------------------------------------------
 
-function resolveReceiptDate(receiptDate: string | null, createdAt: string): string {
-  return receiptDate ?? createdAt.slice(0, 10);
+function resolveReceiptDate(receiptDate: string | null): string | null {
+  return receiptDate;
 }
 
 describe("receipt date resolution", () => {
   it("uses explicit receipt_date when set", () => {
-    expect(resolveReceiptDate("2026-05-21", "2026-06-17T14:30:00Z")).toBe("2026-05-21");
+    expect(resolveReceiptDate("2026-05-21")).toBe("2026-05-21");
   });
 
-  it("falls back to created_at date when receipt_date is null", () => {
-    expect(resolveReceiptDate(null, "2026-06-17T14:30:00Z")).toBe("2026-06-17");
+  it("does not fall back to created_at when receipt_date is null", () => {
+    expect(resolveReceiptDate(null)).toBeNull();
   });
 
-  it("handles created_at without time component", () => {
-    expect(resolveReceiptDate(null, "2026-06-17")).toBe("2026-06-17");
+  it("does not invent today's date when receipt_date is missing", () => {
+    expect(resolveReceiptDate(null)).toBeNull();
   });
 });
 
@@ -100,7 +102,7 @@ function buildReceiptPageData(row: AttachmentRow, imageDataUrl: string | null): 
     id:               row.id,
     mimeType:         row.mime_type,
     imageDataUrl,
-    receiptDate:      resolveReceiptDate(row.receipt_date, row.created_at),
+    receiptDate:      resolveReceiptDate(row.receipt_date),
     laJobNumber:      row.la_job_number,
     category:         row.receipt_category,
     amount:           row.receipt_amount,
@@ -157,12 +159,12 @@ describe("ReceiptPageData mapping", () => {
     const data = buildReceiptPageData(SAMPLE_PDF_ROW, null);
     expect(data.imageDataUrl).toBeNull();
     expect(data.mimeType).toBe("application/pdf");
-    expect(data.receiptDate).toBe("2026-06-18"); // falls back to created_at
+    expect(data.receiptDate).toBeNull();
   });
 
-  it("uses created_at date when receipt_date is null", () => {
+  it("keeps receiptDate null when receipt_date is null", () => {
     const data = buildReceiptPageData(SAMPLE_PDF_ROW, null);
-    expect(data.receiptDate).toBe("2026-06-18");
+    expect(data.receiptDate).toBeNull();
   });
 });
 
@@ -213,7 +215,7 @@ function fmtReceiptLongDate(isoDate: string): string {
 function formatLaJobNumber(laNumber: string | null): string | null {
   if (!laNumber) return null;
   const clean = laNumber.replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
-  return clean ? `LA #${clean}` : laNumber;
+  return clean ? `LA# ${clean}` : laNumber;
 }
 
 function buildPageHeader(receipt: ReceiptPageData): { dateStr: string; laStr: string | null; subheader: string } {
@@ -233,10 +235,10 @@ describe("receipt page header content", () => {
     expect(dateStr).toBe("May 21, 2026");
   });
 
-  it("formats LA number as 'LA #70924'", () => {
+  it("formats LA number as 'LA# 70924'", () => {
     const page = buildReceiptPageData(SAMPLE_IMAGE_ROW, null);
     const { laStr } = buildPageHeader(page);
-    expect(laStr).toBe("LA #70924");
+    expect(laStr).toBe("LA# 70924");
   });
 
   it("shows category and amount in subheader when both present", () => {
@@ -273,6 +275,16 @@ describe("receipt page header content", () => {
     expect(dateStr).toBe("");
   });
 
+  it("keeps LA job number visible when receiptDate is null", () => {
+    const page: ReceiptPageData = {
+      ...buildReceiptPageData(SAMPLE_IMAGE_ROW, null),
+      receiptDate: null,
+    };
+    const { dateStr, laStr } = buildPageHeader(page);
+    expect(dateStr).toBe("");
+    expect(laStr).toBe("LA# 70924");
+  });
+
   it("laStr is null when laJobNumber is null", () => {
     const page: ReceiptPageData = {
       ...buildReceiptPageData(SAMPLE_IMAGE_ROW, null),
@@ -280,6 +292,28 @@ describe("receipt page header content", () => {
     };
     const { laStr } = buildPageHeader(page);
     expect(laStr).toBeNull();
+  });
+});
+
+describe("receipt page header styling", () => {
+  function styleBlock(name: string): string {
+    const source = readFileSync(join(process.cwd(), "lib/invoice-pdf.tsx"), "utf8");
+    const match = source.match(new RegExp(`${name}: \\{([\\s\\S]*?)\\n  \\},`));
+    return match?.[1] ?? "";
+  }
+
+  it("uses subtle non-bold text for the receipt date", () => {
+    const block = styleBlock("receiptPageDate");
+    expect(block).toContain("fontSize: 8.5");
+    expect(block).toContain('fontFamily: "Helvetica"');
+    expect(block).not.toContain("Helvetica-Bold");
+  });
+
+  it("uses subtle non-bold text for the LA job number", () => {
+    const block = styleBlock("receiptPageLa");
+    expect(block).toContain("fontSize: 8.5");
+    expect(block).toContain('fontFamily: "Helvetica"');
+    expect(block).not.toContain("Helvetica-Bold");
   });
 });
 

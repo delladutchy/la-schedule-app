@@ -336,14 +336,14 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   receiptPageDate: {
-    fontSize: 11,
-    fontFamily: "Helvetica-Bold",
-    color: C.black,
+    fontSize: 8.5,
+    fontFamily: "Helvetica",
+    color: C.muted,
   },
   receiptPageLa: {
-    fontSize: 11,
-    fontFamily: "Helvetica-Bold",
-    color: C.black,
+    fontSize: 8.5,
+    fontFamily: "Helvetica",
+    color: C.muted,
   },
   receiptPageSubheader: {
     fontSize: 9,
@@ -444,6 +444,12 @@ function formatLaJobNumber(laNumber: string | null): string | null {
   return clean ? `LA #${clean}` : laNumber;
 }
 
+function formatReceiptLaJobNumber(laNumber: string | null): string | null {
+  if (!laNumber) return null;
+  const clean = laNumber.replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
+  return clean ? `LA# ${clean}` : laNumber.trim() || null;
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -504,7 +510,7 @@ function fmtReceiptLongDate(isoDate: string): string {
 
 function ReceiptPage({ receipt }: { receipt: ReceiptPageData }) {
   const dateStr = receipt.receiptDate ? fmtReceiptLongDate(receipt.receiptDate) : "";
-  const laStr   = receipt.laJobNumber ? (formatLaJobNumber(receipt.laJobNumber) ?? "") : "";
+  const laStr   = receipt.laJobNumber ? (formatReceiptLaJobNumber(receipt.laJobNumber) ?? "") : "";
   const subParts = [
     receipt.category?.trim() || null,
     receipt.amount != null ? fmt(receipt.amount) : null,

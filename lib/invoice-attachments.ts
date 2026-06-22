@@ -176,7 +176,7 @@ export interface ReceiptPageData {
   mimeType: string;
   /** Base64 data URL for embeddable images (JPEG/PNG/WEBP/GIF), null for PDF/HEIC */
   imageDataUrl: string | null;
-  /** YYYY-MM-DD from receipt_date column; falls back to created_at date */
+  /** YYYY-MM-DD from receipt_date column; null when no receipt date was explicitly saved */
   receiptDate: string | null;
   /** la_job_number stored on the attachment record */
   laJobNumber: string | null;
@@ -247,8 +247,8 @@ export async function getReceiptPagesForPdf(googleEventId: string): Promise<Rece
       id:               rec.id,
       mimeType:         rec.mime_type,
       imageDataUrl,
-      // Use explicit receipt_date when set; fall back to the upload date part.
-      receiptDate:      rec.receipt_date ?? rec.created_at.slice(0, 10),
+      // Only show an explicitly saved receipt date. Do not invent one from upload/today.
+      receiptDate:      rec.receipt_date,
       laJobNumber:      rec.la_job_number,
       category:         rec.receipt_category,
       amount:           rec.receipt_amount,
