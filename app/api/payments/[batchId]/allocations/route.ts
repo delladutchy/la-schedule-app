@@ -73,7 +73,7 @@ export async function POST(
 
   // Best-effort: sync updated payment status to Google Sheets.
   // Failures are logged but do not roll back the allocation.
-  void syncPaymentSheet(body.google_event_id);
+  await syncPaymentSheet(body.google_event_id);
 
   return NextResponse.json(result, { status: 201 });
 }

@@ -43,7 +43,7 @@ export async function DELETE(
   );
 
   // Best-effort: sync updated payment status to Google Sheets.
-  void syncPaymentSheet(body.google_event_id);
+  await syncPaymentSheet(body.google_event_id);
 
   return NextResponse.json({ ok: true, ...totals });
 }

@@ -443,7 +443,7 @@ describe("generateSheetRow — mileage columns", () => {
     });
     const p = calculateInvoicePacket(data);
     const row = generateSheetRow(p, "LA#5555 — test job", "1002");
-    expect(row.laJobNumber).toBe("LA#5555");
+    expect(row.laJobNumber).toBe("5555");
   });
 
   it("populates LA JOB # from a combined invoice number when needed", () => {
@@ -453,7 +453,19 @@ describe("generateSheetRow — mileage columns", () => {
     });
     const p = calculateInvoicePacket(data);
     const row = generateSheetRow(p, "test job", "1002 - LA #5555");
-    expect(row.laJobNumber).toBe("LA#5555");
+    expect(row.laJobNumber).toBe("5555");
+  });
+
+  it("writes LA JOB # as a number-only Sheet value for sorting/filtering", () => {
+    const data = makeInvoiceData({
+      la_number: "LA#5555",
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    });
+    const p = calculateInvoicePacket(data);
+    const row = generateSheetRow(p, "LA#5555 — test job", "1002 - LA #5555");
+
+    expect(row.invoiceNumber).toBe("1002 - LA #5555");
+    expect(row.laJobNumber).toBe("5555");
   });
 
   it("passes paid_date through to the Sheet PAID DATE field only when present", () => {

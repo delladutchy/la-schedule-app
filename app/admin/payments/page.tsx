@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BatchSummary, PaymentAllocation } from "@/lib/payment-batches";
 import {
+  buildOldestFirstPaymentPlan,
   findPaymentMatches,
   getInvoiceRemainingBalance,
   type InvoiceForMatching,
@@ -28,12 +29,25 @@ interface InvoiceOption extends InvoiceForMatching {
   gig_summary?: string | null;
 }
 
+interface PaymentDraftLine {
+  google_event_id: string;
+  invoice_number: string | null;
+  la_number: string | null;
+  invoice_total: number;
+  balance: number;
+  allocated_amount: number;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function fmt(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+function roundCurrency(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 function fmtDate(s: string | null | undefined): string {
@@ -507,6 +521,8 @@ export default function PaymentsPage() {
   const [loading,    setLoading]    = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [invoiceOptions, setInvoiceOptions] = useState<InvoiceOption[]>([]);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
 
   const [formReceivedDate, setFormReceivedDate] = useState("");
   const [formAmount,       setFormAmount]       = useState("");
@@ -516,6 +532,8 @@ export default function PaymentsPage() {
   const [formError,        setFormError]        = useState<string | null>(null);
   const [creating,         setCreating]         = useState(false);
   const [showForm,         setShowForm]         = useState(false);
+  const [paymentDrafts,    setPaymentDrafts]    = useState<PaymentDraftLine[]>([]);
+  const [draftEdited,      setDraftEdited]      = useState(false);
 
   const loadBatches = useCallback(async () => {
     setLoading(true);
@@ -533,6 +551,91 @@ export default function PaymentsPage() {
 
   useEffect(() => { void loadBatches(); }, [loadBatches]);
 
+  const loadInvoiceOptions = useCallback(async () => {
+    setLoadingInvoices(true);
+    try {
+      const res = await fetch("/api/invoice/list", { headers: authHeaders(), credentials: "same-origin" });
+      if (!res.ok) return;
+
+      const json = await res.json() as { invoices?: InvoiceOption[] };
+      const eligible = (json.invoices ?? []).filter(
+        (inv) =>
+          inv.invoice_total != null &&
+          !["paid", "void"].includes(inv.invoice_status) &&
+          getInvoiceRemainingBalance(inv) > 0.005,
+      );
+      setInvoiceOptions(eligible);
+    } catch {
+      // Non-fatal: the user can retry by reopening the Record Payment form.
+    } finally {
+      setLoadingInvoices(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!showForm) return;
+    void loadInvoiceOptions();
+  }, [showForm, loadInvoiceOptions]);
+
+  useEffect(() => {
+    if (!showForm || draftEdited) return;
+    const amount = parseFloat(formAmount);
+    if (isNaN(amount) || amount <= 0 || invoiceOptions.length === 0) {
+      setPaymentDrafts([]);
+      return;
+    }
+
+    const plan = buildOldestFirstPaymentPlan(amount, invoiceOptions);
+    setPaymentDrafts(plan.lines.map((line) => ({
+      google_event_id: line.invoice.google_event_id,
+      invoice_number:  line.invoice.invoice_number,
+      la_number:       line.invoice.la_number,
+      invoice_total:   line.invoice.invoice_total ?? line.balance,
+      balance:         line.balance,
+      allocated_amount: line.allocatedAmount,
+    })));
+  }, [showForm, draftEdited, formAmount, invoiceOptions]);
+
+  function resetCreateForm() {
+    setFormReceivedDate("");
+    setFormAmount("");
+    setFormMethod("Direct Deposit");
+    setFormReference("");
+    setFormNotes("");
+    setFormError(null);
+    setPaymentDrafts([]);
+    setDraftEdited(false);
+  }
+
+  function resetOldestFirstDraft() {
+    const amount = parseFloat(formAmount);
+    if (isNaN(amount) || amount <= 0) {
+      setPaymentDrafts([]);
+      setDraftEdited(false);
+      return;
+    }
+
+    const plan = buildOldestFirstPaymentPlan(amount, invoiceOptions);
+    setPaymentDrafts(plan.lines.map((line) => ({
+      google_event_id: line.invoice.google_event_id,
+      invoice_number:  line.invoice.invoice_number,
+      la_number:       line.invoice.la_number,
+      invoice_total:   line.invoice.invoice_total ?? line.balance,
+      balance:         line.balance,
+      allocated_amount: line.allocatedAmount,
+    })));
+    setDraftEdited(false);
+  }
+
+  function handleDraftAmountChange(eventId: string, rawValue: string) {
+    const parsed = parseFloat(rawValue);
+    const amount = rawValue.trim() === "" || isNaN(parsed) ? 0 : roundCurrency(Math.max(0, parsed));
+    setPaymentDrafts((prev) => prev.map((line) => (
+      line.google_event_id === eventId ? { ...line, allocated_amount: amount } : line
+    )));
+    setDraftEdited(true);
+  }
+
   async function handleCreateBatch(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
@@ -540,7 +643,22 @@ export default function PaymentsPage() {
     if (!formReceivedDate) { setFormError("Date is required"); return; }
     if (isNaN(amount) || amount <= 0) { setFormError("Amount must be > 0"); return; }
 
+    const draftAllocatedTotal = roundCurrency(paymentDrafts.reduce((sum, line) => sum + line.allocated_amount, 0));
+    if (draftAllocatedTotal - amount > 0.005) {
+      setFormError("Allocated amount cannot exceed the payment amount.");
+      return;
+    }
+
+    const overAllocated = paymentDrafts.filter((line) => line.allocated_amount - line.balance > 0.005);
+    if (overAllocated.length > 0) {
+      const ok = confirm(
+        "One or more allocations are higher than the invoice balance. Save anyway?",
+      );
+      if (!ok) return;
+    }
+
     setCreating(true);
+    let createdBatchId: string | null = null;
     try {
       const res = await fetch("/api/payments", {
         method: "POST",
@@ -557,16 +675,45 @@ export default function PaymentsPage() {
       const json = await res.json() as { batch?: BatchSummary; error?: string; detail?: string };
       if (!res.ok) { setFormError(json.detail ?? json.error ?? "Failed to create"); return; }
       if (json.batch) {
+        createdBatchId = json.batch.id;
+        const allocationsToSave = paymentDrafts.filter((line) => line.allocated_amount > 0.005);
+        for (const line of allocationsToSave) {
+          const allocRes = await fetch(`/api/payments/${json.batch.id}/allocations`, {
+            method: "POST",
+            headers: authHeaders(),
+            credentials: "same-origin",
+            body: JSON.stringify({
+              google_event_id:  line.google_event_id,
+              allocated_amount: line.allocated_amount,
+              invoice_total:    line.invoice_total,
+            }),
+          });
+          if (!allocRes.ok) {
+            const allocJson = await allocRes.json() as { error?: string; detail?: string };
+            throw new Error(allocJson.detail ?? allocJson.error ?? `Failed to allocate ${invoiceLabel(line)}`);
+          }
+        }
+
         const newBatch: BatchSummary = {
-          ...json.batch, allocatedTotal: 0, unallocatedTotal: json.batch.amount, allocationCount: 0,
+          ...json.batch,
+          allocatedTotal: draftAllocatedTotal,
+          unallocatedTotal: Math.max(0, json.batch.amount - draftAllocatedTotal),
+          allocationCount: allocationsToSave.length,
         };
-        setBatches((prev) => [newBatch, ...prev]);
+        await loadBatches();
         setExpandedId(newBatch.id);
       }
-      setFormReceivedDate(""); setFormAmount(""); setFormReference(""); setFormNotes("");
+      resetCreateForm();
       setShowForm(false);
-    } catch {
-      setFormError("Network error");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Network error";
+      if (createdBatchId) {
+        await loadBatches();
+        setExpandedId(createdBatchId);
+        setFormError(`${message}. Payment record was created; review the batch below before relying on it.`);
+      } else {
+        setFormError(message);
+      }
     } finally {
       setCreating(false);
     }
@@ -574,12 +721,17 @@ export default function PaymentsPage() {
 
   const totalReceived  = batches.reduce((s, b) => s + b.amount, 0);
   const totalAllocated = batches.reduce((s, b) => s + b.allocatedTotal, 0);
+  const formAmountNumber = parseFloat(formAmount);
+  const formPaymentAmount = isNaN(formAmountNumber) ? 0 : formAmountNumber;
+  const draftAllocatedTotal = roundCurrency(paymentDrafts.reduce((sum, line) => sum + line.allocated_amount, 0));
+  const draftUnappliedAmount = roundCurrency(Math.max(0, formPaymentAmount - draftAllocatedTotal));
+  const hasDraftOverpayment = paymentDrafts.some((line) => line.allocated_amount - line.balance > 0.005);
 
   return (
     <main className="admin-page">
       <div className="admin-page-header">
-        <h1 className="admin-page-title">Payment Batches</h1>
-        <p className="admin-page-subtitle">Reconcile Light Action direct deposits across invoices</p>
+        <h1 className="admin-page-title">Invoice Payments</h1>
+        <p className="admin-page-subtitle">Record Light Action direct deposits and allocate them across unpaid invoices</p>
       </div>
 
       {batches.length > 0 ? (
@@ -597,11 +749,11 @@ export default function PaymentsPage() {
       <div className="payment-create-section">
         {!showForm ? (
           <button type="button" className="invoice-complete-button" onClick={() => setShowForm(true)}>
-            + Record New Deposit
+            Record Payment
           </button>
         ) : (
           <form className="payment-create-form" onSubmit={(e) => { void handleCreateBatch(e); }}>
-            <p className="invoice-block-label">New Payment Batch</p>
+            <p className="invoice-block-label">Record Payment</p>
             {formError ? <p className="invoice-error" role="alert">{formError}</p> : null}
             <div className="payment-form-grid">
               <div className="payment-form-field">
@@ -614,7 +766,12 @@ export default function PaymentsPage() {
                 <div className="invoice-currency-field">
                   <span className="invoice-currency-prefix">$</span>
                   <input id="pm-amount" type="number" min="0.01" step="0.01" className="invoice-input-sm"
-                    value={formAmount} onChange={(e) => setFormAmount(e.target.value)} placeholder="0.00" required />
+                    value={formAmount}
+                    onChange={(e) => {
+                      setFormAmount(e.target.value);
+                      setDraftEdited(false);
+                    }}
+                    placeholder="0.00" required />
                 </div>
               </div>
               <div className="payment-form-field">
@@ -639,11 +796,82 @@ export default function PaymentsPage() {
                   onChange={(e) => setFormNotes(e.target.value)} placeholder="optional notes" />
               </div>
             </div>
+
+            <div className="payment-allocation-preview">
+              <div className="payment-smart-match-summary">
+                <div className="payment-smart-match-row">
+                  <span>Allocation order</span>
+                  <span>Oldest unpaid invoice first</span>
+                </div>
+                <div className="payment-smart-match-row">
+                  <span>Allocated</span>
+                  <span>{fmt(draftAllocatedTotal)}</span>
+                </div>
+                <div className="payment-smart-match-row">
+                  <span>Unapplied amount</span>
+                  <span>{fmt(draftUnappliedAmount)}</span>
+                </div>
+              </div>
+
+              {loadingInvoices ? (
+                <p className="invoice-status-muted">Loading unpaid invoices…</p>
+              ) : paymentDrafts.length === 0 ? (
+                <p className="invoice-status-muted">
+                  {formPaymentAmount > 0
+                    ? "No unpaid invoices found. This payment will remain unapplied until you allocate it manually."
+                    : "Enter an amount to preview oldest-first allocations."}
+                </p>
+              ) : (
+                <div className="payment-allocations-list">
+                  {paymentDrafts.map((line) => (
+                    <div key={line.google_event_id} className="payment-allocation-row">
+                      <span className="payment-alloc-label">
+                        {invoiceLabel(line)}
+                        {line.la_number ? ` — LA Job #${line.la_number}` : ""}
+                        <span className="invoice-status-muted"> · balance {fmt(line.balance)}</span>
+                      </span>
+                      <div className="invoice-currency-field">
+                        <span className="invoice-currency-prefix">$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          className="invoice-input-sm"
+                          value={line.allocated_amount}
+                          onChange={(event) => handleDraftAmountChange(line.google_event_id, event.target.value)}
+                          aria-label={`Allocation amount for ${invoiceLabel(line)}`}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {hasDraftOverpayment ? (
+                <p className="invoice-warning" role="alert">
+                  One or more allocations exceed the current invoice balance. Save only if that is intentional.
+                </p>
+              ) : null}
+
+              {draftEdited ? (
+                <button type="button" className="invoice-sync-button" onClick={resetOldestFirstDraft}>
+                  Reset oldest-first allocation
+                </button>
+              ) : null}
+            </div>
+
             <div className="invoice-sync-buttons">
-              <button type="submit" className="invoice-complete-button" disabled={creating}>
-                {creating ? "Saving…" : "Save Batch"}
+              <button type="submit" className="invoice-complete-button" disabled={creating || loadingInvoices}>
+                {creating ? "Saving…" : "Save Payment"}
               </button>
-              <button type="button" className="invoice-sync-button" onClick={() => setShowForm(false)}>
+              <button
+                type="button"
+                className="invoice-sync-button"
+                onClick={() => {
+                  resetCreateForm();
+                  setShowForm(false);
+                }}
+              >
                 Cancel
               </button>
             </div>

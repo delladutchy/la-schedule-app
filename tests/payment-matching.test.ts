@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildOldestFirstPaymentPlan,
   findPaymentMatches,
   getInvoiceRemainingBalance,
+  sortByOldestOpenInvoice,
   sortByMatchPriority,
   type InvoiceForMatching,
 } from "@/lib/payment-matching";
@@ -69,6 +71,115 @@ describe("sortByMatchPriority", () => {
     const recent = makeInvoice({ id: "new",  invoice_sent_at: "2026-06-01T00:00:00Z" });
     const sorted = sortByMatchPriority([recent, old]);
     expect(sorted[0]!.google_event_id).toBe("old");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildOldestFirstPaymentPlan — actual payment workflow preview
+// ---------------------------------------------------------------------------
+
+describe("buildOldestFirstPaymentPlan", () => {
+  it("auto-allocates a lump payment to oldest unpaid invoices first", () => {
+    const plan = buildOldestFirstPaymentPlan(4000, [inv1003, inv1002, inv1001]);
+
+    expect(plan.lines.map((line) => line.invoice.invoice_number)).toEqual(["1001", "1002"]);
+    expect(plan.lines[0]!.allocatedAmount).toBe(2598.75);
+    expect(plan.lines[0]!.resultingStatus).toBe("paid");
+    expect(plan.lines[1]!.allocatedAmount).toBe(1401.25);
+    expect(plan.lines[1]!.resultingStatus).toBe("partially_paid");
+    expect(plan.allocatedTotal).toBe(4000);
+    expect(plan.unappliedAmount).toBe(0);
+  });
+
+  it("fully pays invoices until the last covered invoice becomes partial", () => {
+    const plan = buildOldestFirstPaymentPlan(2598.75 + 500, [inv1001, inv1002, inv1003]);
+
+    expect(plan.lines).toHaveLength(2);
+    expect(plan.lines[0]!.invoice.invoice_number).toBe("1001");
+    expect(plan.lines[0]!.resultingStatus).toBe("paid");
+    expect(plan.lines[1]!.invoice.invoice_number).toBe("1002");
+    expect(plan.lines[1]!.allocatedAmount).toBe(500);
+    expect(plan.lines[1]!.resultingStatus).toBe("partially_paid");
+  });
+
+  it("reports unapplied amount when the payment exceeds open invoice balances", () => {
+    const plan = buildOldestFirstPaymentPlan(10000, [inv1001, inv1002, inv1003]);
+
+    expect(plan.allocatedTotal).toBe(7128.75);
+    expect(plan.unappliedAmount).toBe(2871.25);
+    expect(plan.lines.every((line) => line.resultingStatus === "paid")).toBe(true);
+  });
+
+  it("skips paid and void invoices", () => {
+    const paid = makeInvoice({
+      id: "paid",
+      invoice_number: "999",
+      invoice_total: 100,
+      remaining_balance: 100,
+      invoice_status: "paid",
+      invoice_sent_at: "2026-01-01T00:00:00Z",
+    });
+    const voided = makeInvoice({
+      id: "void",
+      invoice_number: "998",
+      invoice_total: 100,
+      remaining_balance: 100,
+      invoice_status: "void",
+      invoice_sent_at: "2026-01-02T00:00:00Z",
+    });
+
+    const plan = buildOldestFirstPaymentPlan(1000, [paid, voided, inv1001]);
+
+    expect(plan.lines).toHaveLength(1);
+    expect(plan.lines[0]!.invoice.invoice_number).toBe("1001");
+  });
+
+  it("can allocate to historical draft-created invoices without requiring a sent email", () => {
+    const historical = makeInvoice({
+      id: "historical",
+      invoice_number: "900",
+      la_number: "70001",
+      invoice_total: 750,
+      remaining_balance: 750,
+      invoice_status: "draft_created",
+      invoice_sent_at: null,
+    });
+
+    const plan = buildOldestFirstPaymentPlan(750, [historical]);
+
+    expect(plan.lines).toHaveLength(1);
+    expect(plan.lines[0]!.invoice.google_event_id).toBe("historical");
+    expect(plan.lines[0]!.allocatedAmount).toBe(750);
+    expect(plan.lines[0]!.resultingStatus).toBe("paid");
+  });
+
+  it("settles older partially-paid invoices before newer open invoices", () => {
+    const partialOld = makeInvoice({
+      id: "partial-old",
+      invoice_number: "1000",
+      invoice_total: 1000,
+      amount_paid: 400,
+      remaining_balance: 600,
+      invoice_status: "partially_paid",
+      invoice_sent_at: "2026-04-01T00:00:00Z",
+    });
+    const sentNew = makeInvoice({
+      id: "sent-new",
+      invoice_number: "1004",
+      invoice_total: 1000,
+      remaining_balance: 1000,
+      invoice_status: "sent",
+      invoice_sent_at: "2026-05-01T00:00:00Z",
+    });
+
+    const sorted = sortByOldestOpenInvoice([sentNew, partialOld]);
+    const plan = buildOldestFirstPaymentPlan(700, [sentNew, partialOld]);
+
+    expect(sorted[0]!.google_event_id).toBe("partial-old");
+    expect(plan.lines[0]!.invoice.google_event_id).toBe("partial-old");
+    expect(plan.lines[0]!.allocatedAmount).toBe(600);
+    expect(plan.lines[1]!.invoice.google_event_id).toBe("sent-new");
+    expect(plan.lines[1]!.allocatedAmount).toBe(100);
   });
 });
 

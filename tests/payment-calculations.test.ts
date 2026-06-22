@@ -14,6 +14,14 @@ describe("calcPaymentResult", () => {
     expect(r.paidDate).toBe(TODAY);
   });
 
+  it("uses the payment received date as paid_date when fully paid", () => {
+    const paymentReceivedDate = "2026-05-31";
+    const r = calcPaymentResult(1980, 1980, paymentReceivedDate);
+
+    expect(r.status).toBe("paid");
+    expect(r.paidDate).toBe(paymentReceivedDate);
+  });
+
   it("marks invoice paid when over-allocated (caps amountPaid to invoiceTotal)", () => {
     const r = calcPaymentResult(2000, 1980, TODAY);
     expect(r.status).toBe("paid");

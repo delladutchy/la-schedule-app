@@ -2077,6 +2077,52 @@ describe("Google Sheet headers for app-written columns", () => {
     expect(SHEET_HEADERS[21]).toBe("PDF LINK");
   });
 
+  it("LA JOB # writes number-only to column C for sorting/filtering", () => {
+    const sampleRow: SheetRow = {
+      invoiceNumber: "1002",
+      date: "2026-06-18",
+      laJobNumber: "5555",
+      gigEvent: "test job",
+      totalPay: 1000,
+      labor: 1000,
+      ot: 0,
+      perDiem: 0,
+      mileage: 0,
+      parking: 0,
+      hotel: 0,
+      tolls: 0,
+      bagFees: 0,
+      uber: 0,
+      otherExpenses: 0,
+      totalBusinessMiles: 0,
+      laPaidMiles: 0,
+      unreimbursedMiles: 0,
+      mileagePaid: 0,
+      status: "sheet_synced",
+      paidDate: "",
+      invoicePdfUrl: "",
+      invoiceSentDate: "",
+      amountPaid: 0,
+      remainingBalance: 1000,
+      paymentMethod: "",
+      paymentReceivedDate: "",
+      paymentBatchRef: "",
+      sentTo: "",
+      sentSubject: "",
+      internalReservedAe: "",
+      internalReservedAf: "",
+      internalReservedAg: "",
+      unreimbursedMileageValue: 0,
+    };
+
+    const values = sheetRowToValues(sampleRow);
+
+    expect(values[0]).toBe("1002");
+    expect(values[2]).toBe("5555");
+    expect(values[2]).not.toBe("LA #5555");
+    expect(values[2]).not.toBe("LA#5555");
+  });
+
   it("URL-like dirty paidDate values are never serialized into PAID DATE", () => {
     const freshUrl = "https://example.com/invoices/Invoice-LA5555.pdf";
     const sampleRow: SheetRow = {

@@ -404,8 +404,8 @@ function resolveSheetLaJobNumber(
     const trimmed = value?.trim();
     if (!trimmed) return null;
     const explicit = /\bLA\s*#?\s*(\d{3,})\b/i.exec(trimmed);
-    if (explicit?.[1]) return `LA#${explicit[1]}`;
-    if (/^\d{3,}$/.test(trimmed)) return `LA#${trimmed}`;
+    if (explicit?.[1]) return explicit[1];
+    if (/^\d{3,}$/.test(trimmed)) return trimmed;
     return null;
   };
 
@@ -413,9 +413,9 @@ function resolveSheetLaJobNumber(
     const trimmed = value?.trim();
     if (!trimmed) return null;
     const parsed = parseLaJobSummary(trimmed).jobNumber;
-    if (parsed) return parsed;
+    if (parsed) return parsed.replace(/^LA\s*#?\s*/i, "").trim();
     const explicit = /\bLA\s*#?\s*(\d{3,})\b/i.exec(trimmed);
-    return explicit?.[1] ? `LA#${explicit[1]}` : null;
+    return explicit?.[1] ?? null;
   };
 
   return normalizeStoredLa(storedLaNumber)

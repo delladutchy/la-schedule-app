@@ -270,12 +270,12 @@ export interface PaymentCalcResult {
  *
  * @param totalAllocated  Sum of all payment_batch_allocations for this invoice.
  * @param invoiceTotal    The invoice's total due amount.
- * @param today           YYYY-MM-DD to stamp paid_date (injected so tests are deterministic).
+ * @param paidDate        YYYY-MM-DD to stamp paid_date when fully paid.
  */
 export function calcPaymentResult(
   totalAllocated: number,
   invoiceTotal:   number,
-  today:          string,
+  paidDate:       string,
 ): PaymentCalcResult {
   const amountPaid       = round2(Math.min(totalAllocated, invoiceTotal));
   const remainingBalance = round2(Math.max(0, invoiceTotal - totalAllocated));
@@ -289,7 +289,7 @@ export function calcPaymentResult(
     amountPaid,
     remainingBalance,
     status,
-    paidDate: status === "paid" ? today : null,
+    paidDate: status === "paid" ? paidDate : null,
   };
 }
 
@@ -301,7 +301,7 @@ export async function recalcInvoicePayments(
 
   const { data: rows, error: sumError } = await client
     .from("payment_batch_allocations")
-    .select("allocated_amount")
+    .select("allocated_amount, payment_batches(received_date)")
     .eq("google_event_id", googleEventId);
 
   if (sumError) throw new Error(`[payments] recalc-sum failed: ${sumError.message}`);
@@ -310,8 +310,13 @@ export async function recalcInvoicePayments(
     (rows ?? []).reduce((s, r) => s + Number((r as Record<string, unknown>).allocated_amount ?? 0), 0),
   );
 
-  const today = new Date().toISOString().slice(0, 10);
-  const calc  = calcPaymentResult(totalAllocated, invoiceTotal, today);
+  const latestReceivedDate = (rows ?? []).reduce((latest, row) => {
+    const batch = (row as Record<string, unknown>).payment_batches as Record<string, unknown> | null;
+    const receivedDate = batch?.received_date != null ? String(batch.received_date) : "";
+    return receivedDate && receivedDate > latest ? receivedDate : latest;
+  }, "");
+  const paidDate = latestReceivedDate || new Date().toISOString().slice(0, 10);
+  const calc = calcPaymentResult(totalAllocated, invoiceTotal, paidDate);
 
   const now = new Date().toISOString();
   const { error: updError } = await client
