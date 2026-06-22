@@ -193,13 +193,17 @@ const EMBEDDABLE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp",
 
 /**
  * Fetch included receipt attachments for an event and build ReceiptPageData for
- * each one.  Used by both the PDF route and the email route so both generate
- * the same full invoice packet.
+ * each one.  Used by PDF, email, and Gmail Draft routes so each generates the
+ * same full invoice packet. When older attachment rows are missing LA metadata,
+ * fallbackLaJobNumber keeps the appendix header tied to the invoice/job.
  *
  * Non-fatal per-file: download errors produce a placeholder page (imageDataUrl null)
  * rather than aborting the whole PDF.
  */
-export async function getReceiptPagesForPdf(googleEventId: string): Promise<ReceiptPageData[]> {
+export async function getReceiptPagesForPdf(
+  googleEventId: string,
+  fallbackLaJobNumber: string | null = null,
+): Promise<ReceiptPageData[]> {
   const supabase = getSupabaseServerClient();
 
   const { data, error } = await supabase
@@ -249,7 +253,7 @@ export async function getReceiptPagesForPdf(googleEventId: string): Promise<Rece
       imageDataUrl,
       // Only show an explicitly saved receipt date. Do not invent one from upload/today.
       receiptDate:      rec.receipt_date,
-      laJobNumber:      rec.la_job_number,
+      laJobNumber:      rec.la_job_number || fallbackLaJobNumber,
       category:         rec.receipt_category,
       amount:           rec.receipt_amount,
       originalFilename: rec.original_filename,

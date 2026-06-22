@@ -5,9 +5,8 @@
  *   - Jeff-only auth (401 unauthorized, 403 forbidden)
  *   - 503 when GOOGLE_GMAIL_REFRESH_TOKEN is not configured
  *   - 400 when no recipient provided
- *   - 400 when selected receipt attachments are missing
  *   - Calls getReceiptPagesForPdf and passes pages to renderInvoicePDF
- *   - Calls createGmailDraft with correct from/to/subject/attachments
+ *   - Calls createGmailDraft with correct from/to/subject/PDF-only attachment
  *   - Returns draftId, draftUrl on success
  *   - Does NOT call markInvoiceSent (draft ≠ sent)
  *   - Calls markInvoicePdfCreated to keep PDF URL current
@@ -264,9 +263,14 @@ describe("POST /api/invoice/gmail-draft/[eventId] — validation", () => {
     expect(body.error).toBe("recipient_required");
   });
 
-  it("returns 400 when selected receipt is missing from storage", async () => {
+  it("does not fetch or block on raw receipt attachments for Gmail drafts", async () => {
     mocks.getEmailAttachments.mockResolvedValue({
-      attachments: [],
+      attachments: [{
+        id: "att-raw",
+        buffer: Buffer.from("RAW_RECEIPT_BYTES"),
+        filename: "paste.png",
+        mimeType: "image/png",
+      }],
       missingIds: ["att-missing-1"],
     });
     const { POST } = await loadRoute();
@@ -276,10 +280,18 @@ describe("POST /api/invoice/gmail-draft/[eventId] — validation", () => {
       body: DEFAULT_BODY,
     });
     const res = await POST(req as never, { params: { eventId: "evt123" } });
-    expect(res.status).toBe(400);
-    const body = await res.json() as { error: string; missingIds: string[] };
-    expect(body.error).toBe("attachment_missing");
-    expect(body.missingIds).toContain("att-missing-1");
+    expect(res.status).toBe(200);
+    expect(mocks.getEmailAttachments).not.toHaveBeenCalled();
+
+    const draftCall = mocks.createGmailDraft.mock.calls[0]?.[0] as {
+      attachments: Array<{ filename: string; content: Buffer; mimeType: string }>;
+    };
+    expect(draftCall.attachments).toHaveLength(1);
+    expect(draftCall.attachments[0]).toMatchObject({
+      filename: "Invoice-LA5555-Test-Job.pdf",
+      mimeType: "application/pdf",
+    });
+    expect(draftCall.attachments[0]?.content.equals(Buffer.from("FAKEPDF"))).toBe(true);
   });
 
   it("returns 404 when invoice data is not found", async () => {
@@ -316,7 +328,7 @@ describe("POST /api/invoice/gmail-draft/[eventId] — draft creation", () => {
     });
     await POST(req as never, { params: { eventId: "evt123" } });
 
-    expect(mocks.getReceiptPagesForPdf).toHaveBeenCalledWith("evt123");
+    expect(mocks.getReceiptPagesForPdf).toHaveBeenCalledWith("evt123", "LA#5555");
     expect(renderInvoicePDF).toHaveBeenCalledWith(
       expect.objectContaining({ receiptPages: fakePages }),
     );
@@ -343,14 +355,14 @@ describe("POST /api/invoice/gmail-draft/[eventId] — draft creation", () => {
     );
   });
 
-  it("attaches the rendered PDF and any receipt attachments", async () => {
+  it("attaches exactly one rendered PDF and no raw image receipts by default", async () => {
     const fakeBuffer = Buffer.from("RECEIPT_FILE");
     mocks.getEmailAttachments.mockResolvedValue({
       attachments: [{
         id: "att-1",
         buffer: fakeBuffer,
-        filename: "parking.jpg",
-        mimeType: "image/jpeg",
+        filename: "paste.png",
+        mimeType: "image/png",
       }],
       missingIds: [],
     });
@@ -363,10 +375,15 @@ describe("POST /api/invoice/gmail-draft/[eventId] — draft creation", () => {
     });
     await POST(req as never, { params: { eventId: "evt123" } });
 
-    const draftCall = mocks.createGmailDraft.mock.calls[0]?.[0] as { attachments: Array<{ mimeType: string }> };
-    expect(draftCall.attachments).toHaveLength(2); // PDF + receipt
+    const draftCall = mocks.createGmailDraft.mock.calls[0]?.[0] as {
+      attachments: Array<{ filename: string; content: Buffer; mimeType: string }>;
+    };
+    expect(mocks.getEmailAttachments).not.toHaveBeenCalled();
+    expect(draftCall.attachments).toHaveLength(1);
+    expect(draftCall.attachments[0]?.filename).toMatch(/\.pdf$/);
     expect(draftCall.attachments[0]?.mimeType).toBe("application/pdf");
-    expect(draftCall.attachments[1]?.mimeType).toBe("image/jpeg");
+    expect(draftCall.attachments[0]?.content.equals(Buffer.from("FAKEPDF"))).toBe(true);
+    expect(draftCall.attachments.some((a) => a.filename === "paste.png")).toBe(false);
   });
 
   it("returns draftId and draftUrl in the response", async () => {
@@ -450,6 +467,12 @@ describe("POST /api/invoice/gmail-draft/[eventId] — draft creation", () => {
 // ── MIME builder ──────────────────────────────────────────────────────────────
 
 describe("buildMimeMessage", () => {
+  function attachmentBlock(message: string, boundary: string, filename: string): string {
+    return message
+      .split(`--${boundary}`)
+      .find((part) => part.includes(`filename="${filename}"`)) ?? "";
+  }
+
   it("produces headers for to/subject/content-type", async () => {
     const { buildMimeMessage } = await import("@/lib/gmail-draft");
     const msg = buildMimeMessage(
@@ -500,6 +523,52 @@ describe("buildMimeMessage", () => {
     );
     expect(msg).toContain("Content-Transfer-Encoding: base64");
     expect(msg).toContain(content.toString("base64"));
+  });
+
+  it("builds the PDF attachment with PDF headers and PDF buffer content", async () => {
+    const { buildMimeMessage } = await import("@/lib/gmail-draft");
+    const filename = "Invoice-LA5555-test-gig.pdf";
+    const content = Buffer.from("%PDF-FAKE-PACKET%");
+    const msg = buildMimeMessage(
+      {
+        from: "f", to: ["a@b.com"], subject: "S", textBody: "t", htmlBody: "<p>h</p>",
+        attachments: [{ filename, content, mimeType: "application/pdf" }],
+      },
+      { mixed: "M", alt: "A" },
+    );
+    const block = attachmentBlock(msg, "M", filename);
+    expect(block).toContain(`Content-Type: application/pdf; name="${filename}"`);
+    expect(block).toContain("Content-Transfer-Encoding: base64");
+    expect(block).toContain(`Content-Disposition: attachment; filename="${filename}"`);
+    expect(block).toContain(content.toString("base64"));
+  });
+
+  it("does not mismatch attachment filename and content when multiple attachments are present", async () => {
+    const { buildMimeMessage } = await import("@/lib/gmail-draft");
+    const pdfContent = Buffer.from("%PDF-PACKET-BYTES%");
+    const receiptContent = Buffer.from("PNG_RECEIPT_BYTES");
+    const msg = buildMimeMessage(
+      {
+        from: "f", to: ["a@b.com"], subject: "S", textBody: "t", htmlBody: "<p>h</p>",
+        attachments: [
+          { filename: "Invoice-LA5555-test-gig.pdf", content: pdfContent, mimeType: "application/pdf" },
+          { filename: "paste.png", content: receiptContent, mimeType: "image/png" },
+        ],
+      },
+      { mixed: "M", alt: "A" },
+    );
+
+    const pdfBlock = attachmentBlock(msg, "M", "Invoice-LA5555-test-gig.pdf");
+    const pngBlock = attachmentBlock(msg, "M", "paste.png");
+    const pdfB64 = pdfContent.toString("base64");
+    const pngB64 = receiptContent.toString("base64");
+
+    expect(pdfBlock).toContain("Content-Type: application/pdf");
+    expect(pdfBlock).toContain(pdfB64);
+    expect(pdfBlock).not.toContain(pngB64);
+    expect(pngBlock).toContain("Content-Type: image/png");
+    expect(pngBlock).toContain(pngB64);
+    expect(pngBlock).not.toContain(pdfB64);
   });
 
   it("includes both text and html body parts", async () => {

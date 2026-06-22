@@ -34,7 +34,7 @@ import { resolveInvoiceNumber } from "@/lib/invoice-number";
 import { renderInvoicePDF } from "@/lib/invoice-pdf";
 import { upsertSheetRow } from "@/lib/google-sheets";
 import { getSupabaseServerClient } from "@/lib/supabase";
-import { getEmailAttachments, getReceiptPagesForPdf } from "@/lib/invoice-attachments";
+import { getReceiptPagesForPdf } from "@/lib/invoice-attachments";
 import { createGmailDraft } from "@/lib/gmail-draft";
 
 export const dynamic = "force-dynamic";
@@ -248,28 +248,6 @@ export async function POST(
   const invoiceData = await getInvoiceData(params.eventId);
   if (!invoiceData) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
-  // Pre-flight: check receipt attachments before expensive PDF render.
-  let receiptAttachments: Array<{ buffer: Buffer; filename: string; mimeType: string; id: string }> = [];
-  let missingAttachmentIds: string[] = [];
-  try {
-    const result = await getEmailAttachments(params.eventId);
-    receiptAttachments = result.attachments;
-    missingAttachmentIds = result.missingIds;
-  } catch (err) {
-    console.error(`[invoice/gmail-draft] attachment fetch failed (non-fatal): ${err instanceof Error ? err.message : err}`);
-  }
-
-  if (missingAttachmentIds.length > 0) {
-    return NextResponse.json(
-      {
-        error: "attachment_missing",
-        detail: `${missingAttachmentIds.length} selected receipt${missingAttachmentIds.length > 1 ? "s are" : " is"} missing or inaccessible. Uncheck or remove them in Attachments / Receipts and try again.`,
-        missingIds: missingAttachmentIds,
-      },
-      { status: 400 },
-    );
-  }
-
   const packet = calculateInvoicePacket(invoiceData);
   const allNums = await getAllInvoiceNumbers();
   const invoiceNumber = resolveInvoiceNumber(invoiceData.invoice_number, allNums);
@@ -285,7 +263,7 @@ export async function POST(
   const storagePath = `${params.eventId}/Invoice-${invoiceNumber}${laSlug}-${ts}.pdf`;
 
   // Fetch receipt appendix pages (same as PDF route and email route).
-  const receiptPages = await getReceiptPagesForPdf(params.eventId);
+  const receiptPages = await getReceiptPagesForPdf(params.eventId, effectiveLaNumber);
   console.log(`[invoice/gmail-draft] receipt appendix pages: ${receiptPages.length}`);
 
   // Render full PDF packet.
@@ -386,11 +364,6 @@ export async function POST(
           content:     pdfBuffer,
           mimeType:    "application/pdf",
         },
-        ...receiptAttachments.map((a) => ({
-          filename: a.filename,
-          content:  a.buffer,
-          mimeType: a.mimeType,
-        })),
       ],
     });
   } catch (err) {
@@ -417,6 +390,6 @@ export async function POST(
     remaining_balance:    updatedInvoiceData.remaining_balance,
     template:             PDF_TEMPLATE,
     receiptAppendixPages: receiptPages.length,
-    receiptAttachments:   receiptAttachments.length,
+    receiptAttachments:   0,
   });
 }

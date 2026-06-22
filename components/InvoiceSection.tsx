@@ -868,6 +868,12 @@ function buildPreviewFilename(laNumber: string | null, jobTitle: string, invoice
   return `Invoice-${numSlug}${nameSlug}.pdf`;
 }
 
+export function openGmailDraftUrl(draftUrl: string | null | undefined): boolean {
+  if (!draftUrl || typeof window === "undefined" || typeof window.open !== "function") return false;
+  window.open(draftUrl, "_blank", "noopener,noreferrer");
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // EmailDialog sub-component
 // ---------------------------------------------------------------------------
@@ -2220,6 +2226,7 @@ export function InvoiceSection({
           if (j.invoiceData) { setInvoiceData(j.invoiceData); setPacket(j.packet); }
         }
       }).catch(() => { /* non-fatal */ });
+      if (json.draftUrl) openGmailDraftUrl(json.draftUrl);
       setEmailDialog((prev) => ({ ...prev, status: "success", error: null, draftUrl: json.draftUrl ?? null }));
     } catch {
       setEmailDialog((prev) => ({ ...prev, status: "error", error: "Network error — try again" }));

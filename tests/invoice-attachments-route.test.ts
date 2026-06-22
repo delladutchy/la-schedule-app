@@ -624,7 +624,7 @@ describe("Email send: receipt appendix included in PDF", () => {
 
     await POST(req as never, { params: { eventId: "evt123" } });
 
-    expect(mocks.getReceiptPagesForPdf).toHaveBeenCalledWith("evt123");
+    expect(mocks.getReceiptPagesForPdf).toHaveBeenCalledWith("evt123", "LA#5555");
     expect(renderInvoicePDF).toHaveBeenCalledWith(
       expect.objectContaining({ receiptPages: fakeReceiptPages }),
     );
@@ -649,7 +649,7 @@ describe("Email send: receipt appendix included in PDF", () => {
 
     await POST(req as never, { params: { eventId: "evt123" } });
 
-    expect(mocks.getReceiptPagesForPdf).toHaveBeenCalledWith("evt123");
+    expect(mocks.getReceiptPagesForPdf).toHaveBeenCalledWith("evt123", "LA#5555");
     expect(renderInvoicePDF).toHaveBeenCalledWith(
       expect.objectContaining({ receiptPages: [] }),
     );

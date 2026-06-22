@@ -97,13 +97,17 @@ type AttachmentRow = {
   include_in_email: boolean;
 };
 
-function buildReceiptPageData(row: AttachmentRow, imageDataUrl: string | null): ReceiptPageData {
+function buildReceiptPageData(
+  row: AttachmentRow,
+  imageDataUrl: string | null,
+  fallbackLaJobNumber: string | null = null,
+): ReceiptPageData {
   return {
     id:               row.id,
     mimeType:         row.mime_type,
     imageDataUrl,
     receiptDate:      resolveReceiptDate(row.receipt_date),
-    laJobNumber:      row.la_job_number,
+    laJobNumber:      row.la_job_number || fallbackLaJobNumber,
     category:         row.receipt_category,
     amount:           row.receipt_amount,
     originalFilename: row.original_filename,
@@ -165,6 +169,16 @@ describe("ReceiptPageData mapping", () => {
   it("keeps receiptDate null when receipt_date is null", () => {
     const data = buildReceiptPageData(SAMPLE_PDF_ROW, null);
     expect(data.receiptDate).toBeNull();
+  });
+
+  it("uses fallback LA job number when attachment LA is blank", () => {
+    const data = buildReceiptPageData({ ...SAMPLE_IMAGE_ROW, la_job_number: null }, null, "LA#5555");
+    expect(data.laJobNumber).toBe("LA#5555");
+  });
+
+  it("keeps attachment LA job number when both attachment and fallback exist", () => {
+    const data = buildReceiptPageData(SAMPLE_IMAGE_ROW, null, "LA#5555");
+    expect(data.laJobNumber).toBe("70924");
   });
 });
 
@@ -283,6 +297,17 @@ describe("receipt page header content", () => {
     const { dateStr, laStr } = buildPageHeader(page);
     expect(dateStr).toBe("");
     expect(laStr).toBe("LA# 70924");
+  });
+
+  it("shows fallback LA job number top-right when receipt date is blank", () => {
+    const page = buildReceiptPageData(
+      { ...SAMPLE_IMAGE_ROW, la_job_number: null, receipt_date: null },
+      null,
+      "LA#5555",
+    );
+    const { dateStr, laStr } = buildPageHeader(page);
+    expect(dateStr).toBe("");
+    expect(laStr).toBe("LA# 5555");
   });
 
   it("laStr is null when laJobNumber is null", () => {

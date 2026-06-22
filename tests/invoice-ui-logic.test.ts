@@ -7,10 +7,14 @@
  *   3. Autosave feedback text mapping (status → display text)
  *   4. Unsaved changes detection (saveStatus === "unsaved" || isSaving → hasPending)
  *   5. VOID_STATUS cross-reference: VOID rows don't trigger the duplicate warning
+ *   6. Gmail Draft success opens draft URL and keeps fallback link
  */
-import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { isEditableKeyboardTarget } from "@/lib/keyboard";
 import { isInvoiceDataRow, VOID_STATUS } from "@/lib/google-sheets";
+import { openGmailDraftUrl } from "@/components/InvoiceSection";
 
 // ---------------------------------------------------------------------------
 // 1. SaveStatus state machine transitions
@@ -244,5 +248,60 @@ describe("VOID_STATUS — voided rows are excluded from live invoice row detecti
 
   it("VOID rows with JU-style numbers are still excluded", () => {
     expect(isInvoiceDataRow("JU-001", "LA#5555", "VOID_DUPLICATE")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. Gmail Draft success behavior
+// ---------------------------------------------------------------------------
+
+const originalWindow = globalThis.window;
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  if (originalWindow === undefined) {
+    Reflect.deleteProperty(globalThis, "window");
+  } else {
+    Object.defineProperty(globalThis, "window", {
+      value: originalWindow,
+      configurable: true,
+      writable: true,
+    });
+  }
+});
+
+describe("Gmail Draft success behavior", () => {
+  it("opens a successful Gmail draft URL in a new tab", () => {
+    const open = vi.fn();
+    Object.defineProperty(globalThis, "window", {
+      value: { open },
+      configurable: true,
+      writable: true,
+    });
+
+    expect(openGmailDraftUrl("https://mail.google.com/mail/#drafts/msg-123")).toBe(true);
+    expect(open).toHaveBeenCalledWith(
+      "https://mail.google.com/mail/#drafts/msg-123",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it("does not open a window when draft creation did not return a URL", () => {
+    const open = vi.fn();
+    Object.defineProperty(globalThis, "window", {
+      value: { open },
+      configurable: true,
+      writable: true,
+    });
+
+    expect(openGmailDraftUrl(null)).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("keeps the visible fallback Open Draft link in the dialog source", () => {
+    const source = readFileSync(join(process.cwd(), "components/InvoiceSection.tsx"), "utf8");
+    expect(source).toContain("Open Draft in Gmail");
+    expect(source).toContain('href={dialog.draftUrl}');
   });
 });

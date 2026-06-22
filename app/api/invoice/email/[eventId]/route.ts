@@ -300,7 +300,7 @@ export async function POST(
   const ts = new Date().toISOString().replace(/[-:T.]/g, "").slice(0, 14);
   const storagePath = `${params.eventId}/Invoice-${invoiceNumber}${laSlug}-${ts}.pdf`;
 
-  const receiptPages = await getReceiptPagesForPdf(params.eventId);
+  const receiptPages = await getReceiptPagesForPdf(params.eventId, effectiveLaNumber);
   console.log(`[invoice/email] receipt appendix pages: ${receiptPages.length}`);
   console.log(`[invoice/email] regenerating PDF before send template=${PDF_TEMPLATE} invoiceNumber=${invoiceNumber} clientInvoiceNumber=${clientInvoiceNumber} storagePath=${storagePath}`);
 

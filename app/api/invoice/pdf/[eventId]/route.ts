@@ -73,6 +73,15 @@ function storagePathFromPublicUrl(publicUrl: string | null): string | null {
   }
 }
 
+function cleanLaNumber(laNumber: string | null): string {
+  return (laNumber ?? "").replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
+}
+
+function cleanLaFromGigSummary(summary: string): string {
+  const match = summary.trim().match(/^\s*LA\s*#?\s*(\d{3,})\s*/i);
+  return match?.[1] ?? "";
+}
+
 // ── GET ──────────────────────────────────────────────────────────────────────
 
 export async function GET(
@@ -147,7 +156,9 @@ export async function POST(
   console.log(`[invoice/pdf] template=${PDF_TEMPLATE} invoiceNumber=${invoiceNumber} storagePath=${storagePath} logoUrl=https://la-schedule-app.netlify.app/brand/jeff-ulsh-logo.png`);
 
   // Fetch receipt pages for the PDF appendix (non-fatal: empty array on any error).
-  const receiptPages = await getReceiptPagesForPdf(params.eventId);
+  const cleanLa = cleanLaNumber(invoiceData.la_number) || cleanLaFromGigSummary(gigSummary);
+  const effectiveLaNumber = cleanLa ? `LA#${cleanLa}` : null;
+  const receiptPages = await getReceiptPagesForPdf(params.eventId, effectiveLaNumber);
   console.log(`[invoice/pdf] receipt appendix pages: ${receiptPages.length}`);
 
   // 1. Render PDF
