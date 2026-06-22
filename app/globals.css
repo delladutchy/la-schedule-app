@@ -5392,13 +5392,14 @@ html.modal-open body {
   white-space: nowrap;
 }
 
-.invoice-status-pill[data-status="sent"] {
+/* Workflow state variants — these replace the raw InvoiceStatus values on the pill */
+.invoice-status-pill[data-status="ready_to_send"] {
   color: #1d4ed8;
   background: #eff6ff;
   border-color: #bfdbfe;
 }
 
-.invoice-status-pill[data-status="partially_paid"] {
+.invoice-status-pill[data-status="awaiting_payment"] {
   color: #a16207;
   background: #fefce8;
   border-color: #fde68a;
@@ -5409,6 +5410,14 @@ html.modal-open body {
   background: #f0fdf4;
   border-color: #bbf7d0;
 }
+
+.invoice-status-pill[data-status="needs_attention"] {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+/* ready_to_review and no_pdf use the default pill style (neutral) */
 
 .invoice-status-grid {
   display: grid;
@@ -5912,6 +5921,7 @@ html.modal-open body {
   color: var(--text-muted);
   margin-left: 6px;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .invoice-collapsible-content {
@@ -6104,6 +6114,22 @@ html.modal-open body {
 .invoice-sheet-sync-status--danger {
   color: var(--danger, #dc2626);
   font-weight: 700;
+}
+
+.invoice-verify-status {
+  font-size: 0.75rem;
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+
+.invoice-verify-status--ok {
+  color: var(--text-muted);
+}
+
+.invoice-verify-status--fail {
+  color: var(--danger, #dc2626);
+  font-weight: 600;
+  font-size: 0.82rem;
 }
 
 .invoice-sheet-link {

@@ -143,6 +143,23 @@ const VERIFY_INITIAL: VerifyState = {
   status: "idle", message: null, verifiedAt: null, autoRepaired: false, hasUnrelatedClutter: false,
 };
 
+type WorkflowState =
+  | "no_pdf"
+  | "ready_to_review"
+  | "ready_to_send"
+  | "awaiting_payment"
+  | "paid"
+  | "needs_attention";
+
+const WORKFLOW_LABELS: Record<WorkflowState, string> = {
+  no_pdf:           "Needs invoice",
+  ready_to_review:  "Ready to review",
+  ready_to_send:    "Ready to send",
+  awaiting_payment: "Waiting for payment",
+  paid:             "Paid",
+  needs_attention:  "Needs attention",
+};
+
 interface SheetDuplicateRow {
   rowNumber: number;
   invNumber: string;
@@ -1116,9 +1133,11 @@ export function InvoiceSection({
   const [sentDetailsOpen, setSentDetailsOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [verifyState, setVerifyState] = useState<VerifyState>(VERIFY_INITIAL);
+  const [attachmentCount, setAttachmentCount] = useState<number | null>(null);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveVersionRef = useRef(0);
+  const hasAutoExpandedWorkDays = useRef(false);
   const requestKey = `${eventId}::${workDates.join("|")}`;
 
   // Fetch existing invoice data on mount / key change
@@ -1459,6 +1478,15 @@ export function InvoiceSection({
   useEffect(() => {
     if (verifyState.status === "failed") setAdvancedOpen(true);
   }, [verifyState.status]);
+
+  // Auto-expand Work Days once when data loads and no hours are calculated yet,
+  // so the user sees the time entry fields immediately without needing to click.
+  useEffect(() => {
+    if (!hasAutoExpandedWorkDays.current && packet && packet.dayRateQty === 0) {
+      hasAutoExpandedWorkDays.current = true;
+      setWorkDaysExpanded(true);
+    }
+  }, [packet]);
 
   async function handleCheckSheetDuplicates(options: { silent?: boolean } = {}) {
     if (sheetDuplicateState.status === "checking" || sheetDuplicateState.status === "deleting") return;
@@ -2271,6 +2299,19 @@ export function InvoiceSection({
     ? Math.max(displayedInvoiceTotal - amountPaid, 0)
     : (remainingBalance ?? null);
   const invoiceStatusLabel = currentStatus ? INVOICE_STATUS_LABELS[currentStatus] : "Not sent";
+
+  const workflowState: WorkflowState = !hasPdf
+    ? "no_pdf"
+    : verifyState.status === "failed"
+      ? "needs_attention"
+      : currentStatus === "paid"
+        ? "paid"
+        : (currentStatus === "sent" || currentStatus === "partially_paid")
+          ? "awaiting_payment"
+          : verifyState.status === "verified"
+            ? "ready_to_send"
+            : "ready_to_review";
+  const workflowLabel = WORKFLOW_LABELS[workflowState];
   const invoiceSentAt = invoiceData?.invoice_sent_at ?? null;
   const invoiceSentTo = invoiceData?.invoice_sent_to ?? null;
   const invoiceSentSubject = invoiceData?.invoice_sent_subject ?? null;
@@ -2393,79 +2434,64 @@ export function InvoiceSection({
     resolveOverrideText(overrides[field], fallback);
   const resolveLineItemInputValue = (field: LineItemDescriptionField, fallback = "") =>
     resolveOverrideInputValue(overrides[field], fallback);
+  // Day Rate description is always auto-derived from Work Days; not editable here.
   const lineItemDescriptionFields = p
     ? [
         {
-          field: "invoice_day_rate_description_override" as const,
-          label: "Day Rate description",
-          defaultDescription: defaultDayRateDescription,
-          rows: Math.max(3, p.workdays.length),
-          visible: p.dayRateQty > 0,
-          hint: "Generated from saved workday dates/times. Clear to return to generated lines.",
-        },
-        {
           field: "invoice_ot_description_override" as const,
-          label: "OT description",
+          label: "OT",
           defaultDescription: DEFAULT_OT_DESCRIPTION,
           rows: 2,
           visible: p.overtimeTotal > 0,
-          hint: "Clear to return to the default OT description.",
         },
         {
           field: "invoice_per_diem_description_override" as const,
-          label: "Per Diem description",
+          label: "Per Diem",
           defaultDescription: "",
           rows: 2,
           visible: p.perDiemTotal > 0,
-          hint: "Optional description for this line.",
         },
         {
           field: "invoice_bag_fees_description_override" as const,
-          label: "Bag Fees description",
+          label: "Bag Fees",
           defaultDescription: "",
           rows: 2,
           visible: p.bagFees > 0,
-          hint: "Optional description for this line.",
         },
         {
           field: "invoice_parking_description_override" as const,
-          label: "Parking description",
+          label: "Parking",
           defaultDescription: "",
           rows: 2,
           visible: p.parking > 0,
-          hint: "Optional description for this line.",
         },
         {
           field: "invoice_uber_description_override" as const,
-          label: "Uber description",
+          label: "Uber",
           defaultDescription: "",
           rows: 2,
           visible: p.uber > 0,
-          hint: "Optional description for this line.",
         },
         {
           field: "invoice_tolls_description_override" as const,
-          label: "Tolls description",
+          label: "Tolls",
           defaultDescription: "",
           rows: 2,
           visible: p.tolls > 0,
-          hint: "Optional description for this line.",
         },
         {
           field: "invoice_hotel_description_override" as const,
-          label: "Hotel description",
+          label: "Hotel",
           defaultDescription: "",
           rows: 2,
           visible: p.hotel > 0,
-          hint: "Optional description for this line.",
         },
         {
           field: "invoice_other_description_override" as const,
-          label: "Other description",
+          label: "Other",
           defaultDescription: "",
           rows: 2,
           visible: p.otherExpenses > 0,
-          hint: "Optional description for this line.",
         },
       ].filter((field) => field.visible)
     : [];
@@ -2526,15 +2552,11 @@ export function InvoiceSection({
                       <p className="invoice-pdf-la-number">LA Job #{laNumber}</p>
                     ) : null}
                   </div>
-                  <span className="invoice-status-pill" data-status={currentStatus ?? "draft"}>
-                    {invoiceStatusLabel}
+                  <span className="invoice-status-pill" data-status={workflowState}>
+                    {workflowLabel}
                   </span>
                 </div>
                 <dl className="invoice-status-grid">
-                  <div className="invoice-status-grid-row">
-                    <dt>Status</dt>
-                    <dd>{invoiceStatusLabel}</dd>
-                  </div>
                   {invoiceSentAt ? (
                     <div className="invoice-status-grid-row">
                       <dt>Sent</dt>
@@ -2624,21 +2646,25 @@ export function InvoiceSection({
                 </div>
               ) : null}
 
-              {/* Normal action buttons — Review and Open PDF */}
+              {/* Action buttons — primary action depends on workflow state */}
               <div className="invoice-pdf-buttons">
-                {!emailDialog.open ? (
+                {!emailDialog.open && workflowState !== "awaiting_payment" && workflowState !== "paid" ? (
                   <button
                     type="button"
                     className="invoice-pdf-email-btn"
                     onClick={() => { void handleOpenReview(); }}
                     disabled={isVerifying || pdfState.status === "generating"}
                   >
-                    {isVerifying ? "Verifying…" : "Review"}
+                    {isVerifying
+                      ? "Verifying…"
+                      : workflowState === "ready_to_send"
+                        ? "Send Invoice"
+                        : "Review Invoice"}
                   </button>
                 ) : null}
                 <button
                   type="button"
-                  className="invoice-pdf-link-btn"
+                  className="invoice-pdf-link-btn invoice-pdf-link-btn--secondary"
                   onClick={() => { void handleOpenPdf(); }}
                   disabled={isVerifying || pdfState.status === "generating"}
                 >
@@ -2658,9 +2684,9 @@ export function InvoiceSection({
               ) : null}
 
               {/* Verified status line — driven by the pipeline; falls back to legacy sync status */}
-              {verifyState.status === "verified" && verifyState.message ? (
+              {verifyState.status === "verified" ? (
                 <p className="invoice-verify-status invoice-verify-status--ok">
-                  ✓ {verifyState.message}{verifiedLabel ? ` · ${verifiedLabel}` : ""}
+                  ✓ Verified{verifiedLabel ? ` · ${verifiedLabel}` : ""}
                 </p>
               ) : verifyState.status === "failed" ? (
                 <p className="invoice-verify-status invoice-verify-status--fail" role="alert">
@@ -2723,7 +2749,7 @@ export function InvoiceSection({
             ) : (
               <span className="invoice-collapsible-summary">{workdayEntries.length} {workdayEntries.length === 1 ? "day" : "days"}</span>
             )}
-            <span className="invoice-collapsible-chevron">{workDaysExpanded ? "▲" : "▼"}</span>
+            <span className="invoice-collapsible-chevron">{workDaysExpanded ? "▲" : "Edit ▼"}</span>
           </span>
         </button>
         {workDaysExpanded ? (
@@ -2769,12 +2795,12 @@ export function InvoiceSection({
           onClick={() => setExpensesExpanded((prev) => !prev)}
           aria-expanded={expensesExpanded}
         >
-          <span className="invoice-block-label">Additional Expenses</span>
+          <span className="invoice-block-label">Expenses</span>
           <span className="invoice-collapsible-meta">
             {expensesTotal > 0 ? (
               <span className="invoice-collapsible-summary">{fmtCurrency(expensesTotal)}</span>
             ) : null}
-            <span className="invoice-collapsible-chevron">{expensesExpanded ? "▲" : "▼"}</span>
+            <span className="invoice-collapsible-chevron">{expensesExpanded ? "▲" : "Edit ▼"}</span>
           </span>
         </button>
         {expensesExpanded ? (
@@ -2852,9 +2878,6 @@ export function InvoiceSection({
         </button>
         {editInvoiceExpanded ? (
           <div className="invoice-collapsible-content">
-            <p className="invoice-overrides-hint-top">
-              Optional invoice wording. Blank fields use automatic wording.
-            </p>
             <div className="invoice-override-field">
               <label className="invoice-label-sm" htmlFor="inv-override-job">Job name</label>
               <input
@@ -2863,7 +2886,7 @@ export function InvoiceSection({
                 className="invoice-input invoice-override-input"
                 value={overrides.invoice_job_name_override}
                 onChange={(e) => handleOverrideChange("invoice_job_name_override", e.target.value)}
-                placeholder={autoPreviewJobTitle || "e.g. Wilm U Grad"}
+                placeholder={autoPreviewJobTitle || ""}
               />
             </div>
             {lineItemDescriptionFields.map((fieldConfig) => {
@@ -2876,14 +2899,14 @@ export function InvoiceSection({
                     className="invoice-textarea invoice-override-textarea"
                     value={value}
                     onChange={(e) => handleOverrideChange(fieldConfig.field, e.target.value)}
-                    placeholder={fieldConfig.defaultDescription || "Optional description"}
+                    placeholder={fieldConfig.defaultDescription || ""}
                     rows={fieldConfig.rows}
                   />
                 </div>
               );
             })}
             <div className="invoice-override-field">
-              <label className="invoice-label-sm" htmlFor="inv-override-note">Note to customer</label>
+              <label className="invoice-label-sm" htmlFor="inv-override-note">Note</label>
               <textarea
                 id="inv-override-note"
                 className="invoice-textarea invoice-override-textarea"
@@ -3002,10 +3025,10 @@ export function InvoiceSection({
             onClick={() => setPreviewExpanded((prev) => !prev)}
             aria-expanded={previewExpanded}
           >
-            <span className="invoice-block-label">Invoice Preview</span>
+            <span className="invoice-block-label">Preview</span>
             <span className="invoice-collapsible-meta">
               <span className="invoice-collapsible-summary">{fmtCurrency(p.estimatedTotal)}</span>
-              <span className="invoice-collapsible-chevron">{previewExpanded ? "▲" : "▼"}</span>
+              <span className="invoice-collapsible-chevron">{previewExpanded ? "▲" : "Show ▼"}</span>
             </span>
           </button>
           {previewExpanded ? (
@@ -3131,16 +3154,27 @@ export function InvoiceSection({
           onClick={() => setAttachmentsExpanded((prev) => !prev)}
           aria-expanded={attachmentsExpanded}
         >
-          <span className="invoice-block-label">Attachments / Receipts</span>
+          <span className="invoice-block-label">Receipts</span>
           <span className="invoice-collapsible-meta">
-            <span className="invoice-collapsible-chevron">{attachmentsExpanded ? "▲" : "▼"}</span>
+            {!attachmentsExpanded && attachmentCount !== null ? (
+              <span className="invoice-collapsible-summary">
+                {attachmentCount === 0
+                  ? "No receipts"
+                  : attachmentCount === 1
+                    ? "1 receipt"
+                    : `${attachmentCount} receipts`}
+              </span>
+            ) : null}
+            <span className="invoice-collapsible-chevron">{attachmentsExpanded ? "▲" : "Manage ▼"}</span>
           </span>
         </button>
-        {attachmentsExpanded ? (
-          <div className="invoice-collapsible-content">
-            <InvoiceAttachments eventId={eventId} editorToken={editorToken} />
-          </div>
-        ) : null}
+        {/* Always mounted so the count is fetched even when collapsed */}
+        <InvoiceAttachments
+          eventId={eventId}
+          editorToken={editorToken}
+          expanded={attachmentsExpanded}
+          onCountChange={setAttachmentCount}
+        />
       </div>
 
       {/* ── Advanced Recovery Tools ── */}

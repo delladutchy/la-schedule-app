@@ -6,6 +6,10 @@ import type { AttachmentRecord } from "@/lib/invoice-attachments";
 interface Props {
   eventId: string;
   editorToken: string | null;
+  /** When false the component renders nothing visible but still fetches so the parent can show a count. */
+  expanded: boolean;
+  /** Called with the current attachment count after each load or mutation. */
+  onCountChange?: (count: number) => void;
 }
 
 function authHeaders(token: string | null): HeadersInit {
@@ -25,9 +29,16 @@ function fmtBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function userFacingUploadError(detail: string | undefined, raw: string | undefined, status: number): string {
+  const msg = detail ?? raw ?? "";
+  // Pass through file-size and file-type rejections verbatim — these are user-actionable.
+  if (/too large|file type|not allowed/i.test(msg)) return msg;
+  return `Upload failed (${status}).`;
+}
+
 type UploadStatus = "idle" | "uploading" | "error";
 
-export function InvoiceAttachments({ eventId, editorToken }: Props) {
+export function InvoiceAttachments({ eventId, editorToken, expanded, onCountChange }: Props) {
   const [attachments, setAttachments] = useState<AttachmentRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -47,18 +58,23 @@ export function InvoiceAttachments({ eventId, editorToken }: Props) {
       });
       const j = await res.json().catch(() => ({})) as { attachments?: AttachmentRecord[]; error?: string };
       if (!res.ok) {
-        setFetchError(j.error ?? `Error ${res.status}`);
+        setFetchError("Receipts are temporarily unavailable.");
       } else {
         setAttachments(j.attachments ?? []);
       }
     } catch {
-      setFetchError("Network error loading attachments.");
+      setFetchError("Unable to load receipts. Check your connection.");
     } finally {
       setLoading(false);
     }
   }, [eventId, editorToken]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Keep parent count in sync whenever the list changes.
+  useEffect(() => {
+    onCountChange?.(attachments.length);
+  }, [attachments.length, onCountChange]);
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -85,7 +101,7 @@ export function InvoiceAttachments({ eventId, editorToken }: Props) {
       };
       if (!res.ok) {
         setUploadStatus("error");
-        setUploadError(j.detail ?? j.error ?? `Upload failed (${res.status})`);
+        setUploadError(userFacingUploadError(j.detail, j.error, res.status));
         return;
       }
       setUploadStatus("idle");
@@ -141,18 +157,21 @@ export function InvoiceAttachments({ eventId, editorToken }: Props) {
     } catch { /* ignore */ }
   }
 
+  // When collapsed, render nothing — effects still run to keep count current.
+  if (!expanded) return null;
+
   const emailCount = attachments.filter((a) => a.include_in_email).length;
 
   return (
-    <div className="invoice-attachments">
+    <div className="invoice-collapsible-content invoice-attachments">
       {loading ? (
-        <p className="invoice-attachments-loading">Loading attachments…</p>
+        <p className="invoice-attachments-loading">Loading…</p>
       ) : fetchError ? (
         <p className="invoice-error" role="alert">⚠ {fetchError}</p>
       ) : null}
 
-      {!loading && attachments.length === 0 ? (
-        <p className="invoice-attachments-empty">No attachments yet.</p>
+      {!loading && !fetchError && attachments.length === 0 ? (
+        <p className="invoice-attachments-empty">No receipts yet.</p>
       ) : null}
 
       {attachments.length > 0 ? (
