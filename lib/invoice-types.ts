@@ -9,7 +9,7 @@ export type InvoiceStatus =
   | "none"
   | "ready"
   | "sheet_synced"   // PDF created + synced to Google Sheets
-  | "draft_created"  // QuickBooks draft (QB-specific)
+  | "draft_created"  // Draft created for manual send (Gmail/QuickBooks)
   | "sent"
   | "partially_paid"
   | "paid"
@@ -19,7 +19,7 @@ export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
   none:           "No Invoice",
   ready:          "Ready",
   sheet_synced:   "Draft / Synced",
-  draft_created:  "QB Draft",
+  draft_created:  "Draft Created",
   sent:           "Sent",
   partially_paid: "Partially Paid",
   paid:           "Paid",

@@ -224,10 +224,11 @@ export async function POST(
 
   // 4. Sync Google Sheets (best-effort — don't fail the PDF if sheets is down)
   try {
-    const sheetRow = generateSheetRow(packet, gigSummary, invoiceNumber, undefined, {
-      sentTo: invoiceData.invoice_sent_to,
-      sentSubject: invoiceData.invoice_sent_subject,
-      jobNameOverride: invoiceData.invoice_job_name_override,
+    const sheetPacket = calculateInvoicePacket(updatedInvoiceData);
+    const sheetRow = generateSheetRow(sheetPacket, gigSummary, invoiceNumber, undefined, {
+      sentTo: updatedInvoiceData.invoice_sent_to,
+      sentSubject: updatedInvoiceData.invoice_sent_subject,
+      jobNameOverride: updatedInvoiceData.invoice_job_name_override,
     });
     await upsertSheetRow(sheetRow);
     await markSheetSynced(params.eventId, new Date().toISOString());

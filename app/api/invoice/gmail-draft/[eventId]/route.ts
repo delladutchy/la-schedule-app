@@ -25,6 +25,7 @@ import { isJeffEditorId } from "@/lib/job-time";
 import {
   getAllInvoiceNumbers,
   getInvoiceData,
+  markGmailDraftCreated,
   markInvoicePdfCreated,
   markSheetSynced,
   markSheetSyncError,
@@ -42,6 +43,7 @@ export const dynamic = "force-dynamic";
 const PDF_BUCKET = "invoice-pdfs";
 const PDF_TEMPLATE = "orange-2026";
 const GMAIL_FROM = "Jeff Ulsh <jeffulsh@gmail.com>";
+const DEFAULT_BCC_SELF = "jeffulsh@gmail.com";
 
 // ---------------------------------------------------------------------------
 // Address helpers (shared with email route)
@@ -64,6 +66,17 @@ function normaliseCC(raw: unknown): string[] {
     .filter((v): v is string => typeof v === "string")
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function normaliseBCC(raw: unknown): string[] {
+  return normaliseCC(raw);
+}
+
+function appendUniqueEmail(addresses: string[], address: string): string[] {
+  const clean = address.trim();
+  if (!clean) return addresses;
+  const exists = addresses.some((addr) => addr.trim().toLowerCase() === clean.toLowerCase());
+  return exists ? addresses : [...addresses, clean];
 }
 
 // ---------------------------------------------------------------------------
@@ -227,13 +240,15 @@ export async function POST(
 
   const toAddresses = normaliseTo(rawBody.to);
   const ccAddresses = normaliseCC(rawBody.cc);
+  const configuredBccSelf = env.INVOICE_EMAIL_BCC_SELF?.trim() || DEFAULT_BCC_SELF;
+  const bccAddresses = appendUniqueEmail(normaliseBCC(rawBody.bcc), configuredBccSelf);
   const gigSummary = typeof rawBody.gigSummary === "string" ? rawBody.gigSummary.trim() : "";
   const overrideSubject = typeof rawBody.overrideSubject === "string" && rawBody.overrideSubject.trim()
     ? rawBody.overrideSubject.trim() : null;
   const overrideBody = typeof rawBody.overrideBody === "string" && rawBody.overrideBody.trim()
     ? rawBody.overrideBody.trim() : null;
 
-  const allAddresses = [...toAddresses, ...ccAddresses];
+  const allAddresses = [...toAddresses, ...ccAddresses, ...bccAddresses];
   if (allAddresses.some((a) => a.startsWith("TODO_"))) {
     return NextResponse.json(
       { error: "unconfigured_recipient", detail: "One or more recipient addresses are TODO placeholders." },
@@ -323,21 +338,6 @@ export async function POST(
     return NextResponse.json({ error: "pdf_metadata_update_failed", detail: msg }, { status: 500 });
   }
 
-  // Sync Sheet row.
-  try {
-    const sheetRow = generateSheetRow(packet, gigSummary, invoiceNumber, undefined, {
-      sentTo:          invoiceData.invoice_sent_to,
-      sentSubject:     invoiceData.invoice_sent_subject,
-      jobNameOverride: invoiceData.invoice_job_name_override,
-    });
-    await upsertSheetRow(sheetRow);
-    await markSheetSynced(params.eventId, new Date().toISOString());
-  } catch (sheetErr) {
-    const sheetMsg = sheetErr instanceof Error ? sheetErr.message : String(sheetErr);
-    console.error(`[invoice/gmail-draft] sheet sync failed (non-fatal): ${sheetMsg}`);
-    try { await markSheetSyncError(params.eventId, sheetMsg); } catch { /* ignore */ }
-  }
-
   // Build email content.
   const attachmentFilename = buildAttachmentFilename(cleanLa, jobTitle, invoiceNumber);
   const emailParams: EmailParams = { cleanLa, jobTitle, workDateStr };
@@ -355,6 +355,7 @@ export async function POST(
       from:               GMAIL_FROM,
       to:                 toAddresses,
       cc:                 ccAddresses,
+      bcc:                bccAddresses,
       subject,
       textBody,
       htmlBody,
@@ -374,6 +375,30 @@ export async function POST(
 
   console.log(`[invoice/gmail-draft] draft created draftId=${draftResult.draftId} messageId=${draftResult.messageId}`);
 
+  let draftedInvoiceData = updatedInvoiceData;
+  try {
+    draftedInvoiceData = await markGmailDraftCreated(params.eventId, new Date().toISOString());
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[invoice/gmail-draft] draft status update failed (non-fatal): ${msg}`);
+  }
+
+  // Sync Sheet row after draft creation so status/PDF URL/balance reflect the final packet.
+  try {
+    const sheetPacket = calculateInvoicePacket(draftedInvoiceData);
+    const sheetRow = generateSheetRow(sheetPacket, gigSummary, invoiceNumber, undefined, {
+      sentTo:          draftedInvoiceData.invoice_sent_to,
+      sentSubject:     draftedInvoiceData.invoice_sent_subject,
+      jobNameOverride: draftedInvoiceData.invoice_job_name_override,
+    });
+    await upsertSheetRow(sheetRow);
+    await markSheetSynced(params.eventId, new Date().toISOString());
+  } catch (sheetErr) {
+    const sheetMsg = sheetErr instanceof Error ? sheetErr.message : String(sheetErr);
+    console.error(`[invoice/gmail-draft] sheet sync failed (non-fatal): ${sheetMsg}`);
+    try { await markSheetSyncError(params.eventId, sheetMsg); } catch { /* ignore */ }
+  }
+
   return NextResponse.json({
     ok: true,
     draftId:              draftResult.draftId,
@@ -383,11 +408,13 @@ export async function POST(
     attachmentFilename,
     to:                   toAddresses,
     cc:                   ccAddresses,
-    invoice_number:       updatedInvoiceData.invoice_number,
-    invoice_pdf_url:      updatedInvoiceData.invoice_pdf_url,
+    bcc:                  bccAddresses,
+    invoice_number:       draftedInvoiceData.invoice_number,
+    invoice_status:       draftedInvoiceData.invoice_status,
+    invoice_pdf_url:      draftedInvoiceData.invoice_pdf_url,
     invoice_pdf_path:     storagePath,
-    invoice_total:        updatedInvoiceData.invoice_total,
-    remaining_balance:    updatedInvoiceData.remaining_balance,
+    invoice_total:        draftedInvoiceData.invoice_total,
+    remaining_balance:    draftedInvoiceData.remaining_balance,
     template:             PDF_TEMPLATE,
     receiptAppendixPages: receiptPages.length,
     receiptAttachments:   0,

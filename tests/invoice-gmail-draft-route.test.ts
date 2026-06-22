@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   getInvoiceData:        vi.fn(),
   getAllInvoiceNumbers:   vi.fn(),
   markInvoicePdfCreated: vi.fn(),
+  markGmailDraftCreated: vi.fn(),
   markInvoiceSent:       vi.fn(),
   markSheetSynced:       vi.fn(),
   markSheetSyncError:    vi.fn(),
@@ -33,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   createGmailDraft:      vi.fn(),
   // google-sheets
   upsertSheetRow:        vi.fn(),
+  calculateInvoicePacket: vi.fn(),
+  generateSheetRow:       vi.fn(),
   // supabase
   createBucket:          vi.fn(),
 }));
@@ -49,6 +52,7 @@ vi.mock("@/lib/invoice-data", () => ({
   getInvoiceData:        mocks.getInvoiceData,
   getAllInvoiceNumbers:   mocks.getAllInvoiceNumbers,
   markInvoicePdfCreated: mocks.markInvoicePdfCreated,
+  markGmailDraftCreated: mocks.markGmailDraftCreated,
   markInvoiceSent:       mocks.markInvoiceSent,
   markSheetSynced:       mocks.markSheetSynced,
   markSheetSyncError:    mocks.markSheetSyncError,
@@ -99,14 +103,8 @@ vi.mock("@/lib/job-time", () => ({
 }));
 
 vi.mock("@/lib/invoice-calculations", () => ({
-  calculateInvoicePacket: vi.fn().mockReturnValue({
-    estimatedTotal: 1500, amountPaid: 0, invoiceStatus: "draft_created",
-    invoiceSentAt: null, invoicePdfUrl: null, invoiceNumber: "1001",
-    laNumber: "5555", dayRateTotal: 1500, overtimeTotal: 0, perDiemTotal: 0,
-    parking: 0, hotel: 0, tolls: 0, bagFees: 0, uber: 0, otherExpenses: 0,
-    mileage: null, totalOvertimeHours: 0, workdays: [],
-  }),
-  generateSheetRow: vi.fn().mockReturnValue({ invoiceNumber: "1001" }),
+  calculateInvoicePacket: mocks.calculateInvoicePacket,
+  generateSheetRow: mocks.generateSheetRow,
 }));
 
 vi.mock("@/lib/invoice-number", () => ({
@@ -163,6 +161,15 @@ const FAKE_PDF_CREATED = {
   invoice_pdf_url:  "https://storage.example.com/pdf.pdf",
   invoice_total:    1500,
   remaining_balance: 1500,
+  invoice_status:   "sheet_synced",
+  invoice_sent_to:  null,
+  invoice_sent_subject: null,
+  invoice_job_name_override: null,
+};
+
+const FAKE_DRAFT_CREATED = {
+  ...FAKE_PDF_CREATED,
+  invoice_status: "draft_created",
 };
 
 function jeffHeaders(): Record<string, string> {
@@ -187,9 +194,18 @@ beforeEach(() => {
   mocks.renderInvoicePDF.mockResolvedValue(Buffer.from("FAKEPDF"));
   mocks.createGmailDraft.mockResolvedValue(FAKE_DRAFT_RESULT);
   mocks.markInvoicePdfCreated.mockResolvedValue(FAKE_PDF_CREATED);
+  mocks.markGmailDraftCreated.mockResolvedValue(FAKE_DRAFT_CREATED);
   mocks.markSheetSynced.mockResolvedValue(undefined);
   mocks.upsertSheetRow.mockResolvedValue({ userMessage: "ok" });
   mocks.createBucket.mockResolvedValue({ error: null });
+  mocks.calculateInvoicePacket.mockReturnValue({
+    estimatedTotal: 1500, amountPaid: 0, invoiceStatus: "draft_created",
+    invoiceSentAt: null, invoicePdfUrl: null, invoiceNumber: "1001",
+    laNumber: "5555", dayRateTotal: 1500, overtimeTotal: 0, perDiemTotal: 0,
+    parking: 0, hotel: 0, tolls: 0, bagFees: 0, uber: 0, otherExpenses: 0,
+    mileage: null, totalOvertimeHours: 0, workdays: [],
+  });
+  mocks.generateSheetRow.mockReturnValue({ invoiceNumber: "1001" });
 });
 
 async function loadRoute() {
@@ -350,9 +366,45 @@ describe("POST /api/invoice/gmail-draft/[eventId] — draft creation", () => {
       expect.objectContaining({
         from: "Jeff Ulsh <jeffulsh@gmail.com>",
         to:   ["payroll@laproduction.com"],
+        bcc:  ["jeffulsh@gmail.com"],
         gmailRefreshToken: "fake-gmail-refresh-token",
       }),
     );
+  });
+
+  it("adds Jeff as automatic BCC on Gmail Draft invoices", async () => {
+    const { POST } = await loadRoute();
+    const req = new Request("https://app.local/api/invoice/gmail-draft/evt123", {
+      method: "POST",
+      headers: { ...jeffHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gigSummary: "LA #5555 - Test Job",
+        to: "payroll@laproduction.com",
+      }),
+    });
+    const res = await POST(req as never, { params: { eventId: "evt123" } });
+    const body = await res.json() as { bcc: string[] };
+
+    const draftCall = mocks.createGmailDraft.mock.calls[0]?.[0] as { bcc: string[] };
+    expect(draftCall.bcc).toEqual(["jeffulsh@gmail.com"]);
+    expect(body.bcc).toEqual(["jeffulsh@gmail.com"]);
+  });
+
+  it("does not duplicate Jeff BCC if request already includes it", async () => {
+    const { POST } = await loadRoute();
+    const req = new Request("https://app.local/api/invoice/gmail-draft/evt123", {
+      method: "POST",
+      headers: { ...jeffHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gigSummary: "LA #5555 - Test Job",
+        to: "payroll@laproduction.com",
+        bcc: ["JEFFULSH@gmail.com"],
+      }),
+    });
+    await POST(req as never, { params: { eventId: "evt123" } });
+
+    const draftCall = mocks.createGmailDraft.mock.calls[0]?.[0] as { bcc: string[] };
+    expect(draftCall.bcc).toEqual(["JEFFULSH@gmail.com"]);
   });
 
   it("attaches exactly one rendered PDF and no raw image receipts by default", async () => {
@@ -426,6 +478,67 @@ describe("POST /api/invoice/gmail-draft/[eventId] — draft creation", () => {
       "evt123",
       expect.objectContaining({ invoiceNumber: "1001" }),
     );
+  });
+
+  it("marks Gmail Draft as draft_created without marking sent or paid", async () => {
+    const { POST } = await loadRoute();
+    const req = new Request("https://app.local/api/invoice/gmail-draft/evt123", {
+      method: "POST",
+      headers: { ...jeffHeaders(), "Content-Type": "application/json" },
+      body: DEFAULT_BODY,
+    });
+    const res = await POST(req as never, { params: { eventId: "evt123" } });
+    const body = await res.json() as { invoice_status: string };
+
+    expect(mocks.markGmailDraftCreated).toHaveBeenCalledWith("evt123", expect.any(String));
+    expect(mocks.markInvoiceSent).not.toHaveBeenCalled();
+    expect(body.invoice_status).toBe("draft_created");
+  });
+
+  it("syncs Sheet from the post-draft invoice data so PDF URL and draft status are current", async () => {
+    const draftedData = {
+      ...FAKE_DRAFT_CREATED,
+      invoice_pdf_url: "https://storage.example.com/fresh-final.pdf",
+      invoice_status: "draft_created",
+    };
+    mocks.markGmailDraftCreated.mockResolvedValue(draftedData);
+    mocks.calculateInvoicePacket.mockImplementation((data: { invoice_pdf_url?: string; invoice_status?: string } | undefined) => ({
+      estimatedTotal: 1500,
+      amountPaid: 0,
+      invoiceStatus: data?.invoice_status ?? "none",
+      invoiceSentAt: null,
+      invoicePdfUrl: data?.invoice_pdf_url ?? null,
+      invoiceNumber: "1001",
+      laNumber: "5555",
+      dayRateTotal: 1500,
+      overtimeTotal: 0,
+      perDiemTotal: 0,
+      parking: 0,
+      hotel: 0,
+      tolls: 0,
+      bagFees: 0,
+      uber: 0,
+      otherExpenses: 0,
+      mileage: null,
+      totalOvertimeHours: 0,
+      workdays: [],
+    }));
+
+    const { POST } = await loadRoute();
+    const req = new Request("https://app.local/api/invoice/gmail-draft/evt123", {
+      method: "POST",
+      headers: { ...jeffHeaders(), "Content-Type": "application/json" },
+      body: DEFAULT_BODY,
+    });
+    await POST(req as never, { params: { eventId: "evt123" } });
+
+    expect(mocks.calculateInvoicePacket).toHaveBeenLastCalledWith(draftedData);
+    const sheetPacket = mocks.generateSheetRow.mock.calls[0]?.[0] as {
+      invoicePdfUrl: string | null;
+      invoiceStatus: string;
+    };
+    expect(sheetPacket.invoicePdfUrl).toBe("https://storage.example.com/fresh-final.pdf");
+    expect(sheetPacket.invoiceStatus).toBe("draft_created");
   });
 
   it("returns 502 when Gmail draft creation fails", async () => {
@@ -509,6 +622,15 @@ describe("buildMimeMessage", () => {
       { mixed: "M", alt: "A" },
     );
     expect(msg).toContain("Cc: c@d.com, e@f.com");
+  });
+
+  it("includes Bcc header when bcc addresses are provided", async () => {
+    const { buildMimeMessage } = await import("@/lib/gmail-draft");
+    const msg = buildMimeMessage(
+      { from: "f", to: ["a@b.com"], bcc: ["jeffulsh@gmail.com"], subject: "S", textBody: "t", htmlBody: "<p>h</p>", attachments: [] },
+      { mixed: "M", alt: "A" },
+    );
+    expect(msg).toContain("Bcc: jeffulsh@gmail.com");
   });
 
   it("base64-encodes attachment content", async () => {

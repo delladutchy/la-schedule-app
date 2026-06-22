@@ -215,17 +215,36 @@ export async function markSheetSynced(
   syncedAt: string,
 ): Promise<void> {
   const client = getSupabaseServerClient();
+  const { data: existing, error: readError } = await client
+    .from("invoice_data")
+    .select("invoice_status")
+    .eq("google_event_id", googleEventId)
+    .maybeSingle();
+
+  if (readError) throw new Error(`[invoice-data] mark-synced read failed: ${readError.message}`);
+
+  const currentStatus = ((existing as Record<string, unknown> | null)?.invoice_status as InvoiceStatus | undefined) ?? "none";
+  const nextStatus = resolveSheetSyncedStatus(currentStatus);
+  const patch: Record<string, unknown> = {
+    sheet_synced_at: syncedAt,
+    sheet_sync_error: null,
+    updated_at: syncedAt,
+  };
+  if (nextStatus !== currentStatus) patch.invoice_status = nextStatus;
+
   const { error } = await client
     .from("invoice_data")
-    .update({
-      sheet_synced_at: syncedAt,
-      sheet_sync_error: null,
-      invoice_status: "sheet_synced",
-      updated_at: syncedAt,
-    })
+    .update(patch)
     .eq("google_event_id", googleEventId);
 
   if (error) throw new Error(`[invoice-data] mark-synced failed: ${error.message}`);
+}
+
+export function resolveSheetSyncedStatus(currentStatus: InvoiceStatus): InvoiceStatus {
+  if (currentStatus === "none" || currentStatus === "ready" || currentStatus === "sheet_synced") {
+    return "sheet_synced";
+  }
+  return currentStatus;
 }
 
 export async function markSheetSyncError(
@@ -321,6 +340,44 @@ export async function markInvoiceSent(
   if (error) throw new Error(`[invoice-data] mark-sent failed: ${error.message}`);
 }
 
+export async function markGmailDraftCreated(
+  googleEventId: string,
+  draftedAt: string,
+): Promise<InvoiceData> {
+  const client = getSupabaseServerClient();
+
+  const { data: existing, error: readError } = await client
+    .from("invoice_data")
+    .select("invoice_status")
+    .eq("google_event_id", googleEventId)
+    .maybeSingle();
+
+  if (readError) throw new Error(`[invoice-data] mark-gmail-draft read failed: ${readError.message}`);
+
+  const currentStatus = ((existing as Record<string, unknown> | null)?.invoice_status as InvoiceStatus | undefined) ?? "none";
+  const nextStatus = resolveGmailDraftCreatedStatus(currentStatus);
+  const patch: Record<string, unknown> = { updated_at: draftedAt };
+  if (nextStatus !== currentStatus) patch.invoice_status = nextStatus;
+
+  const { data, error } = await client
+    .from("invoice_data")
+    .update(patch)
+    .eq("google_event_id", googleEventId)
+    .select()
+    .single();
+
+  if (error) throw new Error(`[invoice-data] mark-gmail-draft failed: ${error.message}`);
+  if (!data) throw new Error("[invoice-data] mark-gmail-draft returned no row");
+  return coerceInvoiceData(data as Record<string, unknown>);
+}
+
+export function resolveGmailDraftCreatedStatus(currentStatus: InvoiceStatus): InvoiceStatus {
+  if (["none", "ready", "sheet_synced", "draft_created"].includes(currentStatus)) {
+    return "draft_created";
+  }
+  return currentStatus;
+}
+
 /**
  * Recalculate and persist payment fields after allocations change.
  * Called by payment allocation API after any create/delete.
@@ -334,8 +391,8 @@ export async function updateInvoicePaymentTotals(
 ): Promise<void> {
   const client = getSupabaseServerClient();
   const now = new Date().toISOString();
-  const remainingBalance = Math.max(0, opts.invoiceTotal - opts.amountPaid);
-  const amountPaid = Math.min(opts.amountPaid, opts.invoiceTotal);
+  const remainingBalance = Number(Math.max(0, opts.invoiceTotal - opts.amountPaid).toFixed(2));
+  const amountPaid = Number(Math.min(opts.amountPaid, opts.invoiceTotal).toFixed(2));
 
   let newStatus: InvoiceStatus;
   if (amountPaid <= 0) {

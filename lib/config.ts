@@ -147,6 +147,9 @@ const EnvSchema = z.object({
    */
   GOOGLE_GMAIL_REFRESH_TOKEN: z.string().min(1).optional(),
 
+  /** Optional automatic BCC recipient for Gmail Draft invoice copies. Defaults in route to Jeff. */
+  INVOICE_EMAIL_BCC_SELF: z.string().optional(),
+
   /** Optional shared secret for Google Calendar webhook receiver endpoint. */
   GOOGLE_WEBHOOK_TOKEN: z.string().optional(),
 

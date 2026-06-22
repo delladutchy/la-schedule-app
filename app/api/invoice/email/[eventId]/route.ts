@@ -359,10 +359,11 @@ export async function POST(
   }
 
   try {
-    const sheetRow = generateSheetRow(packet, gigSummary, invoiceNumber, undefined, {
-      sentTo: invoiceData.invoice_sent_to,
-      sentSubject: invoiceData.invoice_sent_subject,
-      jobNameOverride: invoiceData.invoice_job_name_override,
+    const sheetPacket = calculateInvoicePacket(updatedInvoiceData);
+    const sheetRow = generateSheetRow(sheetPacket, gigSummary, invoiceNumber, undefined, {
+      sentTo: updatedInvoiceData.invoice_sent_to,
+      sentSubject: updatedInvoiceData.invoice_sent_subject,
+      jobNameOverride: updatedInvoiceData.invoice_job_name_override,
     });
     await upsertSheetRow(sheetRow);
   } catch (sheetErr) {
@@ -421,11 +422,17 @@ export async function POST(
   // Re-sync Google Sheet with invoice_status = "sent", sent date, sentTo, and sentSubject.
   // The earlier upsertSheetRow used status from packet (sheet_synced); this corrects it.
   try {
-    const sentPacket = calculateInvoicePacket({ ...invoiceData, invoice_status: "sent", invoice_sent_at: sentAt });
+    const sentPacket = calculateInvoicePacket({
+      ...updatedInvoiceData,
+      invoice_status: "sent",
+      invoice_sent_at: sentAt,
+      invoice_sent_to: sentTo,
+      invoice_sent_subject: sentSubject,
+    });
     const sentSheetRow = generateSheetRow(sentPacket, gigSummary, invoiceNumber, undefined, {
       sentTo,
       sentSubject,
-      jobNameOverride: invoiceData.invoice_job_name_override,
+      jobNameOverride: updatedInvoiceData.invoice_job_name_override,
     });
     await upsertSheetRow(sentSheetRow);
     await markSheetSynced(params.eventId, new Date().toISOString());

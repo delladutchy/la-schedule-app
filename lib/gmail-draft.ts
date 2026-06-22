@@ -19,6 +19,7 @@ export interface GmailDraftOptions {
   from: string;
   to: string[];
   cc?: string[];
+  bcc?: string[];
   subject: string;
   textBody: string;
   htmlBody: string;
@@ -63,6 +64,7 @@ export function buildMimeMessage(
     `From: ${opts.from}`,
     `To: ${opts.to.join(", ")}`,
     ...(opts.cc && opts.cc.length > 0 ? [`Cc: ${opts.cc.join(", ")}`] : []),
+    ...(opts.bcc && opts.bcc.length > 0 ? [`Bcc: ${opts.bcc.join(", ")}`] : []),
     `Subject: ${encodeSubject(opts.subject)}`,
     `Content-Type: multipart/mixed; boundary="${b.mixed}"`,
   ];
