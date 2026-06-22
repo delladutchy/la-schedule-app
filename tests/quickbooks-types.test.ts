@@ -231,6 +231,7 @@ describe("buildQBInvoiceLines", () => {
         deductionMiles:          60,
         reimbursedMiles:         60,
         unreimbursedMiles:       60,
+        grossMileageAmount:      62.4,
         mileageAmount:           31.2,
         mileageAdjustmentAmount: -31.2,
         mileageRate:             0.52,
@@ -259,7 +260,7 @@ describe("buildQBInvoiceLines", () => {
 
     it("excludes mileage adjustment when deduction is zero", () => {
       const packet = makePacket({
-        mileage: { totalMiles: 50, deductionMiles: 0, reimbursedMiles: 50, unreimbursedMiles: 0, mileageAmount: 26, mileageAdjustmentAmount: 0, mileageRate: 0.52 },
+        mileage: { totalMiles: 50, deductionMiles: 0, reimbursedMiles: 50, unreimbursedMiles: 0, grossMileageAmount: 26, mileageAmount: 26, mileageAdjustmentAmount: 0, mileageRate: 0.52 },
       });
       const lines = buildQBInvoiceLines(packet, FULL_ITEMS);
       expect(lines.find((l) => l.SalesItemLineDetail.ItemRef.value === "5")).toBeUndefined();
@@ -336,7 +337,7 @@ describe("buildQBInvoiceLines", () => {
     it("builds all 11 line types when fully configured and all amounts non-zero", () => {
       const packet = makePacket({
         overtimeTotal: 165, totalOvertimeHours: 2,
-        mileage: { totalMiles: 120, deductionMiles: 60, reimbursedMiles: 60, unreimbursedMiles: 60, mileageAmount: 31.2, mileageAdjustmentAmount: -31.2, mileageRate: 0.52 },
+        mileage: { totalMiles: 120, deductionMiles: 60, reimbursedMiles: 60, unreimbursedMiles: 60, grossMileageAmount: 62.4, mileageAmount: 31.2, mileageAdjustmentAmount: -31.2, mileageRate: 0.52 },
         bagFees: 25, hotel: 120, parking: 15, tolls: 4, uber: 22, otherExpenses: 50,
       });
       expect(buildQBInvoiceLines(packet, FULL_ITEMS)).toHaveLength(11);

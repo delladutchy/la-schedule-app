@@ -68,9 +68,10 @@ export interface MileageCalc {
   totalMiles: number;
   deductionMiles: number;       // 60
   reimbursedMiles: number;      // max(totalMiles - 60, 0)
-  unreimbursedMiles: number;    // totalMiles - reimbursedMiles (sheet only)
-  mileageAmount: number;        // reimbursedMiles * rate
-  mileageAdjustmentAmount: number; // -deductionMiles * rate (when totalMiles > 0)
+  unreimbursedMiles: number;    // totalMiles - reimbursedMiles
+  grossMileageAmount: number;   // totalMiles * rate, shown on invoice before adjustment
+  mileageAmount: number;        // reimbursedMiles * rate, stored in Sheet as actual billed mileage
+  mileageAdjustmentAmount: number; // -unreimbursedMiles * rate, shown when an exclusion applies
   mileageRate: number;
 }
 
