@@ -4910,7 +4910,7 @@ html.modal-open body {
 }
 
 .invoice-block {
-  margin-bottom: 18px;
+  margin-bottom: 8px;
 }
 
 .invoice-block-label {
@@ -5935,6 +5935,45 @@ html.modal-open body {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 160px;
+}
+
+/* ── Section card hierarchy ────────────────────────────────────────────────
+   Top-level collapsible blocks become card rows. The :has(> .invoice-collapsible-toggle)
+   selector scopes this to only the collapsible sections — not the PDF block,
+   not the nested Advanced Amount Overrides block.
+   ──────────────────────────────────────────────────────────────────────── */
+.invoice-block:not(.invoice-block--nested):has(> .invoice-collapsible-toggle) {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface, var(--bg));
+  overflow: hidden;
+}
+
+/* Toggle row: comfortable tap target */
+.invoice-block:not(.invoice-block--nested) > .invoice-collapsible-toggle {
+  padding: 12px 14px;
+}
+
+/* Hover state: subtle highlight on collapsed rows */
+.invoice-block:not(.invoice-block--nested) > .invoice-collapsible-toggle:hover {
+  background: var(--surface-hover, rgba(0, 0, 0, 0.03));
+}
+
+/* Label inside a flex toggle needs no block-level bottom margin */
+.invoice-collapsible-toggle .invoice-block-label {
+  margin: 0;
+}
+
+/* Expanded content: border-top separator + inner padding */
+.invoice-block:not(.invoice-block--nested) > .invoice-collapsible-content:has(*) {
+  border-top: 1px solid var(--border);
+  padding: 14px;
+  margin-top: 0;
+}
+
+/* Open card: stronger border so the active section reads clearly */
+.invoice-block:not(.invoice-block--nested):has(> .invoice-collapsible-content:has(*)) {
+  border-color: var(--border-strong, #404040);
 }
 
 .invoice-overrides-content {
