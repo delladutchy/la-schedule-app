@@ -436,6 +436,33 @@ describe("generateSheetRow — mileage columns", () => {
     expect(row.gigEvent).toBe("test job");
   });
 
+  it("passes paid_date through to the Sheet PAID DATE field only when present", () => {
+    const unpaidPacket = calculateInvoicePacket(makeInvoiceData({
+      invoice_status: "draft_created",
+      invoice_pdf_url: "https://example.com/invoices/draft.pdf",
+      paid_date: null,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    }));
+    const unpaidRow = generateSheetRow(unpaidPacket, "LA#5555 — test job", "1001");
+
+    expect(unpaidRow.status).toBe("draft_created");
+    expect(unpaidRow.paidDate).toBe("");
+    expect(unpaidRow.invoicePdfUrl).toBe("https://example.com/invoices/draft.pdf");
+
+    const paidPacket = calculateInvoicePacket(makeInvoiceData({
+      invoice_status: "paid",
+      invoice_pdf_url: "https://example.com/invoices/paid.pdf",
+      paid_date: "2026-06-22",
+      amount_paid: 800,
+      workday_entries: [{ date: "2026-06-01", startTime: "8:00 AM", endTime: "6:00 PM" }],
+    }));
+    const paidRow = generateSheetRow(paidPacket, "LA#5555 — test job", "1001");
+
+    expect(paidRow.status).toBe("paid");
+    expect(paidRow.paidDate).toBe("2026-06-22");
+    expect(paidRow.invoicePdfUrl).toBe("https://example.com/invoices/paid.pdf");
+  });
+
   it("exports totalBusinessMiles, laPaidMiles, unreimbursedMiles, mileagePaid correctly", () => {
     const data = makeInvoiceData({
       workday_entries: [

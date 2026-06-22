@@ -13,8 +13,16 @@
  *   - Duplicate cleanup keeps the newest duplicate row and only deletes confirmed duplicates
  */
 import { describe, it, expect } from "vitest";
-import { COLUMN_ORDER, MAIN_SHEET_HEADER_RANGE, SHEET_HEADERS } from "@/lib/google-sheets";
+import {
+  COLUMN_ORDER,
+  MAIN_SHEET_HEADER_RANGE,
+  MAIN_SHEET_LAST_COLUMN,
+  SHEET_HEADERS,
+  mainSheetDataRowRange,
+  sheetRowToValues,
+} from "@/lib/google-sheets";
 import { resolveSheetGigEvent } from "@/lib/invoice-calculations";
+import type { SheetRow } from "@/lib/invoice-types";
 
 // ---------------------------------------------------------------------------
 // Mirrors of generateSheetRow pure logic (no Sheets API calls)
@@ -1904,6 +1912,7 @@ describe("Column mapping A–U and AH", () => {
   it("total columns = 34 (A–AG plus AH tax column)", () => {
     expect(COLUMN_ORDER_MIRROR.length).toBe(34);
     expect(COLUMN_ORDER).toHaveLength(34);
+    expect(SHEET_HEADERS).toHaveLength(34);
   });
   it("A (0) = invoiceNumber", () => { expect(COLUMN_ORDER_MIRROR[0]).toBe("invoiceNumber"); });
   it("C (2) = laJobNumber", () => { expect(COLUMN_ORDER_MIRROR[2]).toBe("laJobNumber"); });
@@ -1915,6 +1924,28 @@ describe("Column mapping A–U and AH", () => {
   it("S (18) = mileagePaid (dollars)", () => { expect(COLUMN_ORDER_MIRROR[18]).toBe("mileagePaid"); });
   it("T (19) = status", () => { expect(COLUMN_ORDER_MIRROR[19]).toBe("status"); });
   it("U (20) = paidDate", () => { expect(COLUMN_ORDER_MIRROR[20]).toBe("paidDate"); });
+  it("T through AA indexes match production accounting headers", () => {
+    expect(COLUMN_ORDER.slice(19, 27)).toEqual([
+      "status",
+      "paidDate",
+      "invoicePdfUrl",
+      "invoiceSentDate",
+      "amountPaid",
+      "remainingBalance",
+      "paymentMethod",
+      "paymentReceivedDate",
+    ]);
+    expect(SHEET_HEADERS.slice(19, 27)).toEqual([
+      "STATUS",
+      "PAID DATE",
+      "PDF LINK",
+      "SENT DATE",
+      "AMOUNT PAID",
+      "REMAINING BALANCE",
+      "PAYMENT METHOD",
+      "PAYMENT RECEIVED DATE",
+    ]);
+  });
   it("V (21) = invoicePdfUrl (NOT mileage value — V is used by PDF link)", () => {
     expect(COLUMN_ORDER_MIRROR[21]).toBe("invoicePdfUrl");
     expect(COLUMN_ORDER[21]).toBe("invoicePdfUrl");
@@ -1968,7 +1999,7 @@ describe("Google Sheet headers for app-written columns", () => {
 
   it("invoice PDF URL still writes to column V", () => {
     const freshUrl = "https://example.com/invoices/Invoice-LA5555.pdf";
-    const sampleRow = {
+    const sampleRow: SheetRow = {
       invoiceNumber: "1001",
       date: "2026-06-18",
       laJobNumber: "LA#5555",
@@ -2004,14 +2035,127 @@ describe("Google Sheet headers for app-written columns", () => {
       internalReservedAg: "",
       unreimbursedMileageValue: 0,
     };
-    const values = COLUMN_ORDER.map((key) => sampleRow[key as keyof typeof sampleRow] ?? "");
+    const values = sheetRowToValues(sampleRow);
+    expect(values).toHaveLength(SHEET_HEADERS.length);
+    expect(values).toHaveLength(COLUMN_ORDER.length);
     expect(values[21]).toBe(freshUrl);
+    expect(values[20]).toBe("");
     expect(SHEET_HEADERS[21]).toBe("PDF LINK");
+  });
+
+  it("draft_created writes status to T, keeps PAID DATE blank, and writes PDF URL to V", () => {
+    const freshUrl = "https://example.com/invoices/Invoice-LA5555-draft.pdf";
+    const sampleRow: SheetRow = {
+      invoiceNumber: "1001",
+      date: "2026-06-18",
+      laJobNumber: "LA#5555",
+      gigEvent: "test job",
+      totalPay: 7598.75,
+      labor: 1650,
+      ot: 618.75,
+      perDiem: 120,
+      mileage: 0,
+      parking: 110,
+      hotel: 0,
+      tolls: 0,
+      bagFees: 100,
+      uber: 5000,
+      otherExpenses: 0,
+      totalBusinessMiles: 0,
+      laPaidMiles: 0,
+      unreimbursedMiles: 0,
+      mileagePaid: 0,
+      status: "draft_created",
+      paidDate: "",
+      invoicePdfUrl: freshUrl,
+      invoiceSentDate: "",
+      amountPaid: 0,
+      remainingBalance: 7598.75,
+      paymentMethod: "",
+      paymentReceivedDate: "",
+      paymentBatchRef: "",
+      sentTo: "accounting@example.com",
+      sentSubject: "Jeff Ulsh - Invoice LA #5555 - test job",
+      internalReservedAe: "",
+      internalReservedAf: "",
+      internalReservedAg: "",
+      unreimbursedMileageValue: 0,
+    };
+
+    const values = sheetRowToValues(sampleRow);
+
+    expect(values).toHaveLength(SHEET_HEADERS.length);
+    expect(values[19]).toBe("draft_created");
+    expect(values[20]).toBe("");
+    expect(String(values[20])).not.toContain("http");
+    expect(values[21]).toBe(freshUrl);
+    expect(values[22]).toBe("");
+    expect(values[23]).toBe(0);
+    expect(values[24]).toBe(7598.75);
+    expect(values[25]).toBe("");
+    expect(values[26]).toBe("");
+  });
+
+  it("paid invoices populate PAID DATE and payment fields without shifting PDF or sent columns", () => {
+    const freshUrl = "https://example.com/invoices/Invoice-LA5555-paid.pdf";
+    const sampleRow: SheetRow = {
+      invoiceNumber: "1001",
+      date: "2026-06-18",
+      laJobNumber: "LA#5555",
+      gigEvent: "test job",
+      totalPay: 7598.75,
+      labor: 1650,
+      ot: 618.75,
+      perDiem: 120,
+      mileage: 0,
+      parking: 110,
+      hotel: 0,
+      tolls: 0,
+      bagFees: 100,
+      uber: 5000,
+      otherExpenses: 0,
+      totalBusinessMiles: 0,
+      laPaidMiles: 0,
+      unreimbursedMiles: 0,
+      mileagePaid: 0,
+      status: "paid",
+      paidDate: "2026-06-22",
+      invoicePdfUrl: freshUrl,
+      invoiceSentDate: "2026-06-18",
+      amountPaid: 7598.75,
+      remainingBalance: 0,
+      paymentMethod: "Direct Deposit",
+      paymentReceivedDate: "2026-06-22",
+      paymentBatchRef: "LA-BATCH-2026-06",
+      sentTo: "accounting@example.com",
+      sentSubject: "Jeff Ulsh - Invoice LA #5555 - test job",
+      internalReservedAe: "",
+      internalReservedAf: "",
+      internalReservedAg: "",
+      unreimbursedMileageValue: 0,
+    };
+
+    const values = sheetRowToValues(sampleRow);
+
+    expect(values).toHaveLength(SHEET_HEADERS.length);
+    expect(values[19]).toBe("paid");
+    expect(values[20]).toBe("2026-06-22");
+    expect(values[21]).toBe(freshUrl);
+    expect(values[22]).toBe("2026-06-18");
+    expect(values[23]).toBe(7598.75);
+    expect(values[24]).toBe(0);
+    expect(values[25]).toBe("Direct Deposit");
+    expect(values[26]).toBe("2026-06-22");
   });
 
   it("reset/rebuild uses the full A1:AH1 header range", () => {
     expect(MAIN_SHEET_HEADER_RANGE).toBe("'LA PAY (2026)'!A1:AH1");
+    expect(MAIN_SHEET_LAST_COLUMN).toBe("AH");
     expect(SHEET_HEADERS[33]).toBe("UNREIMBURSED MILEAGE VALUE");
+  });
+
+  it("main row upsert writes an explicit A:AH range to repair shifted existing rows", () => {
+    expect(mainSheetDataRowRange(7)).toBe("'LA PAY (2026)'!A7:AH7");
   });
 });
 

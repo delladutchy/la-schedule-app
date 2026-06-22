@@ -129,6 +129,7 @@ if (SHEET_HEADERS.length !== COLUMN_ORDER.length) {
 }
 
 export const MAIN_SHEET_HEADER_RANGE = `${QUOTED_SHEET_NAME}!A1:AH1`;
+export const MAIN_SHEET_LAST_COLUMN = "AH";
 const INTERNAL_RESERVED_COLUMN_START_INDEX = 30; // AE, zero-indexed
 const INTERNAL_RESERVED_COLUMN_END_INDEX = 33;   // AG + 1, zero-indexed exclusive
 
@@ -372,12 +373,16 @@ async function getSheetAuth() {
   });
 }
 
-function rowToValues(row: SheetRow): (string | number)[] {
+export function sheetRowToValues(row: SheetRow): (string | number)[] {
   return COLUMN_ORDER.map((key) => {
     const val = row[key];
     if (val == null) return "";
     return val;
   });
+}
+
+export function mainSheetDataRowRange(rowNumber: number): string {
+  return `${QUOTED_SHEET_NAME}!A${rowNumber}:${MAIN_SHEET_LAST_COLUMN}${rowNumber}`;
 }
 
 async function ensureMainSheetHeaders(
@@ -605,7 +610,7 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
     }
   }
 
-  const values = [rowToValues(row)];
+  const values = [sheetRowToValues(row)];
   const archivedRows: number[] = [];
   let finalRowNumber: number;
   let action: UpsertSheetRowResult["action"];
@@ -649,7 +654,7 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
       // ── UPDATE in-place (row is already above TOTALS) ───────────────────────
       await sheets.spreadsheets.values.update({
         spreadsheetId: sheetId,
-        range: `${QUOTED_SHEET_NAME}!A${keepEntry.rowNumber}`,
+        range: mainSheetDataRowRange(keepEntry.rowNumber),
         valueInputOption: "USER_ENTERED",
         requestBody: { values },
       });
@@ -704,7 +709,7 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
   if (action !== "updated") {
     await sheets.spreadsheets.values.update({
       spreadsheetId: sheetId,
-      range: `${QUOTED_SHEET_NAME}!A${finalRowNumber}`,
+      range: mainSheetDataRowRange(finalRowNumber),
       valueInputOption: "USER_ENTERED",
       requestBody: { values },
     });

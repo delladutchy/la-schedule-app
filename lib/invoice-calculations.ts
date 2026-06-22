@@ -380,6 +380,7 @@ export function calculateInvoicePacket(data: InvoiceData): InvoicePacket {
     invoicePdfUrl:     data.invoice_pdf_url   ?? null,
     invoiceCreatedAt:  data.invoice_created_at ?? null,
     invoiceSentAt:     data.invoice_sent_at   ?? null,
+    paidDate:          data.paid_date          ?? null,
     invoiceTotal:      data.invoice_total     ?? null,
     amountPaid:        data.amount_paid       ?? 0,
     remainingBalance:  data.remaining_balance ?? null,
@@ -428,7 +429,7 @@ export function generateSheetRow(
     unreimbursedMiles: m?.unreimbursedMiles ?? 0,
     mileagePaid: m?.mileageAmount ?? 0,
     status: packet.invoiceStatus,
-    paidDate: "",
+    paidDate: packet.paidDate ?? "",
     // Native invoicing columns (appended to preserve existing positions)
     invoicePdfUrl:        packet.invoicePdfUrl       ?? "",
     invoiceSentDate:      packet.invoiceSentAt        ? packet.invoiceSentAt.slice(0, 10)  : "",

@@ -176,6 +176,7 @@ export interface InvoicePacket {
   invoicePdfUrl: string | null;
   invoiceCreatedAt: string | null;
   invoiceSentAt: string | null;
+  paidDate?: string | null;
   invoiceTotal: number | null;
   amountPaid: number;
   remainingBalance: number | null;
