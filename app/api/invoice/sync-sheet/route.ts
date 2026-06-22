@@ -4,7 +4,7 @@ import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
 import { getInvoiceData, markSheetSynced, markSheetSyncError } from "@/lib/invoice-data";
 import { calculateInvoicePacket, generateSheetRow } from "@/lib/invoice-calculations";
-import { upsertSheetRow } from "@/lib/google-sheets";
+import { autoRepairSheetHealth, upsertSheetRow } from "@/lib/google-sheets";
 import { classifySheetsError } from "@/lib/google-error";
 
 export const dynamic = "force-dynamic";
@@ -72,12 +72,23 @@ export async function POST(request: NextRequest) {
   });
 
   let upsertResult;
+  let repairResult;
   try {
     upsertResult = await upsertSheetRow(row);
+    repairResult = await autoRepairSheetHealth({
+      archiveTestRows: true,
+      protectedKeys: [
+        row.laJobNumber ? `la:${row.laJobNumber}` : "",
+        row.invoiceNumber ? `inv:${row.invoiceNumber}` : "",
+      ].filter(Boolean),
+    });
+    if (!repairResult.ok) {
+      throw new Error(repairResult.message);
+    }
   } catch (err) {
     const rawMsg = err instanceof Error ? err.message : String(err);
     const friendlyMsg = classifySheetsError(err, sheetId, sheetName);
-    console.error("[sync-sheet] sheet write failed:", rawMsg);
+    console.error("[sync-sheet] sheet write/repair failed:", rawMsg);
     try {
       await markSheetSyncError(eventId, rawMsg);
     } catch {
@@ -88,6 +99,14 @@ export async function POST(request: NextRequest) {
       { status: 502 },
     );
   }
+
+  const safeCleanupChanged =
+    repairResult.voidArchivedCount > 0 ||
+    repairResult.testArchivedCount > 0 ||
+    repairResult.duplicatesArchivedCount > 0 ||
+    repairResult.rowsMovedCount > 0 ||
+    repairResult.formulasRebuilt;
+  const hasUnresolvedCleanup = !repairResult.healthAfter.isClean;
 
   const syncedAt = new Date().toISOString();
   try {
@@ -102,11 +121,31 @@ export async function POST(request: NextRequest) {
     syncedAt,
     sheetTarget,
     hasDuplicates:        upsertResult.hasDuplicates,
-    archivedRows:         upsertResult.archivedRows,
+    archivedRows:         [
+      ...upsertResult.archivedRows,
+      // repairResult reports counts, not row numbers; keep archivedRows backward-compatible for upsert rows only.
+    ],
     keptRow:              upsertResult.rowNumber,
-    autoRepaired:         upsertResult.autoRepaired,
-    formulasRepaired:     upsertResult.formulasRepaired,
-    hasUnrelatedClutter:  upsertResult.hasUnrelatedClutter,
-    message:              upsertResult.userMessage,
+    autoRepaired:         upsertResult.autoRepaired || safeCleanupChanged,
+    formulasRepaired:     upsertResult.formulasRepaired || repairResult.formulasRebuilt,
+    headersRepaired:      repairResult.headersRepaired,
+    hasUnrelatedClutter:  hasUnresolvedCleanup,
+    hasUnresolvedCleanup,
+    autoCleanup: {
+      voidArchivedCount:       repairResult.voidArchivedCount,
+      testArchivedCount:       repairResult.testArchivedCount,
+      duplicatesArchivedCount: repairResult.duplicatesArchivedCount,
+      rowsMovedCount:          repairResult.rowsMovedCount,
+      formulasRebuilt:         repairResult.formulasRebuilt,
+      headersRepaired:         repairResult.headersRepaired,
+      activeBelowTotalsCount:  repairResult.healthAfter.activeBelowTotalsCount,
+      unknownBelowTotalsCount: repairResult.healthAfter.unknownBelowTotalsCount,
+      isClean:                 repairResult.healthAfter.isClean,
+    },
+    message:              safeCleanupChanged
+      ? "Sheet updated and cleaned"
+      : hasUnresolvedCleanup
+        ? "Sheet updated. Sheet has unresolved cleanup items."
+        : upsertResult.userMessage,
   });
 }

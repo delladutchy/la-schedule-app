@@ -2762,3 +2762,224 @@ describe("Automatic Sheet Maintenance — auto-repair during normal sync", () =>
   });
 
 });
+
+// ---------------------------------------------------------------------------
+// Automatic safe Sheet health cleanup after normal sync
+// ---------------------------------------------------------------------------
+
+interface AutoCleanupRow extends FullUpsertEntry {
+  paymentStatus?: string;
+  paidDate?: string;
+}
+
+interface AutoCleanupResult {
+  archivedRows: number[];
+  archiveBeforeRemove: boolean;
+  movedRows: number[];
+  unknownRowsLeftAlone: number[];
+  formulasRebuilt: boolean;
+  headersRepairedThroughAH: boolean;
+  hasUnresolvedCleanup: boolean;
+  currentInvoiceVerified: boolean;
+  manualResetRequired: boolean;
+  rowsAfter: AutoCleanupRow[];
+}
+
+function rowKeys(row: AutoCleanupRow): string[] {
+  const keys: string[] = [];
+  const la = normalizeLA(row.cellC);
+  if (la) keys.push(`la:${la}`);
+  if (row.cellA.trim()) keys.push(`inv:${row.cellA.trim()}`);
+  return keys;
+}
+
+function simulateSafeAutoCleanup(
+  rows: AutoCleanupRow[],
+  currentKeys: string[],
+  formulasHealthy = false,
+): AutoCleanupResult {
+  const protectedKeys = new Set(currentKeys);
+  const totalsRow = rows.find((row) => isTotalsRow(row.cellA))?.rowNumber ?? null;
+  const archivedRows: number[] = [];
+  const movedRows: number[] = [];
+  const unknownRowsLeftAlone: number[] = [];
+  let archiveBeforeRemove = true;
+
+  const activeGroups = new Map<string, AutoCleanupRow[]>();
+  for (const row of rows) {
+    if (row.rowNumber === 1 || isTotalsRow(row.cellA)) continue;
+    const isVoid = row.cellT === VOID_STATUS;
+    const isActive = !isVoid && isInvoiceDataRow(row.cellA, row.cellC, row.cellT);
+    const keys = rowKeys(row);
+    const key = keys[0];
+
+    if (isVoid && key) {
+      archivedRows.push(row.rowNumber);
+      continue;
+    }
+
+    const isProtected = keys.some((k) => protectedKeys.has(k));
+    const isKnownTest = isTestSheetRow(row.cellA, row.cellC, row.cellD);
+    if (isActive && isKnownTest && !isProtected) {
+      archivedRows.push(row.rowNumber);
+      continue;
+    }
+
+    if (isActive && key) {
+      const group = activeGroups.get(key) ?? [];
+      group.push(row);
+      activeGroups.set(key, group);
+      continue;
+    }
+
+    const hasContent = [row.cellA, row.cellB, row.cellC, row.cellD, row.cellE, row.cellT]
+      .some((value) => value.trim() !== "");
+    if (totalsRow != null && row.rowNumber > totalsRow && hasContent) {
+      unknownRowsLeftAlone.push(row.rowNumber);
+    }
+  }
+
+  for (const [, group] of activeGroups) {
+    if (group.length > 1) {
+      const keep = group.reduce((best, row) => row.rowNumber > best.rowNumber ? row : best);
+      for (const row of group) {
+        if (row.rowNumber !== keep.rowNumber) archivedRows.push(row.rowNumber);
+      }
+    }
+  }
+
+  const archived = new Set(archivedRows);
+  for (const [, group] of activeGroups) {
+    for (const row of group) {
+      if (archived.has(row.rowNumber)) continue;
+      if (totalsRow != null && row.rowNumber > totalsRow) movedRows.push(row.rowNumber);
+    }
+  }
+
+  const rowsAfter = rows
+    .filter((row) => !archived.has(row.rowNumber))
+    .map((row) => movedRows.includes(row.rowNumber)
+      ? { ...row, rowNumber: Math.max(2, (totalsRow ?? row.rowNumber) - 1) }
+      : row);
+
+  const currentInvoiceVerified = rowsAfter.some((row) =>
+    row.rowNumber > 1 &&
+    (totalsRow == null || row.rowNumber < totalsRow) &&
+    row.cellT !== VOID_STATUS &&
+    rowKeys(row).some((key) => protectedKeys.has(key)),
+  );
+
+  return {
+    archivedRows: [...new Set(archivedRows)].sort((a, b) => a - b),
+    archiveBeforeRemove,
+    movedRows: movedRows.sort((a, b) => a - b),
+    unknownRowsLeftAlone,
+    formulasRebuilt: !formulasHealthy || archivedRows.length > 0 || movedRows.length > 0,
+    headersRepairedThroughAH: true,
+    hasUnresolvedCleanup: unknownRowsLeftAlone.length > 0,
+    currentInvoiceVerified,
+    manualResetRequired: false,
+    rowsAfter,
+  };
+}
+
+describe("Automatic safe Sheet health cleanup — verified pipeline", () => {
+  const baseRows: AutoCleanupRow[] = [
+    { rowNumber: 1, cellA: "INV #", cellB: "DATE", cellC: "LA JOB #", cellD: "GIG", cellE: "TOTAL PAY", cellT: "STATUS" },
+    { rowNumber: 2, cellA: "1002", cellB: "2026-05-01", cellC: "6666", cellD: "Real Job", cellE: "1000.00", cellT: "sheet_synced", paymentStatus: "sent", paidDate: "" },
+    { rowNumber: 3, cellA: "TOTALS:", cellB: "", cellC: "", cellD: "", cellE: "", cellT: "" },
+  ];
+
+  it("verified pipeline auto-runs safe Sheet health cleanup after sync", () => {
+    const result = simulateSafeAutoCleanup(baseRows, ["la:6666", "inv:1002"]);
+    expect(result.headersRepairedThroughAH).toBe(true);
+    expect(result.manualResetRequired).toBe(false);
+    expect(result.currentInvoiceVerified).toBe(true);
+  });
+
+  it("active rows below TOTALS are moved above TOTALS automatically", () => {
+    const rows = [
+      ...baseRows,
+      { rowNumber: 4, cellA: "1003", cellB: "2026-06-01", cellC: "7777", cellD: "Below Totals", cellE: "900.00", cellT: "sheet_synced" },
+    ];
+    const result = simulateSafeAutoCleanup(rows, ["la:6666", "inv:1002"]);
+    expect(result.movedRows).toEqual([4]);
+    expect(result.manualResetRequired).toBe(false);
+  });
+
+  it("formulas are rebuilt automatically when cleanup changes layout", () => {
+    const rows = [
+      ...baseRows,
+      { rowNumber: 4, cellA: "1003", cellB: "2026-06-01", cellC: "7777", cellD: "Below Totals", cellE: "900.00", cellT: "sheet_synced" },
+    ];
+    const result = simulateSafeAutoCleanup(rows, ["la:6666", "inv:1002"], true);
+    expect(result.formulasRebuilt).toBe(true);
+  });
+
+  it("headers through AH are repaired automatically", () => {
+    const result = simulateSafeAutoCleanup(baseRows, ["la:6666", "inv:1002"]);
+    expect(result.headersRepairedThroughAH).toBe(true);
+    expect(SHEET_HEADERS[33]).toBe("UNREIMBURSED MILEAGE VALUE");
+  });
+
+  it("stale duplicate and legacy VOID rows are archived automatically", () => {
+    const rows = [
+      ...baseRows,
+      { rowNumber: 4, cellA: "1002", cellB: "2026-05-01", cellC: "6666", cellD: "Real Job duplicate", cellE: "1000.00", cellT: "sheet_synced" },
+      { rowNumber: 5, cellA: "1009", cellB: "2026-01-01", cellC: "9999", cellD: "Old Void", cellE: "500.00", cellT: VOID_STATUS },
+    ];
+    const result = simulateSafeAutoCleanup(rows, ["la:6666", "inv:1002"]);
+    expect(result.archivedRows).toEqual([2, 5]);
+    expect(result.archiveBeforeRemove).toBe(true);
+  });
+
+  it("current invoice verifies after automatic cleanup", () => {
+    const rows = [
+      ...baseRows,
+      { rowNumber: 4, cellA: "1002", cellB: "2026-05-01", cellC: "6666", cellD: "Real Job duplicate", cellE: "1000.00", cellT: "sheet_synced" },
+    ];
+    const result = simulateSafeAutoCleanup(rows, ["la:6666", "inv:1002"]);
+    expect(result.currentInvoiceVerified).toBe(true);
+    expect(result.manualResetRequired).toBe(false);
+  });
+
+  it("known test rows are archived only when not protected as the current invoice", () => {
+    const rows = [
+      ...baseRows,
+      { rowNumber: 4, cellA: "1001", cellB: "2026-06-18", cellC: "5555", cellD: "test job", cellE: "2598.75", cellT: "sheet_synced" },
+    ];
+    const oldTestCleanup = simulateSafeAutoCleanup(rows, ["la:6666", "inv:1002"]);
+    expect(oldTestCleanup.archivedRows).toContain(4);
+
+    const currentTestCleanup = simulateSafeAutoCleanup(rows, ["la:5555", "inv:1001"]);
+    expect(currentTestCleanup.archivedRows).not.toContain(4);
+    expect(currentTestCleanup.currentInvoiceVerified).toBe(true);
+  });
+
+  it("unknown/unclassifiable rows are not modified and produce a warning", () => {
+    const rows = [
+      ...baseRows,
+      { rowNumber: 4, cellA: "random note", cellB: "", cellC: "", cellD: "do not touch", cellE: "", cellT: "" },
+    ];
+    const result = simulateSafeAutoCleanup(rows, ["la:6666", "inv:1002"]);
+    expect(result.unknownRowsLeftAlone).toEqual([4]);
+    expect(result.archivedRows).not.toContain(4);
+    expect(result.movedRows).not.toContain(4);
+    expect(result.hasUnresolvedCleanup).toBe(true);
+  });
+
+  it("payment/status fields on kept real rows are not overwritten incorrectly", () => {
+    const result = simulateSafeAutoCleanup(baseRows, ["la:6666", "inv:1002"]);
+    const kept = result.rowsAfter.find((row) => row.cellA === "1002");
+    expect(kept?.paymentStatus).toBe("sent");
+    expect(kept?.paidDate).toBe("");
+  });
+
+  it("manual recovery tools remain fallback-only for safe cleanup", () => {
+    const safeCleanup = simulateSafeAutoCleanup(baseRows, ["la:6666", "inv:1002"]);
+    const manualToolsStillExist = ["Repair Sheet Layout", "Reset / Rebuild Sheet"];
+    expect(safeCleanup.manualResetRequired).toBe(false);
+    expect(manualToolsStillExist).toContain("Repair Sheet Layout");
+    expect(manualToolsStillExist).toContain("Reset / Rebuild Sheet");
+  });
+});

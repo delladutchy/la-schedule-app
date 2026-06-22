@@ -197,6 +197,7 @@ interface SheetHealthState {
   scannedAt: string | null;
   totalsRowNum: number | null;
   activeBelowTotalsCount: number;
+  unknownBelowTotalsCount: number;
 }
 
 interface SheetRepairState {
@@ -1082,6 +1083,7 @@ export function InvoiceSection({
     scannedAt: null,
     totalsRowNum: null,
     activeBelowTotalsCount: 0,
+    unknownBelowTotalsCount: 0,
   });
   const [sheetRepairState, setSheetRepairState] = useState<SheetRepairState>({
     status: "idle",
@@ -1598,6 +1600,7 @@ export function InvoiceSection({
         message?: string;
         totalsRowNum?: number | null;
         activeBelowTotalsCount?: number;
+        unknownBelowTotalsCount?: number;
       };
       if (!res.ok) {
         setSheetHealthState((prev) => ({
@@ -1612,12 +1615,14 @@ export function InvoiceSection({
       const badVoidCount = json.voidedRowsWithMoneyCount ?? 0;
       const archived = json.totalArchivedRows ?? 0;
       const belowTotals = json.activeBelowTotalsCount ?? 0;
+      const unknownBelowTotals = json.unknownBelowTotalsCount ?? 0;
       const summary = isClean
         ? `Sheet is clean — ${json.totalActiveRows ?? 0} active rows, ${json.totalUniqueKeys ?? 0} unique keys${archived > 0 ? `, ${archived} archived` : ""}.`
         : [
             dupeCount > 0 ? `${dupeCount} key${dupeCount > 1 ? "s" : ""} with active duplicates.` : null,
             badVoidCount > 0 ? `${badVoidCount} voided row${badVoidCount > 1 ? "s" : ""} still have money (Sheet totals may be overstated).` : null,
             belowTotals > 0 ? `${belowTotals} active row${belowTotals > 1 ? "s" : ""} below TOTALS (outside SUM formula range).` : null,
+            unknownBelowTotals > 0 ? `${unknownBelowTotals} unclassified row${unknownBelowTotals > 1 ? "s" : ""} below TOTALS left untouched.` : null,
           ].filter(Boolean).join(" ");
       setSheetHealthState({
         status: "ready",
@@ -1633,6 +1638,7 @@ export function InvoiceSection({
         scannedAt: json.scannedAt ?? null,
         totalsRowNum: json.totalsRowNum ?? null,
         activeBelowTotalsCount: belowTotals,
+        unknownBelowTotalsCount: unknownBelowTotals,
       });
     } catch {
       setSheetHealthState((prev) => ({
@@ -3223,6 +3229,9 @@ export function InvoiceSection({
                               ) : null}
                               {sheetHealthState.activeBelowTotalsCount > 0 ? (
                                 <span style={{ color: "var(--color-warning, #c8a000)" }}>Below TOTALS: {sheetHealthState.activeBelowTotalsCount}</span>
+                              ) : null}
+                              {sheetHealthState.unknownBelowTotalsCount > 0 ? (
+                                <span style={{ color: "var(--color-warning, #c8a000)" }}>Unclassified below TOTALS: {sheetHealthState.unknownBelowTotalsCount}</span>
                               ) : null}
                               {sheetHealthState.totalArchivedRows > 0 ? (
                                 <span>Archived: {sheetHealthState.totalArchivedRows}</span>

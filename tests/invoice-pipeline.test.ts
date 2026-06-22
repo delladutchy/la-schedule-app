@@ -32,18 +32,18 @@ describe("buildVerifiedMessage", () => {
     expect(buildVerifiedMessage(true, false)).toBe(VERIFY_SUCCESS_MESSAGES.cleaned);
   });
 
-  it("hasUnrelatedClutter only → mentions health check", () => {
+  it("unresolved cleanup only → verified with cleanup warning", () => {
     const msg = buildVerifiedMessage(false, true);
-    expect(msg).toBe(VERIFY_SUCCESS_MESSAGES.clutterOnly);
-    expect(msg).toContain("Old cleanup items remain");
-    expect(msg).toContain("Health Check");
+    expect(msg).toBe(VERIFY_SUCCESS_MESSAGES.unresolved);
+    expect(msg).toContain("Invoice verified");
+    expect(msg).toContain("unresolved cleanup items");
   });
 
-  it("both autoRepaired + hasUnrelatedClutter → cleaned + health check mention", () => {
+  it("both autoRepaired + unresolved cleanup → cleaned + warning", () => {
     const msg = buildVerifiedMessage(true, true);
-    expect(msg).toBe(VERIFY_SUCCESS_MESSAGES.cleanedClutter);
+    expect(msg).toBe(VERIFY_SUCCESS_MESSAGES.cleanedUnresolved);
     expect(msg).toContain("cleaned");
-    expect(msg).toContain("Old cleanup items remain");
+    expect(msg).toContain("unresolved cleanup items");
   });
 
   it("all four variants are distinct strings", () => {
@@ -197,12 +197,12 @@ describe("Advanced Recovery Tools visibility logic", () => {
  * Mirrors the step sequence of runVerifiedPipeline.
  * Each step must complete before the next can start.
  */
-type PipelineStep = "save" | "pdf" | "sync" | "verify";
+type PipelineStep = "save" | "pdf" | "sync" | "cleanup" | "verify";
 
 function runPipelineStepsInOrder(
   failAt: PipelineStep | null,
 ): { completed: PipelineStep[]; blocked: boolean } {
-  const steps: PipelineStep[] = ["save", "pdf", "sync", "verify"];
+  const steps: PipelineStep[] = ["save", "pdf", "sync", "cleanup", "verify"];
   const completed: PipelineStep[] = [];
   for (const step of steps) {
     if (failAt === step) return { completed, blocked: true };
@@ -214,7 +214,7 @@ function runPipelineStepsInOrder(
 describe("pipeline step ordering — each failure blocks subsequent steps", () => {
   it("all steps complete when nothing fails", () => {
     const { completed, blocked } = runPipelineStepsInOrder(null);
-    expect(completed).toEqual(["save", "pdf", "sync", "verify"]);
+    expect(completed).toEqual(["save", "pdf", "sync", "cleanup", "verify"]);
     expect(blocked).toBe(false);
   });
 
@@ -230,6 +230,14 @@ describe("pipeline step ordering — each failure blocks subsequent steps", () =
     const { completed, blocked } = runPipelineStepsInOrder("sync");
     expect(completed).toEqual(["save", "pdf"]);
     expect(blocked).toBe(true);
+    expect(completed).not.toContain("cleanup");
+    expect(completed).not.toContain("verify");
+  });
+
+  it("failed automatic cleanup blocks verification", () => {
+    const { completed, blocked } = runPipelineStepsInOrder("cleanup");
+    expect(completed).toEqual(["save", "pdf", "sync"]);
+    expect(blocked).toBe(true);
     expect(completed).not.toContain("verify");
   });
 
@@ -240,7 +248,7 @@ describe("pipeline step ordering — each failure blocks subsequent steps", () =
   });
 
   it("no email sends when pipeline does not reach verify step", () => {
-    for (const failAt of ["save", "pdf", "sync"] as const) {
+    for (const failAt of ["save", "pdf", "sync", "cleanup"] as const) {
       const { completed } = runPipelineStepsInOrder(failAt);
       expect(completed).not.toContain("verify");
       // Since verify didn't complete, status remains non-"verified" → email blocked
@@ -252,33 +260,30 @@ describe("pipeline step ordering — each failure blocks subsequent steps", () =
 // 7. Unrelated clutter does not block current invoice verification
 // ---------------------------------------------------------------------------
 
-describe("unrelated clutter handling", () => {
-  it("hasUnrelatedClutter alone does not make message a failure", () => {
+describe("unresolved cleanup handling", () => {
+  it("unresolved cleanup alone does not make message a failure", () => {
     const msg = buildVerifiedMessage(false, true);
     expect(isVerifySuccessMessage(msg)).toBe(true);
     expect(msg).not.toBe(VERIFY_FAIL_MESSAGE);
   });
 
-  it("unrelated clutter message mentions health check, not verification failure", () => {
+  it("unresolved cleanup message warns without blocking verification", () => {
     const msg = buildVerifiedMessage(false, true);
-    expect(msg).toContain("Health Check");
+    expect(msg).toContain("unresolved cleanup items");
     expect(msg).not.toContain("not verified");
   });
 
-  it("email is allowed even when unrelated clutter exists (verify status = verified)", () => {
-    // After a successful pipeline run with unrelated clutter, status is "verified"
+  it("email is allowed when current invoice verifies despite unrelated cleanup items", () => {
+    // After a successful pipeline run with unrelated cleanup, status is "verified"
     expect(isVerifyBlockingEmail("verified")).toBe(false);
   });
 
-  it("unrelated real rows are untouched (only current invoice row is synced)", () => {
-    // The sync route only writes one row per invoke (the current invoice/job key).
-    // Unrelated rows are never touched — their presence is detected but not modified.
-    // This test verifies the message-level contract: clutter → warning message only.
+  it("unknown/unclassifiable rows are left alone and produce a warning", () => {
     const msgWithClutter = buildVerifiedMessage(false, true);
     const msgWithout = buildVerifiedMessage(false, false);
     expect(msgWithClutter).not.toBe(msgWithout);
-    expect(msgWithClutter).toContain("Old cleanup items remain");
-    expect(msgWithout).not.toContain("Old cleanup items");
+    expect(msgWithClutter).toContain("unresolved cleanup items");
+    expect(msgWithout).not.toContain("unresolved cleanup items");
   });
 });
 

@@ -1101,6 +1101,8 @@ export interface SheetHealthReport {
   totalsRowNum: number | null;
   /** Active invoice rows that exist below the TOTALS line (outside SUM formula range). */
   activeBelowTotalsCount: number;
+  /** Non-blank rows below TOTALS that the app cannot confidently classify or move. */
+  unknownBelowTotalsCount: number;
 }
 
 /**
@@ -1143,9 +1145,11 @@ export async function getSheetHealthReport(): Promise<SheetHealthReport> {
   }
 
   let activeBelowTotalsCount = 0;
+  let unknownBelowTotalsCount = 0;
   const groupMap = new Map<string, { activeRows: SheetHealthEntry[]; voidedRows: SheetHealthEntry[] }>();
 
   for (let i = 1; i < rows.length; i++) {
+    const rawRow = rows[i] ?? [];
     const cellA = String(rows[i]?.[0]  ?? "").trim(); // A: INV#
     const cellB = String(rows[i]?.[1]  ?? "").trim(); // B: DATE
     const cellC = String(rows[i]?.[2]  ?? "").trim(); // C: LA#
@@ -1154,6 +1158,9 @@ export async function getSheetHealthReport(): Promise<SheetHealthReport> {
     const sheetsRow = i + 1;
 
     const isVoid = cellT === VOID_STATUS;
+    const isRecognizedInvoice = isInvoiceDataRow(cellA, cellC, cellT);
+    const isBelowTotals = totalsRowNum !== null && sheetsRow > totalsRowNum;
+    const hasAnyContent = rawRow.some((cell) => String(cell ?? "").trim() !== "");
 
     // Build key using same logic as the upsert/duplicate scan
     const normLa  = normalizeLA(cellC);
@@ -1161,12 +1168,15 @@ export async function getSheetHealthReport(): Promise<SheetHealthReport> {
     const key     = normLa ? `la:${normLa}` : normInv ? `inv:${normInv}` : null;
 
     // Count active rows below TOTALS — these are outside the SUM formula range.
-    if (!isVoid && key && isInvoiceDataRow(cellA, cellC, cellT) && totalsRowNum !== null && sheetsRow >= totalsRowNum) {
+    if (!isVoid && key && isRecognizedInvoice && isBelowTotals) {
       activeBelowTotalsCount++;
+    }
+    if (!isVoid && !isRecognizedInvoice && isBelowTotals && hasAnyContent) {
+      unknownBelowTotalsCount++;
     }
 
     // Include active invoice rows and void rows that have a recognisable key
-    const include = isVoid ? !!key : isInvoiceDataRow(cellA, cellC, cellT);
+    const include = isVoid ? !!key : isRecognizedInvoice;
     if (!include || !key) continue;
 
     const entry: SheetHealthEntry = {
@@ -1233,9 +1243,14 @@ export async function getSheetHealthReport(): Promise<SheetHealthReport> {
     voidedRowsWithMoneyCount,
     groups,
     activeDuplicateGroups,
-    isClean: activeDuplicateGroups.length === 0 && voidedRowsWithMoneyCount === 0 && activeBelowTotalsCount === 0,
+    isClean:
+      activeDuplicateGroups.length === 0 &&
+      voidedRowsWithMoneyCount === 0 &&
+      activeBelowTotalsCount === 0 &&
+      unknownBelowTotalsCount === 0,
     totalsRowNum,
     activeBelowTotalsCount,
+    unknownBelowTotalsCount,
   };
 }
 
@@ -1250,11 +1265,58 @@ export interface SheetRepairResult {
   totalsRowNum: number;
   /** VOID_DUPLICATE rows archived + deleted from main sheet. */
   voidArchivedCount: number;
-  /** Active duplicate rows below TOTALS archived + deleted (key already existed above). */
+  /** Confident fake/test rows archived + deleted from main sheet. */
+  testArchivedCount: number;
+  /** Active duplicate rows archived + deleted from main sheet. */
   duplicatesArchivedCount: number;
-  /** Active orphan rows below TOTALS (no match above) moved to above TOTALS. */
+  /** Active rows below TOTALS moved above TOTALS. */
   rowsMovedCount: number;
+  /** True when TOTALS row SUM formulas were rewritten across E–S. */
+  formulasRebuilt: boolean;
+  /** True because the repair rewrites the app-owned header row A–AH. */
+  headersRepaired: boolean;
   healthAfter: SheetHealthReport;
+}
+
+interface SheetRepairOptions {
+  archiveTestRows?: boolean;
+  protectedKeys?: string[];
+}
+
+function canonicalSheetKeys(invNumber: string, laNumber: string): string[] {
+  const keys: string[] = [];
+  const normLa = normalizeLA(laNumber);
+  const normInv = invNumber.trim();
+  if (normLa) keys.push(`la:${normLa}`);
+  if (normInv) keys.push(`inv:${normInv}`);
+  return keys;
+}
+
+function normalizeProtectedSheetKeys(keys: string[] | undefined): Set<string> {
+  const normalized = new Set<string>();
+  for (const key of keys ?? []) {
+    const trimmed = key.trim();
+    if (!trimmed) continue;
+    if (/^la:/i.test(trimmed)) {
+      const value = normalizeLA(trimmed.replace(/^la:/i, ""));
+      if (value) normalized.add(`la:${value}`);
+      continue;
+    }
+    if (/^inv:/i.test(trimmed)) {
+      const value = trimmed.replace(/^inv:/i, "").trim();
+      if (value) normalized.add(`inv:${value}`);
+      continue;
+    }
+    const laValue = normalizeLA(trimmed);
+    if (laValue) normalized.add(`la:${laValue}`);
+    normalized.add(`inv:${trimmed}`);
+  }
+  return normalized;
+}
+
+function isProtectedSheetRow(invNumber: string, laNumber: string, protectedKeys: Set<string>): boolean {
+  if (protectedKeys.size === 0) return false;
+  return canonicalSheetKeys(invNumber, laNumber).some((key) => protectedKeys.has(key));
 }
 
 /**
@@ -1269,7 +1331,7 @@ export interface SheetRepairResult {
  * first written to the "Voided Duplicates" tab.
  * Never touches unrelated rows or rows above TOTALS.
  */
-export async function repairSheetLayout(): Promise<SheetRepairResult> {
+export async function repairSheetLayout(options: SheetRepairOptions = {}): Promise<SheetRepairResult> {
   const sheetId = process.env.GOOGLE_SHEET_ID;
   if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
 
@@ -1306,18 +1368,26 @@ export async function repairSheetLayout(): Promise<SheetRepairResult> {
       message: "No TOTALS row found — repair aborted. Add a TOTALS row to the sheet first.",
       totalsRowNum: -1,
       voidArchivedCount: 0,
+      testArchivedCount: 0,
       duplicatesArchivedCount: 0,
       rowsMovedCount: 0,
+      formulasRebuilt: false,
+      headersRepaired: true,
       healthAfter,
     };
   }
 
   // Classify every row relative to the TOTALS line.
-  const activeAbove = new Map<string, number>(); // key → row number
   const voidOnMain: ArchiveEntry[] = [];
-  const duplicatesBelow: ArchiveEntry[] = [];
-  // Orphans: active rows below TOTALS with no match above — need to be moved.
-  const orphansBelow: Array<{ rowNumber: number; rawData: (string | number)[] }> = [];
+  const testRows: ArchiveEntry[] = [];
+  const protectedKeys = normalizeProtectedSheetKeys(options.protectedKeys);
+  const activeByKey = new Map<string, Array<{
+    rowNumber: number;
+    entry: ArchiveEntry;
+    rawData: (string | number)[];
+    score: number;
+    belowTotals: boolean;
+  }>>();
 
   for (let i = 1; i < rows.length; i++) {
     const sheetsRow = i + 1;
@@ -1342,31 +1412,51 @@ export async function repairSheetLayout(): Promise<SheetRepairResult> {
     if (!key) continue;
 
     const entry: ArchiveEntry = { rowNumber: sheetsRow, invNumber: cellA, date: cellB, laNumber: cellC, gigEvent: cellD, total: cellE, originalStatus: cellT };
+    if (
+      options.archiveTestRows === true &&
+      isTestSheetRow(cellA, cellC, cellD) &&
+      !isProtectedSheetRow(cellA, cellC, protectedKeys)
+    ) {
+      testRows.push(entry);
+      continue;
+    }
 
-    if (sheetsRow < totalsRowNum) {
-      if (!activeAbove.has(key)) activeAbove.set(key, sheetsRow);
-    } else {
-      if (activeAbove.has(key)) {
-        // Key already present above TOTALS → this is a stale duplicate.
-        duplicatesBelow.push(entry);
-      } else {
-        // No match above TOTALS → orphan that must be moved.
-        orphansBelow.push({ rowNumber: sheetsRow, rawData: (rows[i] ?? []) as (string | number)[] });
-        activeAbove.set(key, sheetsRow); // claim the key to catch further duplicates of this orphan
-      }
+    const existing = activeByKey.get(key) ?? [];
+    existing.push({
+      rowNumber: sheetsRow,
+      entry,
+      rawData: (rows[i] ?? []) as (string | number)[],
+      score: scoreKeepRow(cellA, cellB, cellC, cellE, sheetsRow, "", "", undefined),
+      belowTotals: sheetsRow > totalsRowNum,
+    });
+    activeByKey.set(key, existing);
+  }
+
+  const duplicatesToArchive: ArchiveEntry[] = [];
+  const archiveRowNumbers = new Set<number>();
+  for (const [, candidates] of activeByKey) {
+    if (candidates.length <= 1) continue;
+    const keep = candidates.reduce((best, entry) => entry.score > best.score ? entry : best);
+    for (const candidate of candidates) {
+      if (candidate.rowNumber === keep.rowNumber) continue;
+      duplicatesToArchive.push(candidate.entry);
+      archiveRowNumbers.add(candidate.rowNumber);
     }
   }
 
-  // Phase A: Archive + delete VOID rows and duplicate rows below TOTALS.
-  const toArchive = [...voidOnMain, ...duplicatesBelow];
+  // Phase A: Archive + delete VOID rows, confident test rows, and duplicates.
+  const toArchive = [...voidOnMain, ...testRows, ...duplicatesToArchive];
   if (toArchive.length > 0) {
     await archiveAndDeleteRows(sheets, sheetId, numericTabId, toArchive, existingSheets);
   }
 
-  // Phase B: Move orphan rows above TOTALS.
+  // Phase B: Move remaining active rows below TOTALS above TOTALS.
   let rowsMovedCount = 0;
+  const rowsToMove = [...activeByKey.values()]
+    .flat()
+    .filter((row) => row.belowTotals && !archiveRowNumbers.has(row.rowNumber));
 
-  if (orphansBelow.length > 0) {
+  if (rowsToMove.length > 0) {
     // Re-read after Phase A deletions to get current row positions.
     const reReadRes = await sheets.spreadsheets.values.get({
       spreadsheetId: sheetId,
@@ -1384,7 +1474,7 @@ export async function repairSheetLayout(): Promise<SheetRepairResult> {
     // Match orphan rows by their A+B+C signature (inv# + date + LA#) to find current positions.
     type OrphanSignature = { rawData: (string | number)[]; sig: string };
     const sigMap = new Map<string, OrphanSignature>();
-    for (const o of orphansBelow) {
+    for (const o of rowsToMove) {
       const sig = `${String(o.rawData[0] ?? "").trim()}|${String(o.rawData[1] ?? "").trim()}|${String(o.rawData[2] ?? "").trim()}`;
       if (sig && !sigMap.has(sig)) sigMap.set(sig, { rawData: o.rawData, sig });
     }
@@ -1455,17 +1545,58 @@ export async function repairSheetLayout(): Promise<SheetRepairResult> {
     }
   }
 
+  // Phase C: Rebuild TOTALS row SUM formulas (E–S).
+  const finalColARes = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_SHEET_NAME}!A:A`,
+  });
+  const colA = finalColARes.data.values ?? [];
+  let finalTotalsRow = -1;
+  for (let i = 1; i < colA.length; i++) {
+    if (isTotalsRow(String(colA[i]?.[0] ?? "").trim())) { finalTotalsRow = i + 1; break; }
+  }
+
+  let formulasRebuilt = false;
+  if (finalTotalsRow > 1) {
+    const lastRow = finalTotalsRow - 1;
+    const moneyCols = ["E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S"];
+    const formulaValues = moneyCols.map((col) => `=SUM(${col}2:${col}${lastRow})`);
+    const formulaRes = await (sheets.spreadsheets.values.get as (p: unknown) => Promise<{ data: { values?: unknown[][] } }>)({
+      spreadsheetId: sheetId,
+      range: `${QUOTED_SHEET_NAME}!E${finalTotalsRow}:S${finalTotalsRow}`,
+      valueRenderOption: "FORMULA",
+    });
+    const formulaCells = (formulaRes.data.values?.[0] ?? []) as unknown[];
+    const needsFormulaRepair = formulaValues.some((expected, index) => String(formulaCells[index] ?? "") !== expected);
+    if (needsFormulaRepair) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: sheetId,
+        range: `${QUOTED_SHEET_NAME}!E${finalTotalsRow}:S${finalTotalsRow}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [formulaValues] },
+      });
+      formulasRebuilt = true;
+    }
+  }
+
   const healthAfter = await getSheetHealthReport();
 
   return {
     ok: true,
-    message: `Repair complete: ${voidOnMain.length} void rows archived, ${duplicatesBelow.length} duplicates archived, ${rowsMovedCount} rows moved above TOTALS.`,
+    message: `Repair complete: ${voidOnMain.length} void rows archived, ${testRows.length} test rows archived, ${duplicatesToArchive.length} duplicates archived, ${rowsMovedCount} rows moved above TOTALS${formulasRebuilt ? ", formulas rebuilt" : ""}.`,
     totalsRowNum,
     voidArchivedCount:       voidOnMain.length,
-    duplicatesArchivedCount: duplicatesBelow.length,
+    testArchivedCount:       testRows.length,
+    duplicatesArchivedCount: duplicatesToArchive.length,
     rowsMovedCount,
+    formulasRebuilt,
+    headersRepaired:         true,
     healthAfter,
   };
+}
+
+export async function autoRepairSheetHealth(options: SheetRepairOptions = {}): Promise<SheetRepairResult> {
+  return repairSheetLayout({ ...options, archiveTestRows: options.archiveTestRows ?? true });
 }
 
 // ---------------------------------------------------------------------------

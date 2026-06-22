@@ -193,12 +193,141 @@ export async function listWorklistEntries(opts: {
     };
   });
 
+  const dedupedEntries = dedupeWorklistEntries(entries);
+
   // Newest first
-  entries.sort((a, b) => b.startDate.localeCompare(a.startDate));
-  return entries;
+  dedupedEntries.sort((a, b) => b.startDate.localeCompare(a.startDate));
+  return dedupedEntries;
 }
 
 // ── Pure helpers (exported for testing) ──────────────────────────────────────
+
+/**
+ * Collapse duplicate Calendar events that represent the same LA job/invoice.
+ *
+ * Google Calendar can contain duplicate events with different event IDs but the
+ * same LA job number. The invoice worklist is invoice-centric, so LA# is the
+ * stable client/job key. If any duplicate already has invoice_data, keep that
+ * event ID so opening the row preserves existing invoice state.
+ */
+export function dedupeWorklistEntries(entries: WorklistEntry[]): WorklistEntry[] {
+  const byKey = new Map<string, WorklistEntry[]>();
+  const passthrough: WorklistEntry[] = [];
+
+  for (const entry of entries) {
+    const key = worklistInvoiceKey(entry);
+    if (!key) {
+      passthrough.push(entry);
+      continue;
+    }
+    const group = byKey.get(key) ?? [];
+    group.push(entry);
+    byKey.set(key, group);
+  }
+
+  const deduped: WorklistEntry[] = [...passthrough];
+  for (const group of byKey.values()) {
+    if (group.length === 1) {
+      deduped.push(group[0]!);
+      continue;
+    }
+
+    const primary = chooseCanonicalWorklistEntry(group);
+    const startDate = group.reduce(
+      (min, entry) => entry.startDate < min ? entry.startDate : min,
+      primary.startDate,
+    );
+    const endDate = group.reduce(
+      (max, entry) => entry.endDate > max ? entry.endDate : max,
+      primary.endDate,
+    );
+    const startTimeUtc = chooseEarliestUtc(group.map((entry) => entry.startTimeUtc));
+    const endTimeUtc = chooseLatestUtc(group.map((entry) => entry.endTimeUtc));
+
+    deduped.push({
+      ...primary,
+      startDate,
+      endDate,
+      workDates: enumerateIsoDatesInRange(startDate, endDate),
+      location: primary.location ?? group.find((entry) => entry.location)?.location ?? null,
+      startTimeUtc: startTimeUtc ?? primary.startTimeUtc,
+      endTimeUtc: endTimeUtc ?? primary.endTimeUtc,
+    });
+  }
+
+  return deduped;
+}
+
+function worklistInvoiceKey(entry: WorklistEntry): string | null {
+  const laDigits = entry.laJobNumber?.replace(/\D/g, "") ?? "";
+  if (laDigits) return `la:${laDigits}`;
+  return null;
+}
+
+function chooseCanonicalWorklistEntry(entries: WorklistEntry[]): WorklistEntry {
+  return [...entries].sort((a, b) => {
+    const invoiceRankDelta = invoiceDataRank(b) - invoiceDataRank(a);
+    if (invoiceRankDelta !== 0) return invoiceRankDelta;
+
+    const statusRankDelta = invoiceStatusRank(b.invoiceStatus) - invoiceStatusRank(a.invoiceStatus);
+    if (statusRankDelta !== 0) return statusRankDelta;
+
+    const dateDelta = a.startDate.localeCompare(b.startDate);
+    if (dateDelta !== 0) return dateDelta;
+
+    return a.eventId.localeCompare(b.eventId);
+  })[0]!;
+}
+
+function invoiceDataRank(entry: WorklistEntry): number {
+  let rank = 0;
+  if (entry.invoiceNumber) rank += 100;
+  if (entry.invoicePdfUrl) rank += 40;
+  if (entry.invoiceTotal != null) rank += 30;
+  if (entry.amountPaid > 0) rank += 20;
+  if (entry.remainingBalance != null) rank += 10;
+  return rank;
+}
+
+function invoiceStatusRank(status: InvoiceStatus): number {
+  switch (status) {
+    case "paid": return 60;
+    case "partially_paid": return 50;
+    case "sent": return 40;
+    case "sheet_synced": return 30;
+    case "draft_created": return 20;
+    case "ready": return 10;
+    case "none": return 0;
+    case "void": return -10;
+    default: return 0;
+  }
+}
+
+function chooseEarliestUtc(values: Array<string | null>): string | null {
+  let best: string | null = null;
+  let bestMs = Number.POSITIVE_INFINITY;
+  for (const value of values) {
+    if (!value) continue;
+    const ms = Date.parse(value);
+    if (!Number.isFinite(ms) || ms >= bestMs) continue;
+    best = value;
+    bestMs = ms;
+  }
+  return best;
+}
+
+function chooseLatestUtc(values: Array<string | null>): string | null {
+  let best: string | null = null;
+  let bestMs = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (!value) continue;
+    const ms = Date.parse(value);
+    if (!Number.isFinite(ms) || ms <= bestMs) continue;
+    best = value;
+    bestMs = ms;
+  }
+  return best;
+}
 
 /**
  * Returns true when the entry matches the given search term.

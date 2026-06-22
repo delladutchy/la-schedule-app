@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  dedupeWorklistEntries,
   worklistEntryMatchesSearch,
   worklistEntryMatchesFilter,
   isClockInDisabled,
@@ -313,6 +314,94 @@ describe("WorklistEntry status defaults when no invoice_data row exists", () => 
     expect(entry.invoiceStatus).toBe("paid");
     expect(entry.amountPaid).toBe(1500);
     expect(entry.remainingBalance).toBe(0);
+  });
+});
+
+describe("dedupeWorklistEntries — one row per LA invoice job", () => {
+  it("collapses duplicate Red Bull calendar events with the same LA# and date range", () => {
+    const entries = dedupeWorklistEntries([
+      makeEntry({
+        eventId: "redbull-a",
+        summary: "LA#71803 — Redbull Soapbox Derby Denver",
+        gigName: "Redbull Soapbox Derby Denver",
+        laJobNumber: "LA#71803",
+        startDate: "2026-06-09",
+        endDate: "2026-06-14",
+        workDates: ["2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14"],
+      }),
+      makeEntry({
+        eventId: "redbull-b",
+        summary: "LA#71803 — Redbull Soapbox Derby Denver",
+        gigName: "Redbull Soapbox Derby Denver",
+        laJobNumber: "LA#71803",
+        startDate: "2026-06-09",
+        endDate: "2026-06-14",
+        workDates: ["2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14"],
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.laJobNumber).toBe("LA#71803");
+    expect(entries[0]?.gigName).toBe("Redbull Soapbox Derby Denver");
+    expect(entries[0]?.startDate).toBe("2026-06-09");
+    expect(entries[0]?.endDate).toBe("2026-06-14");
+  });
+
+  it("keeps the duplicate event ID that already has invoice data", () => {
+    const entries = dedupeWorklistEntries([
+      makeEntry({
+        eventId: "calendar-copy-without-invoice",
+        laJobNumber: "LA#71803",
+        invoiceStatus: "none",
+        invoiceNumber: null,
+        invoiceTotal: null,
+      }),
+      makeEntry({
+        eventId: "canonical-with-invoice",
+        laJobNumber: "LA#71803",
+        invoiceStatus: "sheet_synced",
+        invoiceNumber: "1010",
+        invoiceTotal: 2500,
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.eventId).toBe("canonical-with-invoice");
+    expect(entries[0]?.invoiceNumber).toBe("1010");
+    expect(entries[0]?.invoiceTotal).toBe(2500);
+  });
+
+  it("merges split duplicate LA events into the full work date range", () => {
+    const entries = dedupeWorklistEntries([
+      makeEntry({
+        eventId: "la-9000-first",
+        laJobNumber: "LA#9000",
+        startDate: "2026-06-18",
+        endDate: "2026-06-19",
+        workDates: ["2026-06-18", "2026-06-19"],
+      }),
+      makeEntry({
+        eventId: "la-9000-second",
+        laJobNumber: "LA#9000",
+        startDate: "2026-06-20",
+        endDate: "2026-06-20",
+        workDates: ["2026-06-20"],
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.startDate).toBe("2026-06-18");
+    expect(entries[0]?.endDate).toBe("2026-06-20");
+    expect(entries[0]?.workDates).toEqual(["2026-06-18", "2026-06-19", "2026-06-20"]);
+  });
+
+  it("does not collapse non-LA events just because their names match", () => {
+    const entries = dedupeWorklistEntries([
+      makeEntry({ eventId: "non-la-a", summary: "Same Name", gigName: "Same Name", laJobNumber: null }),
+      makeEntry({ eventId: "non-la-b", summary: "Same Name", gigName: "Same Name", laJobNumber: null }),
+    ]);
+
+    expect(entries.map((entry) => entry.eventId)).toEqual(["non-la-a", "non-la-b"]);
   });
 });
 

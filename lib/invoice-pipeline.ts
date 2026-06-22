@@ -9,10 +9,10 @@ export const VERIFY_FAIL_MESSAGE =
 export const VERIFY_SUCCESS_MESSAGES = {
   clean: "Verified updated",
   cleaned: "Verified updated and cleaned",
-  clutterOnly:
-    "Verified updated. Old cleanup items remain; run Health Check when convenient.",
-  cleanedClutter:
-    "Verified updated and cleaned. Old cleanup items remain; run Health Check when convenient.",
+  unresolved:
+    "Invoice verified, but Sheet has unresolved cleanup items",
+  cleanedUnresolved:
+    "Verified updated and cleaned. Sheet has unresolved cleanup items",
 } as const;
 
 export type VerifySuccessMessage =
@@ -24,12 +24,12 @@ export type VerifySuccessMessage =
  */
 export function buildVerifiedMessage(
   autoRepaired: boolean,
-  hasUnrelatedClutter: boolean,
+  hasUnresolvedCleanup: boolean,
 ): string {
-  if (autoRepaired && hasUnrelatedClutter)
-    return VERIFY_SUCCESS_MESSAGES.cleanedClutter;
+  if (autoRepaired && hasUnresolvedCleanup)
+    return VERIFY_SUCCESS_MESSAGES.cleanedUnresolved;
   if (autoRepaired) return VERIFY_SUCCESS_MESSAGES.cleaned;
-  if (hasUnrelatedClutter) return VERIFY_SUCCESS_MESSAGES.clutterOnly;
+  if (hasUnresolvedCleanup) return VERIFY_SUCCESS_MESSAGES.unresolved;
   return VERIFY_SUCCESS_MESSAGES.clean;
 }
 
