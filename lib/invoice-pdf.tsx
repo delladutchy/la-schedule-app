@@ -657,9 +657,6 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
                 <Text style={styles.signatureFallback}>Jeff</Text>
               </View>
             )}
-            {packet.expenseNotes ? (
-              <Text style={styles.expenseNoteText}>Expense notes: {packet.expenseNotes}</Text>
-            ) : null}
           </View>
 
           <View style={styles.totalsBox}>
