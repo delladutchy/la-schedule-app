@@ -1152,6 +1152,13 @@ export function InvoiceSection({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [verifyState, setVerifyState] = useState<VerifyState>(VERIFY_INITIAL);
   const [attachmentCount, setAttachmentCount] = useState<number | null>(null);
+  const [recordPaymentOpen, setRecordPaymentOpen] = useState(false);
+  const [recordPaymentAmount, setRecordPaymentAmount] = useState("");
+  const [recordPaymentDate, setRecordPaymentDate] = useState("");
+  const [recordPaymentMethod, setRecordPaymentMethod] = useState("Direct Deposit");
+  const [recordPaymentRef, setRecordPaymentRef] = useState("");
+  const [recordPaymentStatus, setRecordPaymentStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [recordPaymentError, setRecordPaymentError] = useState<string | null>(null);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveVersionRef = useRef(0);
@@ -2137,6 +2144,72 @@ export function InvoiceSection({
     await generateFreshPdf("manual");
   }
 
+  async function handleRecordPayment(e: React.FormEvent) {
+    e.preventDefault();
+    if (recordPaymentStatus === "submitting") return;
+    setRecordPaymentStatus("submitting");
+    setRecordPaymentError(null);
+
+    const amountNum = parseFloat(recordPaymentAmount);
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      setRecordPaymentError("Enter a valid amount greater than $0.");
+      setRecordPaymentStatus("error");
+      return;
+    }
+    if (!recordPaymentDate) {
+      setRecordPaymentError("Payment date is required.");
+      setRecordPaymentStatus("error");
+      return;
+    }
+
+    const invoiceTotal = invoiceData?.invoice_total ?? p?.estimatedTotal ?? null;
+
+    const body: Record<string, unknown> = {
+      amount_paid: amountNum,
+      paid_date: recordPaymentDate,
+      payment_method: recordPaymentMethod,
+      reference: recordPaymentRef.trim() || undefined,
+    };
+    if (invoiceTotal != null) body.invoice_total = invoiceTotal;
+
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (editorToken) headers.Authorization = `Bearer ${editorToken}`;
+      const res = await fetch(`/api/invoice/record-payment/${encodeURIComponent(eventId)}`, {
+        method: "POST",
+        headers,
+        credentials: "same-origin",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const json = await res.json() as { detail?: string; error?: string };
+        throw new Error(json.detail ?? json.error ?? `HTTP ${res.status}`);
+      }
+      // Refresh invoice data to reflect updated status and payment totals
+      const refreshRes = await fetch(`/api/invoice/${encodeURIComponent(eventId)}`, {
+        headers: editorToken ? { Authorization: `Bearer ${editorToken}` } : {},
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (refreshRes.ok) {
+        const refreshJson = await refreshRes.json() as { invoiceData: InvoiceData | null; packet: InvoicePacket | null };
+        if (refreshJson.invoiceData) {
+          setInvoiceData(refreshJson.invoiceData);
+          setPacket(refreshJson.packet ?? calculateInvoicePacket(refreshJson.invoiceData));
+        }
+      }
+      setRecordPaymentStatus("success");
+      setRecordPaymentOpen(false);
+      setRecordPaymentAmount("");
+      setRecordPaymentDate("");
+      setRecordPaymentMethod("Direct Deposit");
+      setRecordPaymentRef("");
+    } catch (err) {
+      setRecordPaymentError(err instanceof Error ? err.message : "Failed to record payment.");
+      setRecordPaymentStatus("error");
+    }
+  }
+
   async function handleSendEmail() {
     if (emailDialog.status === "sending") return;
 
@@ -2742,6 +2815,127 @@ export function InvoiceSection({
               ) : null}
             </div>
           )}
+        </div>
+      ) : null}
+
+      {/* ── Record as Already Paid ─────────────────────────────────── */}
+      {p && currentStatus !== "void" ? (
+        <div className="invoice-block invoice-record-payment-block">
+          <button
+            type="button"
+            className="invoice-collapsible-toggle"
+            onClick={() => {
+              setRecordPaymentOpen((v) => !v);
+              setRecordPaymentError(null);
+              setRecordPaymentStatus("idle");
+            }}
+            aria-expanded={recordPaymentOpen}
+          >
+            <span className="invoice-block-label">Record as Already Paid</span>
+            <span className="invoice-collapsible-meta">
+              {currentStatus === "paid" ? (
+                <span className="invoice-collapsible-summary invoice-status-paid-chip">
+                  ✓ Paid{invoiceData?.paid_date ? ` ${invoiceData.paid_date}` : ""}
+                </span>
+              ) : currentStatus === "partially_paid" ? (
+                <span className="invoice-collapsible-summary">Partial — ${amountPaid.toFixed(2)} of {displayedInvoiceTotal != null ? `$${displayedInvoiceTotal.toFixed(2)}` : "?"}</span>
+              ) : null}
+              <span className="invoice-collapsible-chevron">{recordPaymentOpen ? "▲" : "▼"}</span>
+            </span>
+          </button>
+          {recordPaymentOpen ? (
+            <form
+              className="invoice-record-payment-form"
+              onSubmit={(e) => { void handleRecordPayment(e); }}
+            >
+              <div className="invoice-record-payment-row">
+                <label className="invoice-record-payment-label" htmlFor="rp-amount">Amount Received</label>
+                <input
+                  id="rp-amount"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  className="invoice-record-payment-input"
+                  placeholder="0.00"
+                  value={recordPaymentAmount}
+                  onChange={(e) => setRecordPaymentAmount(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="invoice-record-payment-row">
+                <label className="invoice-record-payment-label" htmlFor="rp-date">Date Received</label>
+                <input
+                  id="rp-date"
+                  type="date"
+                  className="invoice-record-payment-input"
+                  value={recordPaymentDate}
+                  onChange={(e) => setRecordPaymentDate(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="invoice-record-payment-row">
+                <label className="invoice-record-payment-label" htmlFor="rp-method">Payment Method</label>
+                <select
+                  id="rp-method"
+                  className="invoice-record-payment-input"
+                  value={recordPaymentMethod}
+                  onChange={(e) => setRecordPaymentMethod(e.target.value)}
+                >
+                  <option>Direct Deposit</option>
+                  <option>Check</option>
+                  <option>Cash</option>
+                  <option>Wire Transfer</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div className="invoice-record-payment-row">
+                <label className="invoice-record-payment-label" htmlFor="rp-ref">Reference / Note</label>
+                <input
+                  id="rp-ref"
+                  type="text"
+                  className="invoice-record-payment-input"
+                  placeholder="Check #, memo, etc."
+                  value={recordPaymentRef}
+                  onChange={(e) => setRecordPaymentRef(e.target.value)}
+                />
+              </div>
+              {(() => {
+                const amt = parseFloat(recordPaymentAmount);
+                const total = invoiceData?.invoice_total ?? p?.estimatedTotal ?? null;
+                if (Number.isFinite(amt) && total != null && amt > total + 0.005) {
+                  return (
+                    <p className="invoice-record-payment-warn">
+                      Amount (${amt.toFixed(2)}) exceeds invoice total (${total.toFixed(2)}). Overpayment will be recorded.
+                    </p>
+                  );
+                }
+                return null;
+              })()}
+              {recordPaymentError ? (
+                <p className="invoice-error" role="alert">{recordPaymentError}</p>
+              ) : null}
+              <div className="invoice-record-payment-actions">
+                <button
+                  type="submit"
+                  className="invoice-record-payment-submit"
+                  disabled={recordPaymentStatus === "submitting"}
+                >
+                  {recordPaymentStatus === "submitting" ? "Recording…" : "Record Payment"}
+                </button>
+                <button
+                  type="button"
+                  className="invoice-record-payment-cancel"
+                  onClick={() => {
+                    setRecordPaymentOpen(false);
+                    setRecordPaymentError(null);
+                    setRecordPaymentStatus("idle");
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : null}
         </div>
       ) : null}
 

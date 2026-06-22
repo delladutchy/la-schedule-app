@@ -283,17 +283,18 @@ export function InvoiceWorklist() {
           {!loading && !fetchErr ? `${visible.length} of ${entries.length} job${entries.length !== 1 ? "s" : ""}` : ""}
         </p>
       </aside>
-      ) : !selected ? (
+      ) : (
         <div className="worklist-show-list-bar">
           <button
             type="button"
             className="worklist-list-toggle worklist-list-toggle--show"
             onClick={() => setListVisible(true)}
+            title="Show Jobs list"
           >
             ☰ Jobs
           </button>
         </div>
-      ) : null}
+      )}
 
       {/* ── Detail panel: InvoiceSection ────────────────────── */}
       {selected ? (
@@ -301,16 +302,6 @@ export function InvoiceWorklist() {
           <div className="worklist-panel-header">
             <div className="worklist-panel-title-row">
               <h2 className="worklist-panel-title">{selected.gigName}</h2>
-              {!listVisible ? (
-                <button
-                  type="button"
-                  className="worklist-list-toggle worklist-list-toggle--show"
-                  onClick={() => setListVisible(true)}
-                  style={{ marginRight: "auto", marginLeft: 0 }}
-                >
-                  ☰ Jobs
-                </button>
-              ) : null}
               <button
                 type="button"
                 className="worklist-panel-close"
