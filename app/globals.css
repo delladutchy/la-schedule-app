@@ -7075,6 +7075,11 @@ html.modal-open body {
   color: var(--text);
 }
 
+/* Mobile-only back button — hidden on desktop */
+.worklist-panel-back-btn {
+  display: none;
+}
+
 .worklist-panel-meta {
   font-size: 0.8rem;
   color: var(--text-muted);
@@ -7092,21 +7097,149 @@ html.modal-open body {
 }
 
 @media (max-width: 760px) {
+  /* Column layout on mobile */
   .worklist-shell {
     flex-direction: column;
+    min-height: 100dvh;
   }
 
+  /* Sidebar: full-height when visible — no 50vh split */
   .worklist-sidebar,
   .worklist-sidebar--narrow {
     width: 100%;
     max-width: 100%;
+    min-height: calc(100dvh - 0px);
     border-right: none;
-    border-bottom: 1px solid var(--border);
-    max-height: 50vh;
+    border-bottom: none;
     overflow-y: auto;
   }
 
+  /* Hide sidebar and collapsed bar when a panel is open on mobile.
+     JS also auto-hides the list (setListVisible(false)) on row tap;
+     this CSS is the safety net for edge cases. */
+  .worklist-shell--panel-open .worklist-sidebar,
+  .worklist-shell--panel-open .worklist-show-list-bar {
+    display: none;
+  }
+
+  /* Panel: full-height, bottom safe-area padding for iPhone home bar */
   .worklist-panel {
-    min-height: 50vh;
+    min-height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Show-list bar: horizontal full-width on mobile instead of vertical sidebar */
+  .worklist-show-list-bar {
+    width: 100%;
+    min-width: unset;
+    height: 48px;
+    flex-direction: row;
+    padding: 0 16px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    justify-content: flex-start;
+    align-items: center;
+  }
+
+  .worklist-show-list-bar .worklist-list-toggle {
+    writing-mode: horizontal-tb;
+    transform: none;
+    padding: 8px 14px;
+    letter-spacing: normal;
+    font-size: 0.85rem;
+    margin-top: 0;
+    align-self: auto;
+  }
+
+  /* Mobile back button */
+  .worklist-panel-back-btn {
+    display: inline-flex;
+    align-items: center;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--primary, #1a56db);
+    padding: 6px 0 4px;
+    margin-bottom: 4px;
+    text-decoration: none;
+  }
+
+  .worklist-panel-back-btn:hover {
+    text-decoration: underline;
+  }
+
+  /* Filter tabs: larger tap targets */
+  .worklist-filter-tab {
+    padding: 7px 12px;
+    font-size: 0.82rem;
+    min-height: 36px;
+  }
+
+  /* Search and controls: prevent iOS font-size zoom, bigger touch areas */
+  .worklist-search {
+    font-size: 16px;
+    min-height: 40px;
+    padding: 8px 12px;
+  }
+
+  .worklist-range-select {
+    font-size: 16px;
+    min-height: 40px;
+    padding: 6px 8px;
+  }
+
+  .worklist-range-label {
+    font-size: 0.8rem;
+  }
+
+  /* List rows: more comfortable tap targets */
+  .worklist-row {
+    padding: 12px 16px;
+  }
+
+  .worklist-row-name {
+    font-size: 0.95rem;
+  }
+
+  .worklist-row-date {
+    font-size: 0.8rem;
+  }
+
+  .worklist-row-la,
+  .worklist-row-inv {
+    font-size: 0.76rem;
+  }
+
+  .worklist-row-total {
+    font-size: 0.82rem;
+  }
+
+  /* Panel header: tighter, with safe-area top */
+  .worklist-panel-header {
+    padding: 10px 16px 10px;
+    padding-top: max(10px, env(safe-area-inset-top, 0px));
+  }
+
+  .worklist-panel-title {
+    font-size: 1rem;
+  }
+
+  /* Panel close button: bigger tap target */
+  .worklist-panel-close {
+    min-width: 36px;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.95rem;
+    padding: 6px 10px;
+  }
+
+  .worklist-panel-meta {
+    font-size: 0.78rem;
+    margin-bottom: 0;
   }
 }

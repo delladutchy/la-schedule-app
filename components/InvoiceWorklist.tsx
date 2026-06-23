@@ -175,7 +175,7 @@ export function InvoiceWorklist() {
   };
 
   return (
-    <div className={`worklist-shell${!listVisible ? " worklist-shell--list-hidden" : ""}`}>
+    <div className={`worklist-shell${!listVisible ? " worklist-shell--list-hidden" : ""}${selected ? " worklist-shell--panel-open" : ""}`}>
       {/* ── Sidebar: list + controls ────────────────────────── */}
       {listVisible ? (
       <aside className={`worklist-sidebar${selected ? " worklist-sidebar--narrow" : ""}`}>
@@ -257,7 +257,13 @@ export function InvoiceWorklist() {
                 <button
                   type="button"
                   className={`worklist-row${selected?.eventId === entry.eventId ? " worklist-row--active" : ""}`}
-                  onClick={() => setSelected(entry.eventId === selected?.eventId ? null : entry)}
+                  onClick={() => {
+                    const next = entry.eventId === selected?.eventId ? null : entry;
+                    setSelected(next);
+                    if (next && typeof window !== "undefined" && window.innerWidth <= 760) {
+                      setListVisible(false);
+                    }
+                  }}
                   aria-pressed={selected?.eventId === entry.eventId}
                 >
                   <div className="worklist-row-top">
@@ -301,6 +307,14 @@ export function InvoiceWorklist() {
       {selected ? (
         <div className="worklist-panel" role="region" aria-label="Invoice editor" ref={panelRef}>
           <div className="worklist-panel-header">
+            <button
+              type="button"
+              className="worklist-panel-back-btn"
+              onClick={() => { setSelected(null); setListVisible(true); }}
+              aria-label="Back to jobs list"
+            >
+              ← Jobs
+            </button>
             <div className="worklist-panel-title-row">
               <h2 className="worklist-panel-title">{selected.gigName}</h2>
               <button
