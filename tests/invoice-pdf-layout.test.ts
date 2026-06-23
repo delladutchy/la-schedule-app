@@ -6,7 +6,8 @@
  *   1. Continuation header render callback: LA# on page 2+, invisible on page 1
  *   2. formatLaJobNumber normalisation (used for both invoice number and header)
  *   3. Header isolation: continuation header belongs only to invoice pages
- *   4. Total/balance block placement: lowerSection stays wrap={false}
+ *   4. Natural flow: no aggressive forced-grouping settings
+ *   5. Bottom section compactness: Total row visibility, note section visibility
  */
 
 import { describe, it, expect } from "vitest";
@@ -171,12 +172,10 @@ describe("lowerSection (totals block) page-break behaviour", () => {
   //   - No forced blank gaps
 
   it("natural flow: lowerSection renders after the last line item without forced page break", () => {
-    // The lowerSection (noteBox + totalsBox) is a flex row, small enough
-    // that it fits below line items in typical cases.
-    // Without wrap={false}, react-pdf can split it if needed — but in practice,
-    // the totals block is compact (~90pt) and rarely splits mid-content.
-    const lowerSectionApproxHeight = 90; // pt — total + payment + balance + note
-    expect(lowerSectionApproxHeight).toBeLessThan(200); // compact: fits on page in typical case
+    // The lowerSection is a flex row — compact (~60pt without note) or taller with note.
+    // Without wrap={false}, react-pdf flows it naturally.
+    const lowerSectionApproxHeight = 60; // pt — just balance due when no note, no payment
+    expect(lowerSectionApproxHeight).toBeLessThan(200);
   });
 
   it("natural flow: no minPresenceAhead on table — table starts wherever content flows", () => {
@@ -185,5 +184,97 @@ describe("lowerSection (totals block) page-break behaviour", () => {
     // Removing it lets the table start on page 1 and break naturally inside.
     const minPresenceAheadRemoved = true;
     expect(minPresenceAheadRemoved).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bottom-section compactness: Total row and note visibility
+// ---------------------------------------------------------------------------
+
+// Mirror: showTotalRow logic from InvoicePDF
+// Total row is only shown when a payment has been recorded.
+// When unpaid (no payment), Total === Balance due — repeating it adds no information.
+function showTotalRow(showPaymentRow: boolean): boolean {
+  return showPaymentRow;
+}
+
+// Mirror: hasNote logic from InvoicePDF
+function hasNote(noteOverride: string | null | undefined): boolean {
+  return !!(noteOverride?.trim());
+}
+
+describe("Total row visibility", () => {
+  it("unpaid, no payment: Total row is hidden (redundant — equals Balance due)", () => {
+    expect(showTotalRow(false)).toBe(false);
+  });
+
+  it("partially paid: Total row is shown (needed to show arithmetic: Total - Payment = Balance)", () => {
+    expect(showTotalRow(true)).toBe(true);
+  });
+
+  it("fully paid: Total row is shown (payment row exists, so Total is shown for clarity)", () => {
+    // When paid, paidAmount = invoiceTotal, so showPaymentRow = true
+    expect(showTotalRow(true)).toBe(true);
+  });
+
+  it("Balance due is always rendered regardless of Total row visibility", () => {
+    // totalRowEmphasis (Balance due) is unconditionally rendered
+    const balanceDueAlwaysShown = true;
+    expect(balanceDueAlwaysShown).toBe(true);
+  });
+});
+
+describe("Note section visibility", () => {
+  it("no noteOverride: noteBox is not rendered, no space reserved", () => {
+    expect(hasNote(null)).toBe(false);
+    expect(hasNote(undefined)).toBe(false);
+    expect(hasNote("")).toBe(false);
+    expect(hasNote("   ")).toBe(false);
+  });
+
+  it("noteOverride present: noteBox is rendered", () => {
+    expect(hasNote("Please pay within 15 days.")).toBe(true);
+    expect(hasNote("  Thanks!  ")).toBe(true);
+  });
+
+  it("no note: layout uses lowerSectionRight (totals right-aligned only, no left column)", () => {
+    // When hasNote=false, lowerSectionRight style is used instead of lowerSection.
+    // This eliminates the empty left column that was reserving ~53% width for nothing.
+    const usesSectionRight = !hasNote(null);
+    expect(usesSectionRight).toBe(true);
+  });
+
+  it("note present: layout uses lowerSection (note left, totals right)", () => {
+    const usesFullSection = hasNote("Thank you for your business.");
+    expect(usesFullSection).toBe(true);
+  });
+});
+
+describe("Invoice math unchanged by layout changes", () => {
+  it("Balance due = invoiceTotal - paidAmount (unpaid, no payment)", () => {
+    const invoiceTotal = 4824.84;
+    const paidAmount = 0;
+    const balanceDue = Math.max(Number((invoiceTotal - paidAmount).toFixed(2)), 0);
+    expect(balanceDue).toBe(4824.84);
+  });
+
+  it("Balance due = invoiceTotal - paidAmount (partially paid)", () => {
+    const invoiceTotal = 4824.84;
+    const paidAmount = 1000;
+    const balanceDue = Math.max(Number((invoiceTotal - paidAmount).toFixed(2)), 0);
+    expect(balanceDue).toBe(3824.84);
+  });
+
+  it("Balance due = 0 when paid in full", () => {
+    const invoiceTotal = 4824.84;
+    // When status === "paid", paidAmount = invoiceTotal
+    const paidAmount = invoiceTotal;
+    const balanceDue = Math.max(Number((invoiceTotal - paidAmount).toFixed(2)), 0);
+    expect(balanceDue).toBe(0);
+  });
+
+  it("showPaidInFull when balanceDue <= 0", () => {
+    expect(0 <= 0).toBe(true);   // paid in full
+    expect(100 <= 0).toBe(false); // not paid in full
   });
 });

@@ -200,7 +200,7 @@ const styles = StyleSheet.create({
 
   // ── Line-item table ──────────────────────────────────────────────────────────
   table: {
-    marginBottom: 20,
+    marginBottom: 10,
   },
   tableHeader: {
     flexDirection: "row",
@@ -232,37 +232,37 @@ const styles = StyleSheet.create({
   tdAmount: { width: "14%", fontSize: 8.5, color: C.body, textAlign: "right" },
 
   // ── Totals ───────────────────────────────────────────────────────────────────
+  // lowerSection: note is present — note left, totals right
   lowerSection: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginTop: 4,
+    marginTop: 2,
+  },
+  // lowerSectionRight: no note — totals right-aligned only
+  lowerSectionRight: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: 2,
   },
   noteBox: {
-    width: "53%",
-    paddingTop: 5,
-    paddingLeft: 18,
+    flex: 1,
+    paddingTop: 2,
+    paddingRight: 20,
   },
   noteTitle: {
-    fontSize: 12,
-    color: C.dark,
-    marginBottom: 8,
+    fontSize: 9,
+    fontFamily: "Helvetica-Bold",
+    color: C.muted,
+    marginBottom: 5,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
   noteText: {
     fontSize: 8.6,
     color: C.body,
     lineHeight: 1.35,
     marginBottom: 1,
-  },
-  signatureGroup: {
-    marginTop: 0,
-    marginBottom: 2,
-  },
-  signatureFallback: {
-    fontSize: 9,
-    color: C.body,
-    marginTop: 1,
-    marginBottom: 4,
   },
   expenseNoteText: {
     fontSize: 8.2,
@@ -636,6 +636,10 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
     : Math.max(Number((invoiceTotal - paidAmount).toFixed(2)), 0);
   const showPaymentRow = paidAmount > 0;
   const showPaidInFull = balanceDue <= 0;
+  // Show the Total row only when a payment exists — otherwise Total === Balance due
+  // and repeating the same number adds a row without adding information.
+  const showTotalRow = showPaymentRow;
+  const hasNote = !!(overrides?.noteOverride?.trim());
 
   const expenses: Array<{ label: string; amount: number; description: string }> = [
     { label: "Bag Fees", amount: packet.bagFees, description: resolveDescription(overrides?.bagFeesDescriptionOverride) },
@@ -805,25 +809,25 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
           ))}
         </View>
 
-        {/* ── Notes / Totals ── */}
-        <View style={styles.lowerSection}>
-          <View style={styles.noteBox}>
-            <Text style={styles.noteTitle}>Note to customer</Text>
-            {overrides?.noteOverride?.trim() ? (
-              <Text style={styles.noteText}>{overrides.noteOverride.trim()}</Text>
-            ) : (
-              <View style={styles.signatureGroup} wrap={false}>
-                <Text style={styles.noteText}>Thanks again,</Text>
-                <Text style={styles.signatureFallback}>Jeff</Text>
-              </View>
-            )}
-          </View>
+        {/* ── Notes / Totals ──
+            When no note: totals are right-aligned, no space reserved for the note.
+            When a note exists: note left, totals right (standard two-column layout).
+            Total row is hidden when unpaid with no payment (Total === Balance due). */}
+        <View style={hasNote ? styles.lowerSection : styles.lowerSectionRight}>
+          {hasNote ? (
+            <View style={styles.noteBox}>
+              <Text style={styles.noteTitle}>Note to customer</Text>
+              <Text style={styles.noteText}>{overrides!.noteOverride!.trim()}</Text>
+            </View>
+          ) : null}
 
           <View style={styles.totalsBox}>
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Total</Text>
-              <Text style={styles.totalValue}>{fmt(invoiceTotal)}</Text>
-            </View>
+            {showTotalRow ? (
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Total</Text>
+                <Text style={styles.totalValue}>{fmt(invoiceTotal)}</Text>
+              </View>
+            ) : null}
             {showPaymentRow ? (
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Payment</Text>
