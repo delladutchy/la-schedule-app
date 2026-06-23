@@ -317,6 +317,19 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
 
+  // ── Continuation header (page 2+ of multi-page invoices) ────────────────
+  // Absolutely positioned — sits in the top margin without pushing content.
+  continuationHeader: {
+    position: "absolute",
+    top: 16,
+    right: 46,
+  },
+  continuationLa: {
+    fontSize: 8,
+    fontFamily: "Helvetica",
+    color: C.muted,
+  },
+
   // ── Receipt appendix pages ────────────────────────────────────────────────
   receiptPage: {
     fontFamily: "Helvetica",
@@ -682,6 +695,22 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
   return (
     <Document title={`Invoice ${clientInvoiceNumber}`} author={CONTRACTOR_INFO.name}>
       <Page size="LETTER" style={styles.page}>
+
+        {/* ── Continuation header ──
+            Shows subtle LA# at top-right on pages 2+ of a multi-page invoice.
+            Absolutely positioned in the top-margin area so it doesn't affect
+            the content flow on page 1 (which has the full invoice header).
+            The render callback returns '' on page 1, keeping it invisible there. */}
+        {formattedLaJob ? (
+          <View fixed style={styles.continuationHeader}>
+            <Text
+              style={styles.continuationLa}
+              render={({ pageNumber }: { pageNumber: number }) =>
+                pageNumber > 1 ? formattedLaJob : ''
+              }
+            />
+          </View>
+        ) : null}
 
         {/* ── Header ── */}
         <View style={styles.header}>
