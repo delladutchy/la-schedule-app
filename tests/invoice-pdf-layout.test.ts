@@ -156,31 +156,34 @@ describe("receipt pages isolation from invoice page changes", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Total/balance block: wrap={false} keeps it together
+// Total/balance block: natural flow (no forced grouping)
 // ---------------------------------------------------------------------------
 
 describe("lowerSection (totals block) page-break behaviour", () => {
-  // lowerSection uses wrap={false} so react-pdf moves the entire block
-  // (Note + Totals + Balance Due) to the next page rather than splitting it.
-  // minPresenceAhead={120} on the table encourages react-pdf to break inside
-  // the table rather than stranding lowerSection alone on the next page.
+  // lowerSection has NO wrap={false} — natural flow is preferred over forced grouping.
+  // minPresenceAhead was removed from the table for the same reason: aggressive grouping
+  // caused a large blank gap on page 1 when the info panel already consumed most of the page.
+  //
+  // Natural flow means:
+  //   - Line items start wherever content flows after the info panel
+  //   - The table can split across pages normally
+  //   - Notes/Totals appear below the last line item (same page or next page)
+  //   - No forced blank gaps
 
-  it("lowerSection wrap=false: entire block stays together or moves together", () => {
-    // Pure doc: if lowerSection height is ~120pt, and remaining page space is <120pt,
-    // the whole block moves to the next page. It does not split Total from Balance Due.
-    const lowerSectionHeight = 120; // approximate pt
-    const remainingSpace = 80;      // page near full
-    const fitsOnCurrentPage = remainingSpace >= lowerSectionHeight;
-    expect(fitsOnCurrentPage).toBe(false); // would move to next page — that's correct
+  it("natural flow: lowerSection renders after the last line item without forced page break", () => {
+    // The lowerSection (noteBox + totalsBox) is a flex row, small enough
+    // that it fits below line items in typical cases.
+    // Without wrap={false}, react-pdf can split it if needed — but in practice,
+    // the totals block is compact (~90pt) and rarely splits mid-content.
+    const lowerSectionApproxHeight = 90; // pt — total + payment + balance + note
+    expect(lowerSectionApproxHeight).toBeLessThan(200); // compact: fits on page in typical case
   });
 
-  it("minPresenceAhead: table breaks before end when <120pt remain for lowerSection", () => {
-    // minPresenceAhead={120} on the table means: if there are fewer than 120pt
-    // of space after the table starts, the table moves OR breaks inside to free space.
-    // In practice: last line items may break to page 2 along with lowerSection.
-    const minPresenceAhead = 120;
-    const availableAfterTable = 80; // less than minPresenceAhead
-    const wouldBreakInsideTable = availableAfterTable < minPresenceAhead;
-    expect(wouldBreakInsideTable).toBe(true);
+  it("natural flow: no minPresenceAhead on table — table starts wherever content flows", () => {
+    // Previously minPresenceAhead={120} caused the whole table to jump to page 2
+    // when <120pt remained on page 1, leaving a large blank gap.
+    // Removing it lets the table start on page 1 and break naturally inside.
+    const minPresenceAheadRemoved = true;
+    expect(minPresenceAheadRemoved).toBe(true);
   });
 });

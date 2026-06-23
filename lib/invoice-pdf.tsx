@@ -783,10 +783,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
         </View>
 
         {/* ── Line Items ── */}
-        {/* minPresenceAhead keeps the totals block on the same page as the last line items.
-            If less than 120pt remains after the table, react-pdf inserts a break inside
-            the table (before a line-item row) rather than pushing lowerSection to a new page. */}
-        <View style={styles.table} minPresenceAhead={120}>
+        <View style={styles.table}>
           <View style={styles.tableHeader}>
             <Text style={styles.thNumber}>#</Text>
             <Text style={styles.thService}>Product or service</Text>
@@ -809,7 +806,7 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
         </View>
 
         {/* ── Notes / Totals ── */}
-        <View style={styles.lowerSection} wrap={false}>
+        <View style={styles.lowerSection}>
           <View style={styles.noteBox}>
             <Text style={styles.noteTitle}>Note to customer</Text>
             {overrides?.noteOverride?.trim() ? (
