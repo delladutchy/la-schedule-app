@@ -611,3 +611,173 @@ describe("fmtReceiptLongDate", () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// 11. PDF receipt stamp helpers (mirrors lib/invoice-pdf-merge.ts exports)
+//     These are pure functions; no pdf-lib instantiation needed.
+// ---------------------------------------------------------------------------
+
+// ── Mirror: formatStampLa ──────────────────────────────────────────────────
+
+function formatStampLa(laJobNumber: string | null): string | null {
+  if (!laJobNumber) return null;
+  const digits = laJobNumber.replace(/^LA\s*#?\s*/i, "").replace(/[^a-zA-Z0-9-]/g, "");
+  return digits ? `LA# ${digits}` : null;
+}
+
+describe("formatStampLa", () => {
+  it("returns null when laJobNumber is null", () => {
+    expect(formatStampLa(null)).toBeNull();
+  });
+
+  it("returns null when laJobNumber is empty string", () => {
+    expect(formatStampLa("")).toBeNull();
+  });
+
+  it("formats bare digits", () => {
+    expect(formatStampLa("71803")).toBe("LA# 71803");
+  });
+
+  it("strips existing 'LA#' prefix", () => {
+    expect(formatStampLa("LA#71803")).toBe("LA# 71803");
+  });
+
+  it("strips 'LA # ' with spaces", () => {
+    expect(formatStampLa("LA # 71803")).toBe("LA# 71803");
+  });
+
+  it("strips case-insensitive 'la#' prefix", () => {
+    expect(formatStampLa("la#71803")).toBe("LA# 71803");
+  });
+});
+
+// ── Mirror: formatStampLabel ──────────────────────────────────────────────
+
+function formatStampLabel(receipt: { category: string | null; originalFilename: string }): string {
+  if (receipt.category?.trim()) return receipt.category.trim();
+  const name = receipt.originalFilename;
+  return name.length > 30 ? name.slice(0, 28) + "…" : name;
+}
+
+describe("formatStampLabel", () => {
+  it("uses category when saved", () => {
+    expect(formatStampLabel({ category: "Hotel", originalFilename: "receipt.pdf" })).toBe("Hotel");
+  });
+
+  it("uses filename when category is null", () => {
+    expect(formatStampLabel({ category: null, originalFilename: "hotel-folio.pdf" })).toBe("hotel-folio.pdf");
+  });
+
+  it("uses filename when category is empty string", () => {
+    expect(formatStampLabel({ category: "", originalFilename: "airline.pdf" })).toBe("airline.pdf");
+  });
+
+  it("truncates long filenames to 28 chars + ellipsis", () => {
+    const longName = "this-is-a-very-long-receipt-filename.pdf";
+    expect(longName.length).toBeGreaterThan(30);
+    const result = formatStampLabel({ category: null, originalFilename: longName });
+    expect(result.endsWith("…")).toBe(true);
+    expect(result.length).toBe(29); // 28 + "…"
+  });
+
+  it("does not truncate filenames ≤ 30 chars", () => {
+    const name = "receipt-2026-05-21.pdf"; // 22 chars
+    const result = formatStampLabel({ category: null, originalFilename: name });
+    expect(result).toBe(name);
+    expect(result.endsWith("…")).toBe(false);
+  });
+});
+
+// ── Mirror: formatStampMeta ───────────────────────────────────────────────
+
+function formatStampMeta(receipt: { receiptDate: string | null; amount: number | null }): string {
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const parts: string[] = [];
+  if (receipt.receiptDate) {
+    const [yStr, moStr, dStr] = receipt.receiptDate.split("-");
+    const y  = parseInt(yStr  ?? "0", 10);
+    const mo = parseInt(moStr ?? "1", 10);
+    const d  = parseInt(dStr  ?? "1", 10);
+    const monthName = MONTHS[mo - 1];
+    if (monthName) parts.push(`${monthName} ${d}, ${y}`);
+  }
+  if (receipt.amount != null) parts.push(`$${receipt.amount.toFixed(2)}`);
+  return parts.join(" · ");
+}
+
+describe("formatStampMeta", () => {
+  it("returns empty string when no date and no amount", () => {
+    expect(formatStampMeta({ receiptDate: null, amount: null })).toBe("");
+  });
+
+  it("returns only date when only date is saved", () => {
+    expect(formatStampMeta({ receiptDate: "2026-05-21", amount: null })).toBe("May 21, 2026");
+  });
+
+  it("returns only amount when only amount is saved", () => {
+    expect(formatStampMeta({ receiptDate: null, amount: 189.00 })).toBe("$189.00");
+  });
+
+  it("returns date · amount when both are saved", () => {
+    expect(formatStampMeta({ receiptDate: "2026-05-21", amount: 189.00 })).toBe("May 21, 2026 · $189.00");
+  });
+
+  it("formats amount with two decimal places", () => {
+    expect(formatStampMeta({ receiptDate: null, amount: 25 })).toBe("$25.00");
+  });
+
+  it("CRITICAL: does not include current date when receiptDate is null", () => {
+    const result = formatStampMeta({ receiptDate: null, amount: null });
+    // Result must be empty — no generated/current date fallback
+    expect(result).toBe("");
+  });
+
+  it("does not include today's date when only amount is saved", () => {
+    const result = formatStampMeta({ receiptDate: null, amount: 99.00 });
+    // Should only have the amount, no date portion
+    expect(result).toBe("$99.00");
+    expect(result).not.toMatch(/\d{4}/); // no 4-digit year in the output
+  });
+});
+
+// ── Stamp composition: label + meta ──────────────────────────────────────
+
+describe("stamp right-side text composition", () => {
+  function buildStampRight(receipt: {
+    category: string | null;
+    originalFilename: string;
+    receiptDate: string | null;
+    amount: number | null;
+  }): string {
+    const label = formatStampLabel(receipt);
+    const meta  = formatStampMeta(receipt);
+    return meta ? `${label} · ${meta}` : label;
+  }
+
+  it("category only → just category", () => {
+    expect(buildStampRight({ category: "Parking", originalFilename: "p.pdf", receiptDate: null, amount: null }))
+      .toBe("Parking");
+  });
+
+  it("category + amount → 'Hotel · $189.00'", () => {
+    expect(buildStampRight({ category: "Hotel", originalFilename: "h.pdf", receiptDate: null, amount: 189 }))
+      .toBe("Hotel · $189.00");
+  });
+
+  it("category + date + amount → full string", () => {
+    expect(buildStampRight({ category: "Hotel", originalFilename: "h.pdf", receiptDate: "2026-05-21", amount: 189 }))
+      .toBe("Hotel · May 21, 2026 · $189.00");
+  });
+
+  it("no category no amount → just filename", () => {
+    expect(buildStampRight({ category: null, originalFilename: "receipt.pdf", receiptDate: null, amount: null }))
+      .toBe("receipt.pdf");
+  });
+
+  it("CRITICAL: no current/generated date ever appears in stamp", () => {
+    // None of the null-metadata scenarios should produce today's date
+    const noMeta = buildStampRight({ category: "Hotel", originalFilename: "h.pdf", receiptDate: null, amount: null });
+    const currentYear = new Date().getFullYear().toString();
+    expect(noMeta).not.toContain(currentYear);
+  });
+});
