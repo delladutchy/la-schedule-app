@@ -492,6 +492,10 @@ function fmtCompactTime(raw: string): string {
   return `${hour}:${minute}${meridiem}`;
 }
 
+function fmtDailyHours(n: number): string {
+  return n % 1 === 0 ? `${n}` : n.toFixed(1);
+}
+
 function fmtWorkedDateTimes(workdays: InvoicePacket["workdays"]): string {
   return workdays
     .map((workday) => {
@@ -499,7 +503,8 @@ function fmtWorkedDateTimes(workdays: InvoicePacket["workdays"]): string {
       const start = fmtCompactTime(workday.startTime);
       const end = fmtCompactTime(workday.endTime);
       if (!start || !end) return date;
-      return `${date} - ${start}-${end}`;
+      const hrs = fmtDailyHours(workday.totalHours);
+      return `${date} - ${start}-${end} (${hrs})`;
     })
     .join("\n");
 }

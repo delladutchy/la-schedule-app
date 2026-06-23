@@ -79,14 +79,19 @@ function fmtCompactTime(raw: string): string {
   return `${hour}:${minute}${meridiem}`;
 }
 
-function fmtWorkedDateTimes(workdays: Array<{ date: string; startTime: string; endTime: string }>): string {
+function fmtDailyHours(n: number): string {
+  return n % 1 === 0 ? `${n}` : n.toFixed(1);
+}
+
+function fmtWorkedDateTimes(workdays: Array<{ date: string; startTime: string; endTime: string; totalHours: number }>): string {
   return workdays
     .map((workday) => {
       const date = fmtShortDate(workday.date);
       const start = fmtCompactTime(workday.startTime);
       const end = fmtCompactTime(workday.endTime);
       if (!start || !end) return date;
-      return `${date} - ${start}-${end}`;
+      const hrs = fmtDailyHours(workday.totalHours);
+      return `${date} - ${start}-${end} (${hrs})`;
     })
     .join("\n");
 }
@@ -406,16 +411,62 @@ describe("date formatting", () => {
 // ---------------------------------------------------------------------------
 
 describe("worked date/time description", () => {
-  it("includes all saved workdays, including past and overnight rows", () => {
+  it("shows each workday with hours in parentheses", () => {
     expect(fmtWorkedDateTimes([
-      { date: "2026-06-18", startTime: "6:00 AM", endTime: "11:30 PM" },
-      { date: "2026-06-19", startTime: "9:00 AM", endTime: "7:00 PM" },
-      { date: "2026-06-20", startTime: "3:00 PM", endTime: "4:30 AM" },
+      { date: "2026-06-18", startTime: "6:00 AM", endTime: "11:30 PM", totalHours: 17.5 },
+      { date: "2026-06-19", startTime: "9:00 AM", endTime: "7:00 PM",  totalHours: 10 },
+      { date: "2026-06-20", startTime: "3:00 PM", endTime: "4:30 AM",  totalHours: 13.5 },
     ])).toBe([
-      "6/18 - 6:00am-11:30pm",
-      "6/19 - 9:00am-7:00pm",
-      "6/20 - 3:00pm-4:30am",
+      "6/18 - 6:00am-11:30pm (17.5)",
+      "6/19 - 9:00am-7:00pm (10)",
+      "6/20 - 3:00pm-4:30am (13.5)",
     ].join("\n"));
+  });
+
+  it("overnight shift: 5:00am-2:00am shows (21)", () => {
+    expect(fmtWorkedDateTimes([
+      { date: "2026-06-21", startTime: "5:00 AM", endTime: "2:00 AM", totalHours: 21 },
+    ])).toBe("6/21 - 5:00am-2:00am (21)");
+  });
+
+  it("standard day: 10:00am-10:00pm shows (12)", () => {
+    expect(fmtWorkedDateTimes([
+      { date: "2026-06-22", startTime: "10:00 AM", endTime: "10:00 PM", totalHours: 12 },
+    ])).toBe("6/22 - 10:00am-10:00pm (12)");
+  });
+
+  it("multi-day: exact output matches desired example", () => {
+    expect(fmtWorkedDateTimes([
+      { date: "2026-06-21", startTime: "5:00 AM",  endTime: "2:00 AM",  totalHours: 21 },
+      { date: "2026-06-22", startTime: "10:00 AM", endTime: "10:00 PM", totalHours: 12 },
+      { date: "2026-06-23", startTime: "2:00 AM",  endTime: "4:00 PM",  totalHours: 14 },
+    ])).toBe([
+      "6/21 - 5:00am-2:00am (21)",
+      "6/22 - 10:00am-10:00pm (12)",
+      "6/23 - 2:00am-4:00pm (14)",
+    ].join("\n"));
+  });
+
+  it("whole-number hours use integer format, not decimal", () => {
+    const result = fmtWorkedDateTimes([
+      { date: "2026-06-18", startTime: "8:00 AM", endTime: "6:00 PM", totalHours: 10 },
+    ]);
+    expect(result).toContain("(10)");
+    expect(result).not.toContain("(10.0)");
+    expect(result).not.toContain("(10.00)");
+  });
+
+  it("partial hours use one decimal place", () => {
+    const result = fmtWorkedDateTimes([
+      { date: "2026-06-18", startTime: "8:00 AM", endTime: "6:30 PM", totalHours: 10.5 },
+    ]);
+    expect(result).toContain("(10.5)");
+  });
+
+  it("workday missing times falls back to date only (no hours shown)", () => {
+    expect(fmtWorkedDateTimes([
+      { date: "2026-06-18", startTime: "", endTime: "", totalHours: 0 },
+    ])).toBe("6/18");
   });
 });
 
