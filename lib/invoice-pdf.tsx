@@ -23,6 +23,7 @@ import {
 import type { InvoicePacket } from "./invoice-types";
 import { buildMileageInvoicePresentationLines } from "./invoice-calculations";
 import type { ReceiptPageData } from "./invoice-attachments";
+import { appendPdfReceiptPages } from "./invoice-pdf-merge";
 
 export type { ReceiptPageData };
 
@@ -83,7 +84,7 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: C.body,
     paddingTop: 50,
-    paddingBottom: 46,
+    paddingBottom: 38,
     paddingHorizontal: 46,
     backgroundColor: C.white,
   },
@@ -531,7 +532,10 @@ function ReceiptPage({ receipt }: { receipt: ReceiptPageData }) {
         <Text style={styles.receiptPageSubheader}>{subheader}</Text>
       ) : null}
 
-      {/* Receipt image or placeholder */}
+      {/* Receipt image or fallback.
+          PDF receipts with pdfBytes are merged after rendering — this page is
+          not rendered for them. This branch handles only image receipts (embedded)
+          and failed downloads (truthful fallback message). */}
       {receipt.imageDataUrl ? (
         <View style={styles.receiptPageImageWrap}>
           <Image src={receipt.imageDataUrl} style={styles.receiptPageImage} />
@@ -539,7 +543,9 @@ function ReceiptPage({ receipt }: { receipt: ReceiptPageData }) {
       ) : (
         <View style={styles.receiptPagePlaceholderWrap}>
           <Text style={styles.receiptPagePlaceholder}>
-            {isPdf ? "Receipt PDF attached separately" : "Receipt attached separately"}
+            {isPdf
+              ? "Receipt PDF could not be embedded in this packet"
+              : "Receipt could not be embedded in this packet"}
           </Text>
           <Text style={styles.receiptPagePlaceholderFilename}>{receipt.originalFilename}</Text>
         </View>
@@ -748,7 +754,10 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
         </View>
 
         {/* ── Line Items ── */}
-        <View style={styles.table}>
+        {/* minPresenceAhead keeps the totals block on the same page as the last line items.
+            If less than 120pt remains after the table, react-pdf inserts a break inside
+            the table (before a line-item row) rather than pushing lowerSection to a new page. */}
+        <View style={styles.table} minPresenceAhead={120}>
           <View style={styles.tableHeader}>
             <Text style={styles.thNumber}>#</Text>
             <Text style={styles.thService}>Product or service</Text>
@@ -807,10 +816,16 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
 
       </Page>
 
-      {/* ── Receipt appendix pages (one per included receipt) ── */}
-      {(receiptPages ?? []).map((receipt) => (
-        <ReceiptPage key={receipt.id} receipt={receipt} />
-      ))}
+      {/* ── Receipt appendix pages ──────────────────────────────────────────
+          PDF receipts with pdfBytes are merged into the invoice buffer AFTER
+          react-pdf renders, so they are excluded here. Image receipts embed
+          their content directly. Failed PDF downloads get a truthful fallback
+          page ("could not be embedded"). */}
+      {(receiptPages ?? [])
+        .filter((r) => !(r.mimeType === "application/pdf" && r.pdfBytes != null))
+        .map((receipt) => (
+          <ReceiptPage key={receipt.id} receipt={receipt} />
+        ))}
 
     </Document>
   );
@@ -857,5 +872,22 @@ export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<B
     overrides:     opts.overrides,
     receiptPages:  opts.receiptPages,
   });
-  return renderToBuffer(element as React.ReactElement);
+
+  // Render the invoice + image receipt appendix pages via react-pdf.
+  const invoiceBuffer = await renderToBuffer(element as React.ReactElement);
+
+  // Merge PDF receipt pages into the invoice buffer.
+  // PDF receipts with pdfBytes were excluded from react-pdf rendering (no placeholder page);
+  // they are appended here as full PDF pages. Per-receipt failures are logged and skipped
+  // without aborting the packet. If all receipts fail to merge, the invoice-only buffer is returned.
+  const receiptPages = opts.receiptPages ?? [];
+  const hasPdfReceipts = receiptPages.some((r) => r.mimeType === "application/pdf" && r.pdfBytes != null);
+  if (!hasPdfReceipts) return invoiceBuffer;
+
+  try {
+    return await appendPdfReceiptPages(invoiceBuffer, receiptPages);
+  } catch (e) {
+    console.error(`[invoice/pdf] PDF receipt merge failed (returning invoice-only): ${e instanceof Error ? e.message : String(e)}`);
+    return invoiceBuffer;
+  }
 }

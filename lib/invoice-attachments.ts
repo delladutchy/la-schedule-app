@@ -176,6 +176,14 @@ export interface ReceiptPageData {
   mimeType: string;
   /** Base64 data URL for embeddable images (JPEG/PNG/WEBP/GIF), null for PDF/HEIC */
   imageDataUrl: string | null;
+  /**
+   * Raw PDF bytes for PDF receipts that were successfully downloaded.
+   * Non-null only when mimeType is "application/pdf" and the download succeeded.
+   * These pages are merged into the invoice PDF packet after react-pdf rendering,
+   * so they do not appear as placeholder pages in the appendix.
+   * null for image receipts, HEIC receipts, or PDF receipts where download failed.
+   */
+  pdfBytes: Buffer | null;
   /** YYYY-MM-DD from receipt_date column; null when no receipt date was explicitly saved */
   receiptDate: string | null;
   /** la_job_number stored on the attachment record */
@@ -233,7 +241,9 @@ export async function getReceiptPagesForPdf(
     created_at: string;
   }>) {
     const canEmbed = EMBEDDABLE_IMAGE_TYPES.has(rec.mime_type);
+    const isPdf    = rec.mime_type === "application/pdf";
     let imageDataUrl: string | null = null;
+    let pdfBytes:     Buffer | null = null;
 
     if (canEmbed) {
       const { data: fileData, error: dlErr } = await supabase.storage
@@ -245,12 +255,24 @@ export async function getReceiptPagesForPdf(
         const buf = Buffer.from(await fileData.arrayBuffer());
         imageDataUrl = `data:${rec.mime_type};base64,${buf.toString("base64")}`;
       }
+    } else if (isPdf) {
+      // Download PDF bytes so they can be merged into the invoice packet.
+      // Failure is non-fatal: the receipt gets a "could not be embedded" placeholder page.
+      const { data: fileData, error: dlErr } = await supabase.storage
+        .from(ATTACHMENT_BUCKET)
+        .download(rec.storage_path);
+      if (dlErr || !fileData) {
+        console.warn(`[invoice-attachments] PDF receipt download failed for ${rec.id} (non-fatal): ${dlErr?.message ?? "no data"}`);
+      } else {
+        pdfBytes = Buffer.from(await fileData.arrayBuffer());
+      }
     }
 
     pages.push({
       id:               rec.id,
       mimeType:         rec.mime_type,
       imageDataUrl,
+      pdfBytes,
       // Only show an explicitly saved receipt date. Do not invent one from upload/today.
       receiptDate:      rec.receipt_date,
       laJobNumber:      rec.la_job_number || fallbackLaJobNumber,

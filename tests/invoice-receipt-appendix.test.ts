@@ -30,6 +30,8 @@ interface ReceiptPageData {
   id: string;
   mimeType: string;
   imageDataUrl: string | null;
+  /** Raw PDF bytes for PDF receipts that were successfully downloaded; null otherwise */
+  pdfBytes: Buffer | null;
   receiptDate: string | null;
   laJobNumber: string | null;
   category: string | null;
@@ -101,11 +103,13 @@ function buildReceiptPageData(
   row: AttachmentRow,
   imageDataUrl: string | null,
   fallbackLaJobNumber: string | null = null,
+  pdfBytes: Buffer | null = null,
 ): ReceiptPageData {
   return {
     id:               row.id,
     mimeType:         row.mime_type,
     imageDataUrl,
+    pdfBytes,
     receiptDate:      resolveReceiptDate(row.receipt_date),
     laJobNumber:      row.la_job_number || fallbackLaJobNumber,
     category:         row.receipt_category,
@@ -343,32 +347,110 @@ describe("receipt page header styling", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. PDF vs image placeholder logic
+// 6. PDF receipt handling: merge vs fallback placeholder
+//
+// PDF receipts with pdfBytes are merged into the invoice PDF buffer after
+// react-pdf renders (no placeholder page is emitted for them).
+// PDF receipts where download failed (pdfBytes null) get a truthful
+// "could not be embedded" placeholder page.
 // ---------------------------------------------------------------------------
 
-function placeholderText(mimeType: string): string {
-  return mimeType === "application/pdf"
-    ? "Receipt PDF attached separately"
-    : "Receipt attached separately";
+// Mirrors the filter used in InvoicePDF to decide which receipts get a ReceiptPage.
+function shouldRenderReceiptPage(r: ReceiptPageData): boolean {
+  // PDF receipts with bytes are merged externally — skip placeholder page
+  if (r.mimeType === "application/pdf" && r.pdfBytes != null) return false;
+  return true;
 }
 
-describe("PDF receipt placeholder", () => {
-  it("shows 'Receipt PDF attached separately' for PDF receipts", () => {
-    expect(placeholderText("application/pdf")).toBe("Receipt PDF attached separately");
+// Mirrors the placeholder text in ReceiptPage component for failed/non-mergeable types.
+function fallbackPlaceholderText(mimeType: string): string {
+  return mimeType === "application/pdf"
+    ? "Receipt PDF could not be embedded in this packet"
+    : "Receipt could not be embedded in this packet";
+}
+
+describe("PDF receipt merge vs placeholder", () => {
+  it("PDF receipt with pdfBytes set: no placeholder page rendered (will be merged)", () => {
+    const data = buildReceiptPageData(SAMPLE_PDF_ROW, null, null, Buffer.from("%PDF-1.4 fake"));
+    expect(data.pdfBytes).not.toBeNull();
+    expect(shouldRenderReceiptPage(data)).toBe(false);
   });
 
-  it("shows generic 'Receipt attached separately' for HEIC", () => {
-    expect(placeholderText("image/heic")).toBe("Receipt attached separately");
+  it("PDF receipt with pdfBytes null (download failed): placeholder page IS rendered", () => {
+    const data = buildReceiptPageData(SAMPLE_PDF_ROW, null, null, null);
+    expect(data.pdfBytes).toBeNull();
+    expect(shouldRenderReceiptPage(data)).toBe(true);
   });
 
-  it("image receipts use data URL, not placeholder", () => {
+  it("failed PDF download shows truthful fallback, not 'attached separately'", () => {
+    const text = fallbackPlaceholderText("application/pdf");
+    expect(text).toBe("Receipt PDF could not be embedded in this packet");
+    expect(text).not.toContain("attached separately");
+  });
+
+  it("HEIC receipt (no pdfBytes) gets placeholder page", () => {
+    const heicRow = { ...SAMPLE_PDF_ROW, mime_type: "image/heic", original_filename: "receipt.heic" };
+    const data = buildReceiptPageData(heicRow, null);
+    expect(data.pdfBytes).toBeNull();
+    expect(shouldRenderReceiptPage(data)).toBe(true);
+  });
+
+  it("HEIC placeholder text does not say 'PDF'", () => {
+    const text = fallbackPlaceholderText("image/heic");
+    expect(text).not.toContain("PDF");
+    expect(text).toContain("could not be embedded");
+  });
+
+  it("image receipt (imageDataUrl set) renders normally — no pdfBytes needed", () => {
     const data = buildReceiptPageData(SAMPLE_IMAGE_ROW, "data:image/jpeg;base64,abc");
     expect(data.imageDataUrl).not.toBeNull();
+    expect(data.pdfBytes).toBeNull();
+    expect(shouldRenderReceiptPage(data)).toBe(true);
   });
 
-  it("PDF receipt always has null imageDataUrl", () => {
-    const data = buildReceiptPageData(SAMPLE_PDF_ROW, null);
-    expect(data.imageDataUrl).toBeNull();
+  it("PDF receipt always has null imageDataUrl regardless of pdfBytes", () => {
+    const withBytes = buildReceiptPageData(SAMPLE_PDF_ROW, null, null, Buffer.from("%PDF"));
+    expect(withBytes.imageDataUrl).toBeNull();
+    const noBytes  = buildReceiptPageData(SAMPLE_PDF_ROW, null, null, null);
+    expect(noBytes.imageDataUrl).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PDF receipt appendix: merge logic (pure function behaviour)
+// ---------------------------------------------------------------------------
+
+describe("PDF receipt merge page filtering", () => {
+  const imagePage = buildReceiptPageData(SAMPLE_IMAGE_ROW, "data:image/jpeg;base64,abc");
+  const pdfWithBytes = buildReceiptPageData(SAMPLE_PDF_ROW, null, null, Buffer.from("%PDF-1.4"));
+  const pdfNoBytes   = buildReceiptPageData({ ...SAMPLE_PDF_ROW, id: "att-fail" }, null, null, null);
+
+  it("only image pages and failed PDF downloads produce ReceiptPage elements", () => {
+    const pages = [imagePage, pdfWithBytes, pdfNoBytes];
+    const rendered = pages.filter(shouldRenderReceiptPage);
+    expect(rendered).toHaveLength(2); // imagePage + pdfNoBytes
+    expect(rendered.map((p) => p.id)).toContain("att-1");    // image
+    expect(rendered.map((p) => p.id)).toContain("att-fail"); // failed PDF
+    expect(rendered.map((p) => p.id)).not.toContain("att-2"); // merged PDF excluded
+  });
+
+  it("PDF receipts with pdfBytes are collected for merge", () => {
+    const pages = [imagePage, pdfWithBytes, pdfNoBytes];
+    const toMerge = pages.filter((r) => r.mimeType === "application/pdf" && r.pdfBytes != null);
+    expect(toMerge).toHaveLength(1);
+    expect(toMerge[0]!.id).toBe("att-2");
+  });
+
+  it("invoice with only image receipts → no PDF merge needed", () => {
+    const pages = [imagePage];
+    const hasPdf = pages.some((r) => r.mimeType === "application/pdf" && r.pdfBytes != null);
+    expect(hasPdf).toBe(false);
+  });
+
+  it("invoice with no receipts → no merge needed", () => {
+    const pages: ReceiptPageData[] = [];
+    const hasPdf = pages.some((r) => r.mimeType === "application/pdf" && r.pdfBytes != null);
+    expect(hasPdf).toBe(false);
   });
 });
 
