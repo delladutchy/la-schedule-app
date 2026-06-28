@@ -2,33 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { getStore } from "@netlify/blobs";
 import { CALENDAR_SCOPES, buildCalendarAuth } from "@/lib/google";
+import { getConfig } from "@/lib/config";
+import { authorizeEditorRequest } from "@/lib/editor-auth";
+import { isJeffEditorId } from "@/lib/job-time";
 
 export const dynamic = "force-dynamic";
-
-// ---------------------------------------------------------------------------
-// Auth — admin token only (same pattern as /api/admin/google-calendar/watch)
-// ---------------------------------------------------------------------------
-
-function constantTimeEquals(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
-function isAuthorized(req: NextRequest): boolean {
-  const adminToken = process.env.ADMIN_TOKEN?.trim() ?? "";
-  if (!adminToken) return false;
-
-  // Accept Bearer header or ?token= query param (browser-friendly for diagnostics)
-  const header = req.headers.get("authorization") ?? "";
-  const bearerMatch = header.match(/^Bearer\s+(.+)$/i);
-  const presented =
-    bearerMatch?.[1]?.trim() ??
-    req.nextUrl.searchParams.get("token")?.trim() ??
-    "";
-  return constantTimeEquals(presented, adminToken);
-}
 
 // ---------------------------------------------------------------------------
 // Private key reader (same sources as google-sheets.ts)
@@ -93,7 +71,9 @@ async function testCalendarAccess(
 // ---------------------------------------------------------------------------
 
 export async function GET(req: NextRequest) {
-  if (!isAuthorized(req)) {
+  const { env } = getConfig();
+  const auth = authorizeEditorRequest(req, env);
+  if (!auth.ok || !isJeffEditorId(auth.editorId)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
