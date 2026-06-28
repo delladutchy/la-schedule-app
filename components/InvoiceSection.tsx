@@ -2791,6 +2791,12 @@ export function InvoiceSection({
                 </p>
               ) : null}
 
+              {syncState.hasDuplicates ? (
+                <p className="invoice-sheet-sync-status invoice-sheet-sync-status--warn" role="alert">
+                  ⚠ Duplicate Sheet rows were auto-cleaned during sync. Open Advanced → Sheet Health Check to verify.
+                </p>
+              ) : null}
+
               {pdfState.status === "error" ? (
                 <p className="invoice-error" role="alert">{pdfState.error}</p>
               ) : null}
