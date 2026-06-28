@@ -3,7 +3,7 @@ import { google } from "googleapis";
 import { getStore } from "@netlify/blobs";
 import { CALENDAR_SCOPES, buildCalendarAuth } from "@/lib/google";
 import { getConfig } from "@/lib/config";
-import { authorizeEditorRequest } from "@/lib/editor-auth";
+import { resolveCalendarHealthAuth } from "@/lib/calendar-health-auth";
 import { isJeffEditorId } from "@/lib/job-time";
 
 export const dynamic = "force-dynamic";
@@ -72,8 +72,12 @@ async function testCalendarAccess(
 
 export async function GET(req: NextRequest) {
   const { env } = getConfig();
-  const auth = authorizeEditorRequest(req, env);
-  if (!auth.ok || !isJeffEditorId(auth.editorId)) {
+  const editorId = resolveCalendarHealthAuth(
+    req.headers,
+    req.nextUrl.searchParams.get("token"),
+    env,
+  );
+  if (!editorId || !isJeffEditorId(editorId)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

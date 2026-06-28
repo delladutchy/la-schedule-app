@@ -13,6 +13,7 @@
  *   - Duplicate cleanup keeps the newest duplicate row and only deletes confirmed duplicates
  */
 import { describe, it, expect } from "vitest";
+import { resolveCalendarHealthAuth } from "@/lib/calendar-health-auth";
 import {
   COLUMN_ORDER,
   MAIN_SHEET_HEADER_RANGE,
@@ -3839,5 +3840,72 @@ describe("Calendar health check response structure", () => {
       .slice(0, 400);
     expect(sanitized).not.toContain(fakeToken);
     expect(sanitized).toContain("[redacted]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Calendar health auth — resolveCalendarHealthAuth
+// Tests Bearer header, session cookie proxy, ?token= param, and rejection.
+// ---------------------------------------------------------------------------
+
+function makeEnv(jeffToken: string) {
+  return {
+    EDITOR_TOKEN: undefined as string | undefined,
+    EDITOR_TOKENS_JSON: JSON.stringify({ jeff: jeffToken }),
+  };
+}
+
+function makeHeaders(entries: Record<string, string>): { get(name: string): string | null } {
+  return { get: (n: string) => entries[n.toLowerCase()] ?? null };
+}
+
+describe("resolveCalendarHealthAuth", () => {
+  const JEFF_TOKEN = "super-secret-jeff-token-32chars!";
+  const env = makeEnv(JEFF_TOKEN);
+
+  it("Bearer header with valid Jeff token returns jeff", () => {
+    const headers = makeHeaders({ authorization: `Bearer ${JEFF_TOKEN}` });
+    expect(resolveCalendarHealthAuth(headers, null, env)).toBe("jeff");
+  });
+
+  it("Bearer header with wrong token returns null", () => {
+    const headers = makeHeaders({ authorization: "Bearer wrong-token-value-here!!!!" });
+    expect(resolveCalendarHealthAuth(headers, null, env)).toBeNull();
+  });
+
+  it("?token= query param with valid Jeff token returns jeff", () => {
+    const headers = makeHeaders({});
+    expect(resolveCalendarHealthAuth(headers, JEFF_TOKEN, env)).toBe("jeff");
+  });
+
+  it("?token= query param with wrong value returns null", () => {
+    const headers = makeHeaders({});
+    expect(resolveCalendarHealthAuth(headers, "totally-wrong-token-value!!!!", env)).toBeNull();
+  });
+
+  it("empty ?token= and no Authorization header returns null", () => {
+    const headers = makeHeaders({});
+    expect(resolveCalendarHealthAuth(headers, "", env)).toBeNull();
+  });
+
+  it("null queryToken and no Authorization header returns null", () => {
+    const headers = makeHeaders({});
+    expect(resolveCalendarHealthAuth(headers, null, env)).toBeNull();
+  });
+
+  it("returns null when no editor tokens are configured", () => {
+    const noTokenEnv = { EDITOR_TOKEN: undefined as string | undefined, EDITOR_TOKENS_JSON: undefined as string | undefined };
+    const headers = makeHeaders({ authorization: `Bearer ${JEFF_TOKEN}` });
+    expect(() => resolveCalendarHealthAuth(headers, null, noTokenEnv)).not.toThrow();
+    // resolveEditorTokenMap throws; the catch returns null
+    expect(resolveCalendarHealthAuth(headers, JEFF_TOKEN, noTokenEnv)).toBeNull();
+  });
+
+  it("never exposes the Jeff token value in the return value", () => {
+    const headers = makeHeaders({ authorization: `Bearer ${JEFF_TOKEN}` });
+    const result = resolveCalendarHealthAuth(headers, null, env);
+    // Returns the editorId ("jeff"), never the token itself
+    expect(result).not.toBe(JEFF_TOKEN);
+    expect(result).toBe("jeff");
   });
 });
