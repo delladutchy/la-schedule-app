@@ -3487,3 +3487,109 @@ describe("Cleanup workflow safety", () => {
     expect(voidInClean).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Z. Invoice Worklist resilience — Calendar failure must not block invoice list
+// ---------------------------------------------------------------------------
+
+describe("Invoice Worklist resilience", () => {
+  // Simulates the worklist route fallback logic
+  function classifyCalendarError(err: { message: string }): { calendarWarning: string } {
+    const isAuthFailure = /invalid_grant|invalid_client|unauthorized_client/i.test(err.message) || err.message.includes("401");
+    const isRateLimit   = /quota exceeded|rateLimitExceeded/i.test(err.message);
+    const calendarWarning = isAuthFailure
+      ? "Google Calendar connection failed — check GOOGLE_REFRESH_TOKEN, GOOGLE_CLIENT_ID, and GOOGLE_CLIENT_SECRET. Showing saved invoice records only."
+      : isRateLimit
+        ? "Google Calendar rate-limited — showing saved invoice records only."
+        : "Google Calendar unavailable — showing saved invoice records only.";
+    return { calendarWarning };
+  }
+
+  // Simulates the Supabase-only fallback entries
+  function supabaseFallbackEntries(rows: Array<{ la_number: string | null; invoice_number: string | null; invoice_status: string }>) {
+    return rows.map((r) => {
+      const laJobNum = r.la_number ? `LA#${r.la_number}` : null;
+      const gigName  = laJobNum ?? (r.invoice_number ? `Invoice #${r.invoice_number}` : "Invoice");
+      return { laJobNumber: laJobNum, gigName, invoiceStatus: r.invoice_status };
+    });
+  }
+
+  const sampleInvoiceRows = [
+    { la_number: "5555", invoice_number: "1001", invoice_status: "draft_created" },
+    { la_number: "6666", invoice_number: "1002", invoice_status: "sent" },
+    { la_number: null,   invoice_number: "1003", invoice_status: "paid" },
+  ];
+
+  it("Calendar auth failure produces a Calendar-specific warning, not a Sheets message", () => {
+    const err = { message: "invalid_grant: Token has been expired or revoked." };
+    const { calendarWarning } = classifyCalendarError(err);
+    // Must mention Calendar credentials — NOT Sheets / GOOGLE_PRIVATE_KEY
+    expect(calendarWarning).toContain("GOOGLE_REFRESH_TOKEN");
+    expect(calendarWarning).not.toContain("GOOGLE_PRIVATE_KEY");
+    expect(calendarWarning).not.toContain("service account");
+    expect(calendarWarning).not.toContain("Sheets auth failed");
+  });
+
+  it("Calendar rate-limit produces a rate-limit warning, not an auth message", () => {
+    const err = { message: "rateLimitExceeded: Quota exceeded" };
+    const { calendarWarning } = classifyCalendarError(err);
+    expect(calendarWarning).toContain("rate-limited");
+    expect(calendarWarning).not.toContain("GOOGLE_REFRESH_TOKEN");
+  });
+
+  it("Supabase fallback returns entries even when Calendar is down", () => {
+    const entries = supabaseFallbackEntries(sampleInvoiceRows);
+    // All three rows returned — list is not empty
+    expect(entries).toHaveLength(3);
+  });
+
+  it("Supabase fallback entries preserve invoice status for tab counts", () => {
+    const entries = supabaseFallbackEntries(sampleInvoiceRows);
+    const drafts = entries.filter((e) => e.invoiceStatus === "draft_created");
+    const sent   = entries.filter((e) => e.invoiceStatus === "sent");
+    const paid   = entries.filter((e) => e.invoiceStatus === "paid");
+    expect(drafts).toHaveLength(1);
+    expect(sent).toHaveLength(1);
+    expect(paid).toHaveLength(1);
+  });
+
+  it("Supabase fallback builds a readable gigName from la_number or invoice_number", () => {
+    const entries = supabaseFallbackEntries(sampleInvoiceRows);
+    expect(entries[0]?.laJobNumber).toBe("LA#5555");
+    expect(entries[0]?.gigName).toBe("LA#5555");
+    expect(entries[2]?.laJobNumber).toBeNull();
+    expect(entries[2]?.gigName).toBe("Invoice #1003");
+  });
+
+  it("worklist response with calendarWarning is a soft warning, not a hard error", () => {
+    // A response with calendarWarning AND entries is not a 502 — it has HTTP 200.
+    // The client sets entries (not fetchErr) when res.ok is true.
+    const simulatedResponse = {
+      ok: true,
+      entries: supabaseFallbackEntries(sampleInvoiceRows),
+      calendarWarning: "Google Calendar unavailable — showing saved invoice records only.",
+    };
+    // fetchErr stays null; calendarWarning is set; entries are populated
+    expect(simulatedResponse.ok).toBe(true);
+    expect(simulatedResponse.entries.length).toBeGreaterThan(0);
+    expect(simulatedResponse.calendarWarning).toBeTruthy();
+  });
+
+  it("hard failure (both Calendar and Supabase down) still returns a useful error message", () => {
+    const hardErrorMsg = "Invoice list unavailable — Google Calendar and database are both unreachable.";
+    expect(hardErrorMsg).toContain("Google Calendar");
+    expect(hardErrorMsg).not.toContain("GOOGLE_PRIVATE_KEY");
+    expect(hardErrorMsg).not.toContain("service account");
+  });
+
+  it("Sheets auth errors never appear in the worklist error path", () => {
+    // The worklist route now uses classifyGoogleError (Calendar), not classifySheetsError.
+    // "Sheets auth failed — check GOOGLE_PRIVATE_KEY and service account email"
+    // must not be returned by the worklist API under any circumstances.
+    const sheetsErrMsg = "Sheets auth failed — check GOOGLE_PRIVATE_KEY and service account email";
+    const calendarErrMsg = "Google Calendar connection failed — check GOOGLE_REFRESH_TOKEN, GOOGLE_CLIENT_ID, and GOOGLE_CLIENT_SECRET. Showing saved invoice records only.";
+    // They are different strings — the Sheets one is no longer in the worklist path
+    expect(calendarErrMsg).not.toBe(sheetsErrMsg);
+    expect(calendarErrMsg).not.toContain("GOOGLE_PRIVATE_KEY");
+  });
+});

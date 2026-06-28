@@ -113,32 +113,41 @@ function entryMatchesSearch(entry: WorklistEntry, term: string): boolean {
 // ---------------------------------------------------------------------------
 
 export function InvoiceWorklist() {
-  const [entries,     setEntries]     = useState<WorklistEntry[]>([]);
-  const [loading,     setLoading]     = useState(true);
-  const [fetchErr,    setFetchErr]    = useState<string | null>(null);
-  const [filter,      setFilter]      = useState<WorklistFilter>("all");
-  const [search,      setSearch]      = useState("");
-  const [selected,    setSelected]    = useState<WorklistEntry | null>(null);
-  const [months,      setMonths]      = useState(18);
-  const [listVisible, setListVisible] = useState(true);
+  const [entries,         setEntries]         = useState<WorklistEntry[]>([]);
+  const [loading,         setLoading]         = useState(true);
+  const [fetchErr,        setFetchErr]        = useState<string | null>(null);
+  const [calendarWarning, setCalendarWarning] = useState<string | null>(null);
+  const [filter,          setFilter]          = useState<WorklistFilter>("all");
+  const [search,          setSearch]          = useState("");
+  const [selected,        setSelected]        = useState<WorklistEntry | null>(null);
+  const [months,          setMonths]          = useState(18);
+  const [listVisible,     setListVisible]     = useState(true);
   const panelRef = useRef<HTMLDivElement>(null);
   const token    = typeof window !== "undefined" ? getEditorToken() : null;
 
   const load = useCallback(async (m: number) => {
     setLoading(true);
     setFetchErr(null);
+    setCalendarWarning(null);
     try {
       const res = await fetch(`/api/invoice/worklist?months=${m}`, {
         headers: authHeaders(token),
         credentials: "same-origin",
       });
+      const j = await res.json().catch(() => ({})) as {
+        entries?: WorklistEntry[];
+        calendarWarning?: string;
+        message?: string;
+        error?: string;
+      };
       if (!res.ok) {
-        const j = await res.json().catch(() => ({})) as { message?: string; error?: string };
+        // Hard failure — both Calendar and Supabase failed
         setFetchErr(j.message ?? j.error ?? `Error ${res.status}`);
         return;
       }
-      const j = await res.json() as { entries?: WorklistEntry[] };
       setEntries(j.entries ?? []);
+      // Soft warning — Calendar failed but Supabase fallback succeeded
+      if (j.calendarWarning) setCalendarWarning(j.calendarWarning);
     } catch {
       setFetchErr("Network error — could not load invoice worklist.");
     } finally {
@@ -245,7 +254,10 @@ export function InvoiceWorklist() {
           <p className="worklist-loading">Loading jobs…</p>
         ) : fetchErr ? (
           <p className="worklist-error" role="alert">⚠ {fetchErr}</p>
-        ) : visible.length === 0 ? (
+        ) : calendarWarning ? (
+          <p className="worklist-warning" role="alert">⚠ {calendarWarning}</p>
+        ) : null}
+        {!loading && !fetchErr && visible.length === 0 ? (
           <p className="worklist-empty">No jobs match this filter.</p>
         ) : null}
 
@@ -287,7 +299,7 @@ export function InvoiceWorklist() {
         ) : null}
 
         <p className="worklist-count-note">
-          {!loading && !fetchErr ? `${visible.length} of ${entries.length} job${entries.length !== 1 ? "s" : ""}` : ""}
+          {!loading && !fetchErr && entries.length > 0 ? `${visible.length} of ${entries.length} job${entries.length !== 1 ? "s" : ""}` : ""}
         </p>
       </aside>
       ) : (

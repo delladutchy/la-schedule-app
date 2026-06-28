@@ -251,6 +251,55 @@ export async function listWorklistEntries(opts: {
   return dedupedEntries;
 }
 
+// ── Supabase-only fallback (used when Calendar is unavailable) ───────────────
+
+/**
+ * Loads invoice_data rows from Supabase without touching Google Calendar.
+ * Used as a fallback when Calendar auth fails so the worklist still shows data.
+ * Returned entries have empty startDate/endDate/workDates — all invoice fields
+ * (status, number, total, pdf, payments) are populated from Supabase.
+ */
+export async function listWorklistEntriesFromSupabaseOnly(): Promise<WorklistEntry[]> {
+  const client = getSupabaseServerClient();
+  const { data, error } = await client
+    .from("invoice_data")
+    .select(
+      "google_event_id,la_number,invoice_number,invoice_status,invoice_total,invoice_pdf_url,amount_paid,remaining_balance,invoice_job_name_override",
+    )
+    .not("invoice_status", "eq", "none")
+    .order("invoice_number", { ascending: false });
+
+  if (error) throw new Error(`[invoice-worklist] supabase fallback failed: ${error.message}`);
+
+  return (data ?? []).map((row) => {
+    const r = row as Record<string, unknown>;
+    const laRaw    = r.la_number      != null ? String(r.la_number)      : null;
+    const invNum   = r.invoice_number != null ? String(r.invoice_number) : null;
+    const laJobNum = laRaw ? `LA#${laRaw}` : null;
+    const gigName  = (r.invoice_job_name_override as string | null) || laJobNum || (invNum ? `Invoice #${invNum}` : "Invoice");
+    const summary  = laJobNum ? `${laJobNum} — ${gigName}` : gigName;
+    return {
+      eventId:          String(r.google_event_id ?? ""),
+      summary,
+      gigName,
+      laJobNumber:      laJobNum,
+      startDate:        "",
+      endDate:          "",
+      workDates:        [],
+      location:         null,
+      startTimeUtc:     null,
+      endTimeUtc:       null,
+      callTimeDefault:  null,
+      invoiceStatus:    (r.invoice_status as InvoiceStatus) ?? "none",
+      invoiceNumber:    invNum,
+      invoiceTotal:     r.invoice_total     != null ? Number(r.invoice_total)     : null,
+      invoicePdfUrl:    r.invoice_pdf_url   != null ? String(r.invoice_pdf_url)   : null,
+      amountPaid:       Number(r.amount_paid ?? 0),
+      remainingBalance: r.remaining_balance != null ? Number(r.remaining_balance) : null,
+    };
+  });
+}
+
 // ── Pure helpers (exported for testing) ──────────────────────────────────────
 
 /**

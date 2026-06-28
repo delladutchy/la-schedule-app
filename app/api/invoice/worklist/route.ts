@@ -3,8 +3,8 @@ import { DateTime } from "luxon";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
-import { listWorklistEntries } from "@/lib/invoice-worklist";
-import { classifySheetsError } from "@/lib/google-error";
+import { listWorklistEntries, listWorklistEntriesFromSupabaseOnly } from "@/lib/invoice-worklist";
+import { classifyGoogleError } from "@/lib/google-error";
 
 export const dynamic = "force-dynamic";
 
@@ -39,13 +39,32 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ entries, fetchedAt: new Date(nowMs).toISOString() }, {
       headers: { "Cache-Control": "no-store" },
     });
-  } catch (err) {
-    const rawMsg      = err instanceof Error ? err.message : String(err);
-    const friendlyMsg = classifySheetsError(err, env.GOOGLE_CALENDAR_ID, "LA calendar");
-    console.error("[invoice/worklist] failed:", rawMsg);
-    return NextResponse.json(
-      { error: "worklist_failed", message: friendlyMsg },
-      { status: 502 },
-    );
+  } catch (calendarErr) {
+    const rawMsg = calendarErr instanceof Error ? calendarErr.message : String(calendarErr);
+    console.error("[invoice/worklist] calendar failed:", rawMsg);
+
+    // Classify as a Calendar error (not Sheets — different auth system).
+    const { isAuthFailure, isRateLimit } = classifyGoogleError(calendarErr);
+    const calendarWarning = isAuthFailure
+      ? "Google Calendar connection failed — check GOOGLE_REFRESH_TOKEN, GOOGLE_CLIENT_ID, and GOOGLE_CLIENT_SECRET. Showing saved invoice records only."
+      : isRateLimit
+        ? "Google Calendar rate-limited — showing saved invoice records only."
+        : "Google Calendar unavailable — showing saved invoice records only.";
+
+    // Fallback: return invoice data from Supabase so the list is not empty.
+    try {
+      const entries = await listWorklistEntriesFromSupabaseOnly();
+      return NextResponse.json(
+        { entries, fetchedAt: new Date(nowMs).toISOString(), calendarWarning },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    } catch (supabaseErr) {
+      const supabaseMsg = supabaseErr instanceof Error ? supabaseErr.message : String(supabaseErr);
+      console.error("[invoice/worklist] supabase fallback also failed:", supabaseMsg);
+      return NextResponse.json(
+        { error: "worklist_failed", message: "Invoice list unavailable — Google Calendar and database are both unreachable." },
+        { status: 502 },
+      );
+    }
   }
 }
