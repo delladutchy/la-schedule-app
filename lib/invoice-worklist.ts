@@ -2,7 +2,7 @@ import "server-only";
 import { google } from "googleapis";
 import { DateTime } from "luxon";
 import { getConfig } from "./config";
-import { buildCalendarAuth } from "./google";
+import { buildCalendarAuth, buildCalendarServiceAccountAuth } from "./google";
 import { parseLaJobSummary, enumerateIsoDatesInRange, parseGigDescription } from "./gigs";
 import { getSupabaseServerClient } from "./supabase";
 import type { InvoiceStatus } from "./invoice-types";
@@ -66,11 +66,15 @@ export async function listWorklistEntries(opts: {
   const laCalendarId = env.GOOGLE_CALENDAR_ID;
 
   // ── Fetch calendar events ─────────────────────────────────────────────────
-  const auth = buildCalendarAuth({
+  // Prefer service account auth (never expires); fall back to OAuth2.
+  const saAuth = await buildCalendarServiceAccountAuth();
+  // Cast to OAuth2Client: googleapis overloads don't resolve the union, but
+  // both OAuth2Client and GoogleAuth are valid at runtime.
+  const auth = (saAuth ?? buildCalendarAuth({
     clientId:     env.GOOGLE_CLIENT_ID,
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     refreshToken: env.GOOGLE_REFRESH_TOKEN,
-  });
+  })) as ReturnType<typeof buildCalendarAuth>;
   const calendar = google.calendar({ version: "v3", auth });
 
   const rawEvents: Array<{

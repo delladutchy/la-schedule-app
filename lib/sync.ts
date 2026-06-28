@@ -17,7 +17,7 @@
  */
 
 import { applyBuffers } from "./intervals";
-import { fetchFreeBusy, fetchCalendarEvents, buildCalendarAuth, type CalendarAuth } from "./google";
+import { fetchFreeBusy, fetchCalendarEvents, buildCalendarAuth, buildCalendarServiceAccountAuth, type CalendarAuth } from "./google";
 import { getConfig } from "./config";
 import { readCurrentSnapshot, writeCurrentSnapshot } from "./store";
 import { isBoardCacheEnabled } from "./board-payload-cache";
@@ -105,7 +105,9 @@ export async function buildAndPersistSnapshot(
   if (opts.sharedAuth) {
     sharedAuth = opts.sharedAuth;
   } else {
-    sharedAuth = buildCalendarAuth(authOpts);
+    // Prefer service account auth (never expires); fall back to OAuth2.
+    const saAuth = await buildCalendarServiceAccountAuth();
+    sharedAuth = saAuth ?? buildCalendarAuth(authOpts);
     try {
       await sharedAuth.getAccessToken();
     } catch (warmUpErr) {

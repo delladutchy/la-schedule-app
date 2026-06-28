@@ -1,5 +1,5 @@
 import type { EnvConfig } from "./config";
-import { registerCalendarWatch } from "./google";
+import { registerCalendarWatch, buildCalendarServiceAccountAuth } from "./google";
 import {
   readGoogleCalendarWatchMetadataMap,
   writeGoogleCalendarWatchMetadataMap,
@@ -335,6 +335,9 @@ export async function ensureGoogleCalendarWatch(
   }> = [];
   let didRegister = false;
 
+  // Prefer service account auth (never expires); fall back to OAuth2.
+  const saAuth = await buildCalendarServiceAccountAuth();
+
   for (const calendarId of calendarIds) {
     const existing = metadataMap[calendarId] ?? null;
     const existingHealth = evaluateWatchHealth(existing, nowMs);
@@ -351,6 +354,7 @@ export async function ensureGoogleCalendarWatch(
         clientId: env.GOOGLE_CLIENT_ID,
         clientSecret: env.GOOGLE_CLIENT_SECRET,
         refreshToken: env.GOOGLE_REFRESH_TOKEN,
+        ...(saAuth ? { sharedAuth: saAuth } : {}),
         calendarId,
         webhookUrl,
         channelId: generateChannelId(calendarId),

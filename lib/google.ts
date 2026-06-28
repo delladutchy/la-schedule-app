@@ -11,6 +11,7 @@
  *   3. Recurring events are expanded server-side by Google APIs.
  */
 
+import { getStore } from "@netlify/blobs";
 import { google } from "googleapis";
 import { DateTime } from "luxon";
 import type { Interval } from "./intervals";
@@ -112,6 +113,8 @@ export interface RegisterCalendarWatchOptions extends CalendarAuthOptions {
   channelToken: string;
   /** Optional Google channel TTL in seconds (max 604800). */
   ttlSeconds?: number;
+  /** Pre-warmed shared auth — preferred over building from OAuth2 credentials. */
+  sharedAuth?: CalendarAuth;
 }
 
 export interface RegisteredCalendarWatch {
@@ -142,7 +145,48 @@ export function buildCalendarAuth(opts: CalendarAuthOptions) {
   return auth;
 }
 
-export type CalendarAuth = ReturnType<typeof buildCalendarAuth>;
+export type CalendarAuth = ReturnType<typeof buildCalendarAuth> | InstanceType<typeof google.auth.GoogleAuth>;
+
+export const CALENDAR_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/calendar.freebusy",
+  "https://www.googleapis.com/auth/calendar.events",
+] as const;
+
+/**
+ * Builds a Calendar auth client using the service account already used for
+ * Sheets (GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY).
+ *
+ * Returns null if the service account credentials are not configured, so
+ * callers can fall back to OAuth2.
+ *
+ * One-time setup: share the LA Google Calendar with the service account email
+ * and grant "Make changes to events" access in Google Calendar settings.
+ * After that, auth never expires — no refresh tokens required.
+ */
+export async function buildCalendarServiceAccountAuth(): Promise<InstanceType<typeof google.auth.GoogleAuth> | null> {
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  if (!email) return null;
+
+  let rawKey: string | undefined = process.env.GOOGLE_PRIVATE_KEY;
+  if (!rawKey) {
+    try {
+      const store = getStore("app-secrets");
+      rawKey = (await store.get("google-private-key")) ?? undefined;
+    } catch {
+      // Not in Netlify Blobs context (local dev without netlify dev).
+    }
+  }
+  if (!rawKey) return null;
+
+  return new google.auth.GoogleAuth({
+    credentials: {
+      client_email: email,
+      private_key: rawKey.replace(/\\n/g, "\n"),
+    },
+    scopes: [...CALENDAR_SCOPES],
+  });
+}
 
 /**
  * Builds a CalendarAuth and calls getAccessToken() to obtain a live access
@@ -172,8 +216,12 @@ export async function buildWarmedCalendarAuth(opts: CalendarAuthOptions): Promis
 }
 
 function buildCalendarClient(opts: CalendarAuthOptions, sharedAuth?: CalendarAuth) {
-  const auth = sharedAuth ?? buildCalendarAuth(opts);
-  return google.calendar({ version: "v3", auth });
+  if (sharedAuth) {
+    // Both OAuth2Client and GoogleAuth are valid Calendar auth clients.
+    // googleapis overloads don't resolve the union, so we cast at the call site.
+    return google.calendar({ version: "v3", auth: sharedAuth as ReturnType<typeof buildCalendarAuth> });
+  }
+  return google.calendar({ version: "v3", auth: buildCalendarAuth(opts) });
 }
 
 /**
@@ -386,7 +434,7 @@ export async function fetchCalendarEvents(
 export async function registerCalendarWatch(
   opts: RegisterCalendarWatchOptions,
 ): Promise<RegisteredCalendarWatch> {
-  const calendar = buildCalendarClient(opts);
+  const calendar = buildCalendarClient(opts, opts.sharedAuth);
   const ttlSeconds = opts.ttlSeconds ? Math.max(60, Math.min(604800, Math.floor(opts.ttlSeconds))) : 604800;
 
   const response = await calendar.events.watch({
