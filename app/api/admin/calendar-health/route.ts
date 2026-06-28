@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { getStore } from "@netlify/blobs";
-import { CALENDAR_SCOPES } from "@/lib/google";
+import { CALENDAR_SCOPES, buildCalendarAuth } from "@/lib/google";
 
 export const dynamic = "force-dynamic";
 
@@ -60,14 +60,14 @@ async function testCalendarAccess(
   calendarId: string,
 ): Promise<string | null> {
   try {
-    const cal = google.calendar({ version: "v3", auth: auth as Parameters<typeof google.calendar>[0]["auth"] });
+    const cal = google.calendar({ version: "v3", auth: auth as unknown as ReturnType<typeof buildCalendarAuth> });
     await cal.calendarList.get({ calendarId });
     return null;
   } catch (err) {
     // calendarList.get doesn't work for non-primary calendars shared by ID.
     // Fall back to events.list (max 1 result) which tests actual read access.
     try {
-      const cal = google.calendar({ version: "v3", auth: auth as Parameters<typeof google.calendar>[0]["auth"] });
+      const cal = google.calendar({ version: "v3", auth: auth as unknown as ReturnType<typeof buildCalendarAuth> });
       await cal.events.list({
         calendarId,
         maxResults: 1,
