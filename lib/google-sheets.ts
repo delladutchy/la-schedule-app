@@ -1824,6 +1824,108 @@ export interface SheetResetResult {
   healthAfter: SheetHealthReport;
 }
 
+export interface SheetResetPreviewRow {
+  rowNumber: number;
+  invNumber: string;
+  laNumber: string;
+  date: string;
+  gigEvent: string;
+  total: string;
+  reason: "void" | "test" | "duplicate" | "keep";
+}
+
+export interface SheetResetPreview {
+  voidRows: SheetResetPreviewRow[];
+  testRows: SheetResetPreviewRow[];
+  duplicateRows: SheetResetPreviewRow[];
+  keepRows: SheetResetPreviewRow[];
+  totalToArchive: number;
+}
+
+/**
+ * Read-only dry run of resetSheetLayout. Classifies every row and returns what
+ * WOULD be archived/kept without touching the Sheet. Safe to call any time.
+ */
+export async function previewSheetReset(): Promise<SheetResetPreview> {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
+
+  const auth = await getSheetAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const readRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_SHEET_NAME}!A:T`,
+  });
+  const rows = readRes.data.values ?? [];
+
+  let totalsRowNum = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (isTotalsRow(String(rows[i]?.[0] ?? "").trim())) { totalsRowNum = i + 1; break; }
+  }
+
+  const voidRows: SheetResetPreviewRow[] = [];
+  const testRows: SheetResetPreviewRow[] = [];
+  const activeByKey = new Map<string, Array<{ rowNumber: number; entry: SheetResetPreviewRow; score: number }>>();
+
+  for (let i = 1; i < rows.length; i++) {
+    const sheetsRow = i + 1;
+    const cellA = String(rows[i]?.[0]  ?? "").trim();
+    const cellB = String(rows[i]?.[1]  ?? "").trim();
+    const cellC = String(rows[i]?.[2]  ?? "").trim();
+    const cellD = String(rows[i]?.[3]  ?? "").trim();
+    const cellE = String(rows[i]?.[4]  ?? "").trim();
+    const cellT = String(rows[i]?.[19] ?? "").trim();
+
+    if (isTotalsRow(cellA)) continue;
+
+    const entry: SheetResetPreviewRow = {
+      rowNumber: sheetsRow, invNumber: cellA, laNumber: cellC,
+      date: cellB, gigEvent: cellD, total: cellE, reason: "keep",
+    };
+
+    if (cellT === VOID_STATUS) {
+      voidRows.push({ ...entry, reason: "void" });
+      continue;
+    }
+
+    if (!isInvoiceDataRow(cellA, cellC, cellT)) continue;
+
+    if (isTestSheetRow(cellA, cellC, cellD)) {
+      testRows.push({ ...entry, reason: "test" });
+      continue;
+    }
+
+    const normLa = normalizeLA(cellC);
+    const key = normLa ? `la:${normLa}` : cellA ? `inv:${cellA}` : null;
+    if (!key) continue;
+
+    const existing = activeByKey.get(key) ?? [];
+    const score = scoreKeepRow(cellA, cellB, cellC, cellE, sheetsRow, "", "", undefined);
+    existing.push({ rowNumber: sheetsRow, entry, score });
+    activeByKey.set(key, existing);
+  }
+
+  const duplicateRows: SheetResetPreviewRow[] = [];
+  const keepRows: SheetResetPreviewRow[] = [];
+
+  for (const [, candidates] of activeByKey) {
+    const keep = candidates.reduce((best, e) => e.score > best.score ? e : best);
+    keepRows.push(keep.entry);
+    for (const c of candidates) {
+      if (c.rowNumber !== keep.rowNumber) {
+        duplicateRows.push({ ...c.entry, reason: "duplicate" });
+      }
+    }
+  }
+
+  // Suppress TS unused-var warning for totalsRowNum (read for consistency with reset logic)
+  void totalsRowNum;
+
+  const totalToArchive = voidRows.length + testRows.length + duplicateRows.length;
+  return { voidRows, testRows, duplicateRows, keepRows, totalToArchive };
+}
+
 /**
  * Resets the Sheet to a clean state suitable for real invoice use:
  *

@@ -240,6 +240,32 @@ interface SheetResetState {
   resetAt: string | null;
 }
 
+interface SheetResetPreviewRowUI {
+  rowNumber: number;
+  invNumber: string;
+  laNumber: string;
+  date: string;
+  gigEvent: string;
+  total: string;
+  reason: "void" | "test" | "duplicate" | "keep";
+}
+
+interface SheetResetPreviewState {
+  status: "idle" | "previewing" | "ready" | "error";
+  message: string | null;
+  voidRows: SheetResetPreviewRowUI[];
+  testRows: SheetResetPreviewRowUI[];
+  duplicateRows: SheetResetPreviewRowUI[];
+  keepRows: SheetResetPreviewRowUI[];
+  totalToArchive: number;
+}
+
+const RESET_PREVIEW_INITIAL: SheetResetPreviewState = {
+  status: "idle", message: null,
+  voidRows: [], testRows: [], duplicateRows: [], keepRows: [],
+  totalToArchive: 0,
+};
+
 interface PdfState {
   status: "idle" | "generating" | "done" | "error";
   error: string | null;
@@ -1142,6 +1168,7 @@ export function InvoiceSection({
     formulasRebuilt: false,
     resetAt: null,
   });
+  const [sheetResetPreviewState, setSheetResetPreviewState] = useState<SheetResetPreviewState>(RESET_PREVIEW_INITIAL);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [isSaving, setIsSaving] = useState(false);
@@ -1571,8 +1598,11 @@ export function InvoiceSection({
     if (deleteRows.length === 0) return;
 
     const confirmed = window.confirm(
-      `Delete ${deleteRows.length} duplicate Google Sheet row${deleteRows.length === 1 ? "" : "s"}? ` +
-      "This keeps the recommended row in each duplicate group.",
+      `Archive ${deleteRows.length} duplicate Google Sheet row${deleteRows.length === 1 ? "" : "s"}?\n\n` +
+      "This keeps ONE active row per invoice/job and archives only the extras.\n" +
+      "It does NOT remove any invoice entirely — the invoice itself is preserved.\n" +
+      "All archived rows are saved to the 'Voided Duplicates' tab first.\n\n" +
+      "Proceed?"
     );
     if (!confirmed) return;
 
@@ -1761,22 +1791,43 @@ export function InvoiceSection({
   // Sheet reset / clean start
   // ---------------------------------------------------------------------------
 
+  async function handlePreviewReset() {
+    if (sheetResetPreviewState.status === "previewing") return;
+    setSheetResetPreviewState({ ...RESET_PREVIEW_INITIAL, status: "previewing" });
+    try {
+      const res = await fetch("/api/invoice/sheet-reset", {
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+      });
+      const json = await res.json().catch(() => ({})) as {
+        voidRows?: SheetResetPreviewRowUI[];
+        testRows?: SheetResetPreviewRowUI[];
+        duplicateRows?: SheetResetPreviewRowUI[];
+        keepRows?: SheetResetPreviewRowUI[];
+        totalToArchive?: number;
+        message?: string;
+        error?: string;
+      };
+      if (!res.ok) {
+        setSheetResetPreviewState({ ...RESET_PREVIEW_INITIAL, status: "error", message: json.message ?? json.error ?? "Could not load preview." });
+        return;
+      }
+      setSheetResetPreviewState({
+        status: "ready",
+        message: null,
+        voidRows:      Array.isArray(json.voidRows)      ? json.voidRows      : [],
+        testRows:      Array.isArray(json.testRows)      ? json.testRows      : [],
+        duplicateRows: Array.isArray(json.duplicateRows) ? json.duplicateRows : [],
+        keepRows:      Array.isArray(json.keepRows)      ? json.keepRows      : [],
+        totalToArchive: typeof json.totalToArchive === "number" ? json.totalToArchive : 0,
+      });
+    } catch {
+      setSheetResetPreviewState({ ...RESET_PREVIEW_INITIAL, status: "error", message: "Could not load preview — network error." });
+    }
+  }
+
   async function handleResetSheet() {
     if (sheetResetState.status === "resetting") return;
-    const confirmed = window.confirm(
-      "Reset / Rebuild Invoice Sheet?\n\n" +
-      "This will:\n" +
-      "  • Archive and remove ALL VOID_DUPLICATE rows\n" +
-      "  • Archive and remove fake/test rows (LA#5555, invoice 1001, gig name containing 'test')\n" +
-      "  • Deduplicate remaining rows (best row per invoice/job kept)\n" +
-      "  • Move any misplaced rows to above the TOTALS line\n" +
-      "  • Rebuild TOTALS row SUM formulas (columns E–S)\n\n" +
-      "Real invoice rows are kept. All removed rows are archived first.\n" +
-      "Invoice math, PDFs, emails, and payment records are not changed.\n\n" +
-      "This cannot be undone (check 'Voided Duplicates' tab to recover).\n\n" +
-      "Proceed with the reset?"
-    );
-    if (!confirmed) return;
 
     setSheetResetState({
       status: "resetting", message: null,
@@ -1815,7 +1866,8 @@ export function InvoiceSection({
         formulasRebuilt:         json.formulasRebuilt         ?? false,
         resetAt:                 json.resetAt                 ?? null,
       });
-      // Refresh health state after reset
+      // Refresh health state and clear preview after reset
+      setSheetResetPreviewState(RESET_PREVIEW_INITIAL);
       void handleSheetHealthCheck();
     } catch {
       setSheetResetState((prev) => ({ ...prev, status: "error", message: "Reset failed — network error." }));
@@ -3460,13 +3512,97 @@ export function InvoiceSection({
                       <p className="invoice-error" role="alert">{syncState.message ?? "Sheet sync failed — retry"}</p>
                     ) : null}
 
-                    {/* Sheet Health Check */}
+                    {/* ── 1. Clean Duplicate Rows — safe for production ── */}
+                    <div className="invoice-sheet-duplicates">
+                      <div className="invoice-sheet-duplicates-head">
+                        <div>
+                          <p className="invoice-sheet-duplicates-title">Clean Duplicate Rows</p>
+                          <p className="invoice-sheet-helper">
+                            Safe for production. Keeps one active row per invoice/job and archives only the extras.
+                            Does not remove any invoice entirely.
+                            Use this for normal duplicate cleanup.
+                          </p>
+                        </div>
+                        <div className="invoice-sheet-duplicate-actions">
+                          <button
+                            type="button"
+                            className="invoice-pdf-regen-btn"
+                            onClick={() => { void handleCheckSheetDuplicates(); }}
+                            disabled={sheetDuplicateState.status === "checking" || sheetDuplicateState.status === "deleting"}
+                          >
+                            {sheetDuplicateState.status === "checking" ? "Checking…" : "Check Sheet Duplicates"}
+                          </button>
+                          {sheetDuplicateState.totalDuplicateRows > 0 ? (
+                            <button
+                              type="button"
+                              className="invoice-sheet-delete-duplicates-btn"
+                              onClick={() => { void handleDeleteSheetDuplicates(); }}
+                              disabled={sheetDuplicateState.status === "checking" || sheetDuplicateState.status === "deleting"}
+                            >
+                              {sheetDuplicateState.status === "deleting" ? "Archiving…" : "Archive Duplicate Rows"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      {sheetDuplicateState.message ? (
+                        <p
+                          className={`invoice-sheet-duplicate-message${
+                            sheetDuplicateState.status === "error"
+                              ? " is-error"
+                              : sheetDuplicateState.totalDuplicateRows > 0
+                                ? " is-warning"
+                                : ""
+                          }`}
+                          role={sheetDuplicateState.status === "error" || sheetDuplicateState.totalDuplicateRows > 0 ? "alert" : undefined}
+                        >
+                          {sheetDuplicateState.message}
+                        </p>
+                      ) : null}
+
+                      {sheetDuplicateState.duplicates.length > 0 ? (
+                        <div className="invoice-sheet-duplicate-groups">
+                          {sheetDuplicateState.duplicates.map((group) => (
+                            <div
+                              className={`invoice-sheet-duplicate-group${
+                                currentSheetDuplicateKeys.has(group.key) ? " is-current" : ""
+                              }`}
+                              key={group.key}
+                            >
+                              <div className="invoice-sheet-duplicate-group-head">
+                                <span>{formatSheetDuplicateKey(group.key)}</span>
+                                <span>Keep row {group.keepRow}</span>
+                              </div>
+                              <div className="invoice-sheet-duplicate-rows">
+                                {group.rows.map((row) => {
+                                  const willDelete = group.deleteRows.includes(row.rowNumber);
+                                  return (
+                                    <div
+                                      className={`invoice-sheet-duplicate-row${willDelete ? " is-delete" : " is-keep"}`}
+                                      key={`${group.key}-${row.rowNumber}`}
+                                    >
+                                      <span>Row {row.rowNumber}</span>
+                                      <span>Invoice {row.invNumber || "—"} / LA {row.laNumber || "—"}</span>
+                                      <span>{row.date || "No date"}</span>
+                                      <span>{row.total || "No total"}</span>
+                                      <strong>{willDelete ? "Archive" : "Keep"}</strong>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {/* ── 2. Sheet Health Check — read-only scan ── */}
                     <div className="invoice-sheet-health">
                       <div className="invoice-sheet-duplicates-head">
                         <div>
                           <p className="invoice-sheet-duplicates-title">Sheet Health Check</p>
                           <p className="invoice-sheet-helper">
-                            Confirms one active row per invoice/job. Voided duplicates are not counted.
+                            Read-only scan. Confirms one active row per invoice/job. Does not modify the Sheet.
                           </p>
                         </div>
                         <button
@@ -3554,13 +3690,14 @@ export function InvoiceSection({
                       ) : null}
                     </div>
 
-                    {/* Repair Sheet Layout */}
+                    {/* ── 3. Repair Sheet Layout ── */}
                     <div className="invoice-sheet-health">
                       <div className="invoice-sheet-duplicates-head">
                         <div>
                           <p className="invoice-sheet-duplicates-title">Repair Sheet Layout</p>
                           <p className="invoice-sheet-helper">
-                            Move misplaced rows above TOTALS, archive void rows. Confirmation required.
+                            Moves misplaced rows above TOTALS and archives VOID rows.
+                            Does not remove test/fake rows or rebuild formulas. Confirmation required.
                           </p>
                         </div>
                         <button
@@ -3589,24 +3726,143 @@ export function InvoiceSection({
                       ) : null}
                     </div>
 
-                    {/* Reset / Rebuild Invoice Sheet */}
+                    {/* ── 4. Reset / Rebuild — Advanced Recovery Only ── */}
                     <div className="invoice-sheet-health">
                       <div className="invoice-sheet-duplicates-head">
                         <div>
-                          <p className="invoice-sheet-duplicates-title">Reset / Rebuild Invoice Sheet</p>
+                          <p className="invoice-sheet-duplicates-title">
+                            Reset / Rebuild Sheet{" "}
+                            <span style={{ color: "var(--color-warning, #c8a000)", fontWeight: "normal", fontSize: "0.85em" }}>
+                              — Advanced Recovery Only
+                            </span>
+                          </p>
                           <p className="invoice-sheet-helper">
-                            Remove test data, dedup, rebuild TOTALS formulas. Archives everything first. Confirmation required.
+                            <strong>Not for normal duplicate cleanup.</strong>{" "}
+                            This archives VOID rows, test/fake rows (LA#5555, invoice 1001, gig name containing "test"), and duplicates, then rebuilds TOTALS formulas.
+                            Preview the row list before confirming — rows classified as "test" will be removed.
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          className="invoice-sheet-delete-duplicates-btn"
-                          onClick={() => { void handleResetSheet(); }}
-                          disabled={sheetResetState.status === "resetting"}
-                        >
-                          {sheetResetState.status === "resetting" ? "Resetting…" : "Reset / Rebuild Sheet"}
-                        </button>
+                        {sheetResetPreviewState.status !== "ready" ? (
+                          <button
+                            type="button"
+                            className="invoice-sheet-delete-duplicates-btn"
+                            onClick={() => { void handlePreviewReset(); }}
+                            disabled={sheetResetPreviewState.status === "previewing" || sheetResetState.status === "resetting"}
+                          >
+                            {sheetResetPreviewState.status === "previewing" ? "Loading Preview…" : "Preview Reset"}
+                          </button>
+                        ) : (
+                          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              className="invoice-pdf-regen-btn"
+                              onClick={() => { setSheetResetPreviewState(RESET_PREVIEW_INITIAL); }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              className="invoice-sheet-delete-duplicates-btn"
+                              onClick={() => { void handleResetSheet(); }}
+                              disabled={sheetResetState.status === "resetting"}
+                            >
+                              {sheetResetState.status === "resetting" ? "Resetting…" : "Confirm Reset"}
+                            </button>
+                          </div>
+                        )}
                       </div>
+
+                      {sheetResetPreviewState.status === "error" ? (
+                        <p className="invoice-sheet-duplicate-message is-warning" role="alert">
+                          ⚠ {sheetResetPreviewState.message}
+                        </p>
+                      ) : null}
+
+                      {sheetResetPreviewState.status === "ready" ? (
+                        <div className="invoice-sheet-reset-preview">
+                          {sheetResetPreviewState.totalToArchive === 0 && sheetResetPreviewState.keepRows.length === 0 ? (
+                            <p className="invoice-sheet-duplicate-message">
+                              ✓ Sheet looks clean — nothing to archive.
+                            </p>
+                          ) : (
+                            <>
+                              <p className={`invoice-sheet-duplicate-message${sheetResetPreviewState.totalToArchive > 0 ? " is-warning" : ""}`} role={sheetResetPreviewState.totalToArchive > 0 ? "alert" : undefined}>
+                                {sheetResetPreviewState.totalToArchive > 0
+                                  ? `⚠ Reset will archive ${sheetResetPreviewState.totalToArchive} row${sheetResetPreviewState.totalToArchive === 1 ? "" : "s"}. Review each section below before confirming.`
+                                  : `✓ No rows to archive. ${sheetResetPreviewState.keepRows.length} row${sheetResetPreviewState.keepRows.length === 1 ? "" : "s"} will be kept.`
+                                }
+                              </p>
+                              {sheetResetPreviewState.testRows.length > 0 ? (
+                                <div className="invoice-sheet-duplicate-groups">
+                                  <p className="invoice-sheet-duplicates-title" style={{ marginTop: "0.75rem" }}>
+                                    Test/Fake rows — will be archived ({sheetResetPreviewState.testRows.length})
+                                  </p>
+                                  <p className="invoice-sheet-helper">LA#5555, invoice 1001, or gig name containing "test".</p>
+                                  {sheetResetPreviewState.testRows.map((row) => (
+                                    <div className="invoice-sheet-duplicate-row is-delete" key={`preview-test-${row.rowNumber}`}>
+                                      <span>Row {row.rowNumber}</span>
+                                      <span>Inv {row.invNumber || "—"} / LA {row.laNumber || "—"}</span>
+                                      <span>{row.date || "No date"}</span>
+                                      <span>{row.total || "No total"}</span>
+                                      <span>{row.gigEvent || "—"}</span>
+                                      <strong>TEST — archive</strong>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {sheetResetPreviewState.voidRows.length > 0 ? (
+                                <div className="invoice-sheet-duplicate-groups">
+                                  <p className="invoice-sheet-duplicates-title" style={{ marginTop: "0.75rem" }}>
+                                    VOID rows — will be archived ({sheetResetPreviewState.voidRows.length})
+                                  </p>
+                                  {sheetResetPreviewState.voidRows.map((row) => (
+                                    <div className="invoice-sheet-duplicate-row is-delete" key={`preview-void-${row.rowNumber}`}>
+                                      <span>Row {row.rowNumber}</span>
+                                      <span>Inv {row.invNumber || "—"} / LA {row.laNumber || "—"}</span>
+                                      <span>{row.date || "No date"}</span>
+                                      <span>{row.total || "No total"}</span>
+                                      <strong>VOID — archive</strong>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {sheetResetPreviewState.duplicateRows.length > 0 ? (
+                                <div className="invoice-sheet-duplicate-groups">
+                                  <p className="invoice-sheet-duplicates-title" style={{ marginTop: "0.75rem" }}>
+                                    Duplicate rows — will be archived ({sheetResetPreviewState.duplicateRows.length})
+                                  </p>
+                                  {sheetResetPreviewState.duplicateRows.map((row) => (
+                                    <div className="invoice-sheet-duplicate-row is-delete" key={`preview-dup-${row.rowNumber}`}>
+                                      <span>Row {row.rowNumber}</span>
+                                      <span>Inv {row.invNumber || "—"} / LA {row.laNumber || "—"}</span>
+                                      <span>{row.date || "No date"}</span>
+                                      <span>{row.total || "No total"}</span>
+                                      <strong>DUPLICATE — archive</strong>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {sheetResetPreviewState.keepRows.length > 0 ? (
+                                <div className="invoice-sheet-duplicate-groups">
+                                  <p className="invoice-sheet-duplicates-title" style={{ marginTop: "0.75rem" }}>
+                                    Rows that will be kept ({sheetResetPreviewState.keepRows.length})
+                                  </p>
+                                  {sheetResetPreviewState.keepRows.map((row) => (
+                                    <div className="invoice-sheet-duplicate-row is-keep" key={`preview-keep-${row.rowNumber}`}>
+                                      <span>Row {row.rowNumber}</span>
+                                      <span>Inv {row.invNumber || "—"} / LA {row.laNumber || "—"}</span>
+                                      <span>{row.date || "No date"}</span>
+                                      <span>{row.total || "No total"}</span>
+                                      <strong>KEEP</strong>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </>
+                          )}
+                        </div>
+                      ) : null}
+
                       {sheetResetState.status === "done" || sheetResetState.status === "error" ? (
                         <p
                           className={`invoice-sheet-duplicate-message${sheetResetState.status === "error" ? " is-warning" : ""}`}
@@ -3617,93 +3873,12 @@ export function InvoiceSection({
                       ) : null}
                       {sheetResetState.status === "done" ? (
                         <div className="invoice-sheet-helper" style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-                          {sheetResetState.testArchivedCount > 0 ? <span>Test rows removed: {sheetResetState.testArchivedCount}</span> : null}
+                          {sheetResetState.testArchivedCount > 0 ? <span>Test rows archived: {sheetResetState.testArchivedCount}</span> : null}
                           {sheetResetState.voidArchivedCount > 0 ? <span>Void archived: {sheetResetState.voidArchivedCount}</span> : null}
                           {sheetResetState.duplicatesArchivedCount > 0 ? <span>Duplicates archived: {sheetResetState.duplicatesArchivedCount}</span> : null}
                           {sheetResetState.belowTotalsMovedCount > 0 ? <span>Moved above TOTALS: {sheetResetState.belowTotalsMovedCount}</span> : null}
                           <span>Real rows kept: {sheetResetState.goodRowsKept}</span>
                           {sheetResetState.formulasRebuilt ? <span>Formulas rebuilt</span> : null}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div className="invoice-sheet-duplicates">
-                      <div className="invoice-sheet-duplicates-head">
-                        <div>
-                          <p className="invoice-sheet-duplicates-title">Sheet duplicate cleanup</p>
-                          <p className="invoice-sheet-helper">
-                            Recovery tool: delete active duplicate rows after review.
-                          </p>
-                        </div>
-                        <div className="invoice-sheet-duplicate-actions">
-                          <button
-                            type="button"
-                            className="invoice-pdf-regen-btn"
-                            onClick={() => { void handleCheckSheetDuplicates(); }}
-                            disabled={sheetDuplicateState.status === "checking" || sheetDuplicateState.status === "deleting"}
-                          >
-                            {sheetDuplicateState.status === "checking" ? "Checking…" : "Check Sheet Duplicates"}
-                          </button>
-                          {sheetDuplicateState.totalDuplicateRows > 0 ? (
-                            <button
-                              type="button"
-                              className="invoice-sheet-delete-duplicates-btn"
-                              onClick={() => { void handleDeleteSheetDuplicates(); }}
-                              disabled={sheetDuplicateState.status === "checking" || sheetDuplicateState.status === "deleting"}
-                            >
-                              {sheetDuplicateState.status === "deleting" ? "Deleting…" : "Delete duplicate rows"}
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-
-                      {sheetDuplicateState.message ? (
-                        <p
-                          className={`invoice-sheet-duplicate-message${
-                            sheetDuplicateState.status === "error"
-                              ? " is-error"
-                              : sheetDuplicateState.totalDuplicateRows > 0
-                                ? " is-warning"
-                                : ""
-                          }`}
-                          role={sheetDuplicateState.status === "error" || sheetDuplicateState.totalDuplicateRows > 0 ? "alert" : undefined}
-                        >
-                          {sheetDuplicateState.message}
-                        </p>
-                      ) : null}
-
-                      {sheetDuplicateState.duplicates.length > 0 ? (
-                        <div className="invoice-sheet-duplicate-groups">
-                          {sheetDuplicateState.duplicates.map((group) => (
-                            <div
-                              className={`invoice-sheet-duplicate-group${
-                                currentSheetDuplicateKeys.has(group.key) ? " is-current" : ""
-                              }`}
-                              key={group.key}
-                            >
-                              <div className="invoice-sheet-duplicate-group-head">
-                                <span>{formatSheetDuplicateKey(group.key)}</span>
-                                <span>Keep row {group.keepRow}</span>
-                              </div>
-                              <div className="invoice-sheet-duplicate-rows">
-                                {group.rows.map((row) => {
-                                  const willDelete = group.deleteRows.includes(row.rowNumber);
-                                  return (
-                                    <div
-                                      className={`invoice-sheet-duplicate-row${willDelete ? " is-delete" : " is-keep"}`}
-                                      key={`${group.key}-${row.rowNumber}`}
-                                    >
-                                      <span>Row {row.rowNumber}</span>
-                                      <span>Invoice {row.invNumber || "—"} / LA {row.laNumber || "—"}</span>
-                                      <span>{row.date || "No date"}</span>
-                                      <span>{row.total || "No total"}</span>
-                                      <strong>{willDelete ? "Duplicate" : "Keep"}</strong>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ))}
                         </div>
                       ) : null}
                     </div>

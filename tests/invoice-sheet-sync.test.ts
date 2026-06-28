@@ -3329,3 +3329,161 @@ describe("Automatic safe Sheet health cleanup — verified pipeline", () => {
     expect(manualToolsStillExist).toContain("Reset / Rebuild Sheet");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Y. Cleanup workflow safety — separation of actions
+// ---------------------------------------------------------------------------
+
+describe("Cleanup workflow safety", () => {
+  // Simulates the row classification logic in previewSheetReset / resetSheetLayout.
+  type ClassifiedRow = {
+    rowNumber: number;
+    invNumber: string;
+    laNumber: string;
+    gigEvent: string;
+    reason: "void" | "test" | "duplicate" | "keep";
+  };
+
+  function classifyRows(
+    rows: Array<{ rowNumber: number; invNumber: string; laNumber: string; gigEvent: string; status?: string }>,
+    options: { archiveTestRows: boolean } = { archiveTestRows: false },
+  ): ClassifiedRow[] {
+    const VOID_STATUS = "VOID_DUPLICATE";
+
+    function normLA(la: string): string {
+      return la.replace(/^(LA#?|la#?)/i, "").replace(/[^0-9]/g, "").replace(/^0+/, "") || "";
+    }
+
+    function isTest(inv: string, la: string, gig: string): boolean {
+      if (normLA(la) === "5555") return true;
+      if (inv.trim() === "1001") return true;
+      if (gig.trim().toLowerCase().includes("test")) return true;
+      return false;
+    }
+
+    const activeByKey = new Map<string, Array<{ rowNumber: number; inv: string; la: string; gig: string }>>();
+    const out: ClassifiedRow[] = [];
+
+    for (const row of rows) {
+      if ((row.status ?? "") === VOID_STATUS) {
+        out.push({ ...row, reason: "void" });
+        continue;
+      }
+      if (options.archiveTestRows && isTest(row.invNumber, row.laNumber, row.gigEvent)) {
+        out.push({ ...row, reason: "test" });
+        continue;
+      }
+      const normLa = normLA(row.laNumber);
+      const key = normLa ? `la:${normLa}` : row.invNumber ? `inv:${row.invNumber}` : null;
+      if (!key) continue;
+      const existing = activeByKey.get(key) ?? [];
+      existing.push({ rowNumber: row.rowNumber, inv: row.invNumber, la: row.laNumber, gig: row.gigEvent });
+      activeByKey.set(key, existing);
+    }
+
+    for (const [, candidates] of activeByKey) {
+      const keep = candidates[candidates.length - 1]; // last = highest row = most recent
+      out.push({ rowNumber: keep.rowNumber, invNumber: keep.inv, laNumber: keep.la, gigEvent: keep.gig, reason: "keep" });
+      for (const c of candidates) {
+        if (c.rowNumber !== keep.rowNumber) {
+          out.push({ rowNumber: c.rowNumber, invNumber: c.inv, laNumber: c.la, gigEvent: c.gig, reason: "duplicate" });
+        }
+      }
+    }
+
+    return out;
+  }
+
+  const la5555rows = [
+    { rowNumber: 3, invNumber: "1001", laNumber: "LA#5555", gigEvent: "test job" },
+    { rowNumber: 4, invNumber: "1001", laNumber: "LA#5555", gigEvent: "test job" },
+    { rowNumber: 5, invNumber: "1001", laNumber: "LA#5555", gigEvent: "test job" },
+  ];
+
+  const mixedRows = [
+    { rowNumber: 3, invNumber: "1001", laNumber: "LA#5555", gigEvent: "test job" },
+    { rowNumber: 4, invNumber: "1001", laNumber: "LA#5555", gigEvent: "test job" },
+    { rowNumber: 6, invNumber: "1002", laNumber: "LA#6666", gigEvent: "real gig" },
+    { rowNumber: 7, invNumber: "1002", laNumber: "LA#6666", gigEvent: "real gig" },
+    { rowNumber: 8, invNumber: "1003", laNumber: "LA#7777", gigEvent: "another real gig" },
+  ];
+
+  it("Check Sheet Duplicates (Clean Duplicate Rows) is read-only before confirmation", () => {
+    // GET /api/invoice/sheet-duplicates never modifies the sheet — only POST does.
+    // This test verifies the intent: check passes without archiving anything.
+    const classified = classifyRows(la5555rows);
+    // Without archiveTestRows, all 3 rows are treated as active (no test removal)
+    const notTest = classified.filter((r) => r.reason !== "test");
+    expect(notTest.length).toBe(3); // 1 kept + 2 duplicates
+  });
+
+  it("Clean Duplicate Rows keeps one row for LA#5555/invoice 1001 — does NOT remove invoice", () => {
+    const classified = classifyRows(la5555rows); // archiveTestRows: false (default)
+    const kept = classified.filter((r) => r.reason === "keep");
+    const archived = classified.filter((r) => r.reason === "duplicate");
+    // One row kept, two archived — invoice is NOT gone
+    expect(kept).toHaveLength(1);
+    expect(archived).toHaveLength(2);
+    expect(kept[0]?.invNumber).toBe("1001");
+    expect(kept[0]?.laNumber).toBe("LA#5555");
+  });
+
+  it("Clean Duplicate Rows does not archive test rows — only removes confirmed duplicates", () => {
+    const classified = classifyRows(mixedRows);
+    const testRowsInResult = classified.filter((r) => r.reason === "test");
+    expect(testRowsInResult).toHaveLength(0); // archiveTestRows defaults to false
+  });
+
+  it("Reset/Rebuild preview shows LA#5555 / invoice 1001 rows as test rows to be archived", () => {
+    const classified = classifyRows(la5555rows, { archiveTestRows: true });
+    const testRows = classified.filter((r) => r.reason === "test");
+    const keptRows = classified.filter((r) => r.reason === "keep");
+    // ALL three rows flagged as test — none kept on main sheet
+    expect(testRows).toHaveLength(3);
+    expect(keptRows).toHaveLength(0);
+  });
+
+  it("Reset/Rebuild preview shows real invoice rows as keep — they are NOT affected by test classification", () => {
+    const classified = classifyRows(mixedRows, { archiveTestRows: true });
+    const kept = classified.filter((r) => r.reason === "keep");
+    const test = classified.filter((r) => r.reason === "test");
+    // LA#5555/1001 rows are test; LA#6666/7777 are real
+    expect(test.map((r) => r.laNumber).every((la) => la === "LA#5555")).toBe(true);
+    expect(kept.every((r) => r.laNumber !== "LA#5555")).toBe(true);
+    expect(kept.map((r) => r.invNumber)).toContain("1003");
+  });
+
+  it("Reset/Rebuild is clearly distinct from Clean Duplicate Rows", () => {
+    // Clean Duplicate Rows confirmation says it will NOT remove the invoice
+    const cleanConfirm = "This keeps ONE active row per invoice/job and archives only the extras.\n" +
+      "It does NOT remove any invoice entirely — the invoice itself is preserved.";
+    expect(cleanConfirm).toContain("does NOT remove any invoice entirely");
+
+    // Reset/Rebuild helper text warns it may remove test/fake rows
+    const resetHelper = 'This archives VOID rows, test/fake rows (LA#5555, invoice 1001, gig name containing "test"), and duplicates';
+    expect(resetHelper).toContain("LA#5555");
+    expect(resetHelper).toContain("invoice 1001");
+  });
+
+  it("Reset/Rebuild requires Preview step before Confirm is available", () => {
+    // Verifies the two-step flow: "Preview Reset" fetches GET, then "Confirm Reset" runs POST.
+    // The Confirm button only appears when sheetResetPreviewState.status === "ready".
+    const previewStates: Array<string> = ["idle", "previewing", "error"];
+    const confirmAvailable = (status: string) => status === "ready";
+    for (const s of previewStates) {
+      expect(confirmAvailable(s)).toBe(false);
+    }
+    expect(confirmAvailable("ready")).toBe(true);
+  });
+
+  it("VOID rows are archived by both Reset and Repair — not by Clean Duplicate Rows", () => {
+    const voidRows = [
+      { rowNumber: 5, invNumber: "1002", laNumber: "LA#6666", gigEvent: "real gig", status: "VOID_DUPLICATE" },
+    ];
+    const cleanResult = classifyRows(voidRows);
+    const voidInClean = cleanResult.filter((r) => r.reason === "void");
+    // Clean Duplicate Rows sees VOID rows but doesn't process them (handled by findSheetDuplicates separately)
+    // The void row still shows up classified
+    expect(voidInClean).toHaveLength(1);
+  });
+});

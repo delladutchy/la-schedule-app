@@ -2,10 +2,45 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
-import { resetSheetLayout } from "@/lib/google-sheets";
+import { previewSheetReset, resetSheetLayout } from "@/lib/google-sheets";
 import { classifySheetsError } from "@/lib/google-error";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * GET /api/invoice/sheet-reset
+ *
+ * Jeff-only. Read-only dry run — returns which rows WOULD be archived by a reset
+ * without touching the Sheet. Call this before POST to show a preview.
+ */
+export async function GET(request: NextRequest) {
+  const { env } = getConfig();
+  const auth = authorizeEditorRequest(request, env);
+  if (!auth.ok) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!isJeffEditorId(auth.editorId)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
+  const sheetId   = process.env.GOOGLE_SHEET_ID ?? null;
+  const sheetName = process.env.GOOGLE_SHEET_NAME ?? "LA PAY (2026)";
+  if (!sheetId) {
+    return NextResponse.json(
+      { error: "sheet_not_configured", message: "GOOGLE_SHEET_ID env var not configured", sheetTarget: { sheetId, sheetName } },
+      { status: 503 },
+    );
+  }
+
+  try {
+    const preview = await previewSheetReset();
+    return NextResponse.json({ ...preview, sheetTarget: { sheetId, sheetName } });
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const friendlyMsg = classifySheetsError(err, sheetId, sheetName);
+    console.error("[sheet-reset] preview failed:", rawMsg);
+    return NextResponse.json(
+      { error: "sheet_preview_failed", message: friendlyMsg, sheetTarget: { sheetId, sheetName } },
+      { status: 502 },
+    );
+  }
+}
 
 /**
  * POST /api/invoice/sheet-reset
