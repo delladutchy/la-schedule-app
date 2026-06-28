@@ -45,8 +45,11 @@ export async function GET(request: NextRequest) {
 
     // Classify as a Calendar error (not Sheets — different auth system).
     const { isAuthFailure, isRateLimit } = classifyGoogleError(calendarErr);
+    const usingSA = !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     const calendarWarning = isAuthFailure
-      ? "Google Calendar connection failed — check GOOGLE_REFRESH_TOKEN, GOOGLE_CLIENT_ID, and GOOGLE_CLIENT_SECRET. Showing saved invoice records only."
+      ? usingSA
+        ? "Google Calendar connection failed — verify the calendar is shared with the service account email. Open /api/admin/calendar-health for diagnostics. Showing saved invoice records only."
+        : "Google Calendar connection failed — check GOOGLE_REFRESH_TOKEN, GOOGLE_CLIENT_ID, and GOOGLE_CLIENT_SECRET. Showing saved invoice records only."
       : isRateLimit
         ? "Google Calendar rate-limited — showing saved invoice records only."
         : "Google Calendar unavailable — showing saved invoice records only.";

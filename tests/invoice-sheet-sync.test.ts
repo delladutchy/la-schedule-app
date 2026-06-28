@@ -3593,3 +3593,249 @@ describe("Invoice Worklist resilience", () => {
     expect(calendarErrMsg).not.toContain("GOOGLE_PRIVATE_KEY");
   });
 });
+
+// ---------------------------------------------------------------------------
+// AA. Service account Calendar auth — warning messages by auth mode
+// ---------------------------------------------------------------------------
+
+describe("Service account Calendar auth — warning messages by auth mode", () => {
+  // Mirrors the updated worklist route logic (usingSA = !!GOOGLE_SERVICE_ACCOUNT_EMAIL)
+  function classifyCalendarErrorWithAuthMode(
+    err: { message: string },
+    usingSA: boolean,
+  ): { calendarWarning: string } {
+    const isAuthFailure = /invalid_grant|invalid_client|unauthorized_client/i.test(err.message) || err.message.includes("401");
+    const isRateLimit   = /quota exceeded|rateLimitExceeded/i.test(err.message);
+    const calendarWarning = isAuthFailure
+      ? usingSA
+        ? "Google Calendar connection failed — verify the calendar is shared with the service account email. Open /api/admin/calendar-health for diagnostics. Showing saved invoice records only."
+        : "Google Calendar connection failed — check GOOGLE_REFRESH_TOKEN, GOOGLE_CLIENT_ID, and GOOGLE_CLIENT_SECRET. Showing saved invoice records only."
+      : isRateLimit
+        ? "Google Calendar rate-limited — showing saved invoice records only."
+        : "Google Calendar unavailable — showing saved invoice records only.";
+    return { calendarWarning };
+  }
+
+  it("SA mode auth failure → warning mentions service account, not REFRESH_TOKEN", () => {
+    const err = { message: "invalid_grant: Token has been expired or revoked." };
+    const { calendarWarning } = classifyCalendarErrorWithAuthMode(err, true);
+    expect(calendarWarning).toContain("service account");
+    expect(calendarWarning).not.toContain("GOOGLE_REFRESH_TOKEN");
+    expect(calendarWarning).not.toContain("GOOGLE_PRIVATE_KEY");
+    expect(calendarWarning).not.toContain("Sheets auth failed");
+  });
+
+  it("SA mode auth failure → warning links to calendar-health diagnostic endpoint", () => {
+    const err = { message: "invalid_grant: service account cannot access calendar." };
+    const { calendarWarning } = classifyCalendarErrorWithAuthMode(err, true);
+    expect(calendarWarning).toContain("calendar-health");
+  });
+
+  it("OAuth2 fallback mode auth failure → warning mentions REFRESH_TOKEN, not service account", () => {
+    const err = { message: "invalid_grant: Token has been expired or revoked." };
+    const { calendarWarning } = classifyCalendarErrorWithAuthMode(err, false);
+    expect(calendarWarning).toContain("GOOGLE_REFRESH_TOKEN");
+    expect(calendarWarning).not.toContain("service account");
+    expect(calendarWarning).not.toContain("GOOGLE_PRIVATE_KEY");
+  });
+
+  it("rate-limit warning is identical regardless of auth mode", () => {
+    const err = { message: "rateLimitExceeded: Quota exceeded for the project" };
+    const warnSA    = classifyCalendarErrorWithAuthMode(err, true).calendarWarning;
+    const warnOauth = classifyCalendarErrorWithAuthMode(err, false).calendarWarning;
+    expect(warnSA).toBe(warnOauth);
+    expect(warnSA).toContain("rate-limited");
+    expect(warnSA).not.toContain("service account");
+    expect(warnSA).not.toContain("GOOGLE_REFRESH_TOKEN");
+  });
+
+  it("generic Calendar error (not auth, not rate limit) is identical regardless of auth mode", () => {
+    const err = { message: "backend error: internal server error" };
+    const warnSA    = classifyCalendarErrorWithAuthMode(err, true).calendarWarning;
+    const warnOauth = classifyCalendarErrorWithAuthMode(err, false).calendarWarning;
+    expect(warnSA).toBe(warnOauth);
+    expect(warnSA).toContain("Google Calendar unavailable");
+  });
+
+  it("SA mode warning is still a soft warning — entries remain accessible", () => {
+    // The warning is non-blocking; Supabase fallback still provides entries.
+    const err = { message: "invalid_grant" };
+    const { calendarWarning } = classifyCalendarErrorWithAuthMode(err, true);
+    expect(calendarWarning).toContain("Showing saved invoice records only");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BB. Calendar health check response structure — no secrets exposed
+// ---------------------------------------------------------------------------
+
+describe("Calendar health check response structure", () => {
+  type HealthTestRow = { calendarId: string; label: string; success: boolean; error: string | null };
+
+  function buildHealthResponse(opts: {
+    saEmail: string | null;
+    privateKeyConfigured: boolean;
+    keySource: "env" | "blobs" | "none";
+    oauthClientConfigured: boolean;
+    oauthRefreshTokenConfigured: boolean;
+    laCalendarId: string | null;
+    tests: HealthTestRow[];
+  }) {
+    const { saEmail, privateKeyConfigured, keySource, oauthClientConfigured, oauthRefreshTokenConfigured } = opts;
+    const authMode: "service_account" | "oauth2" | "none" =
+      saEmail && privateKeyConfigured ? "service_account"
+      : oauthClientConfigured && oauthRefreshTokenConfigured ? "oauth2"
+      : "none";
+    const overallSuccess = opts.tests.length > 0 && opts.tests.every((t) => t.success);
+    return {
+      authMode,
+      serviceAccountEmail: saEmail,
+      privateKeyConfigured,
+      privateKeySource: keySource,
+      oauthClientConfigured,
+      oauthRefreshTokenConfigured,
+      calendarIds: { laCalendar: opts.laCalendarId, overtureCalendar: null, blockerCalendars: [] },
+      tests: opts.tests,
+      overallSuccess,
+    };
+  }
+
+  it("response JSON never contains the private key value", () => {
+    const response = buildHealthResponse({
+      saEmail: "svc@project.iam.gserviceaccount.com",
+      privateKeyConfigured: true,
+      keySource: "env",
+      oauthClientConfigured: true,
+      oauthRefreshTokenConfigured: true,
+      laCalendarId: "abc123@group.calendar.google.com",
+      tests: [{ calendarId: "abc123@group.calendar.google.com", label: "LA Calendar", success: true, error: null }],
+    });
+    const json = JSON.stringify(response);
+    expect(json).not.toContain("BEGIN PRIVATE KEY");
+    expect(json).not.toContain("MIIEvQ");
+    expect(json).not.toContain("PRIVATE_KEY=");
+    expect(json).not.toMatch(/-----[A-Z ]+-----/);
+  });
+
+  it("privateKeyConfigured is a boolean, not the key string", () => {
+    const response = buildHealthResponse({
+      saEmail: "svc@project.iam.gserviceaccount.com",
+      privateKeyConfigured: true,
+      keySource: "blobs",
+      oauthClientConfigured: false,
+      oauthRefreshTokenConfigured: false,
+      laCalendarId: "abc123@group.calendar.google.com",
+      tests: [],
+    });
+    expect(typeof response.privateKeyConfigured).toBe("boolean");
+    expect(response.privateKeyConfigured).toBe(true);
+    expect("privateKey" in response).toBe(false);
+    expect("GOOGLE_PRIVATE_KEY" in response).toBe(false);
+  });
+
+  it("authMode is service_account when SA email and key are both configured", () => {
+    const response = buildHealthResponse({
+      saEmail: "svc@project.iam.gserviceaccount.com",
+      privateKeyConfigured: true,
+      keySource: "env",
+      oauthClientConfigured: true,
+      oauthRefreshTokenConfigured: true,
+      laCalendarId: "abc@group.calendar.google.com",
+      tests: [],
+    });
+    expect(response.authMode).toBe("service_account");
+  });
+
+  it("authMode is oauth2 when SA email is absent but OAuth2 is fully configured", () => {
+    const response = buildHealthResponse({
+      saEmail: null,
+      privateKeyConfigured: false,
+      keySource: "none",
+      oauthClientConfigured: true,
+      oauthRefreshTokenConfigured: true,
+      laCalendarId: "abc@group.calendar.google.com",
+      tests: [],
+    });
+    expect(response.authMode).toBe("oauth2");
+  });
+
+  it("authMode is none when neither SA nor OAuth2 is configured", () => {
+    const response = buildHealthResponse({
+      saEmail: null,
+      privateKeyConfigured: false,
+      keySource: "none",
+      oauthClientConfigured: false,
+      oauthRefreshTokenConfigured: false,
+      laCalendarId: null,
+      tests: [],
+    });
+    expect(response.authMode).toBe("none");
+  });
+
+  it("exact calendar ID is returned in calendarIds.laCalendar and each test row", () => {
+    const calId = "9d0ac891af6a083ca5e96789e3db194645ddaf78f42bbf589e0bc13a51238ec2@group.calendar.google.com";
+    const response = buildHealthResponse({
+      saEmail: "svc@project.iam.gserviceaccount.com",
+      privateKeyConfigured: true,
+      keySource: "env",
+      oauthClientConfigured: false,
+      oauthRefreshTokenConfigured: false,
+      laCalendarId: calId,
+      tests: [{ calendarId: calId, label: "LA Calendar (GOOGLE_CALENDAR_ID)", success: false, error: "403 Forbidden" }],
+    });
+    expect(response.calendarIds.laCalendar).toBe(calId);
+    expect(response.tests[0]?.calendarId).toBe(calId);
+    expect(response.tests[0]?.success).toBe(false);
+    expect(response.tests[0]?.error).toContain("403");
+  });
+
+  it("overallSuccess is false when any calendar test fails", () => {
+    const response = buildHealthResponse({
+      saEmail: "svc@project.iam.gserviceaccount.com",
+      privateKeyConfigured: true,
+      keySource: "env",
+      oauthClientConfigured: false,
+      oauthRefreshTokenConfigured: false,
+      laCalendarId: "abc@group.calendar.google.com",
+      tests: [{ calendarId: "abc@group.calendar.google.com", label: "LA Calendar", success: false, error: "403" }],
+    });
+    expect(response.overallSuccess).toBe(false);
+  });
+
+  it("overallSuccess is true only when all tests pass", () => {
+    const response = buildHealthResponse({
+      saEmail: "svc@project.iam.gserviceaccount.com",
+      privateKeyConfigured: true,
+      keySource: "env",
+      oauthClientConfigured: false,
+      oauthRefreshTokenConfigured: false,
+      laCalendarId: "abc@group.calendar.google.com",
+      tests: [{ calendarId: "abc@group.calendar.google.com", label: "LA Calendar", success: true, error: null }],
+    });
+    expect(response.overallSuccess).toBe(true);
+  });
+
+  it("overallSuccess is false when tests array is empty (nothing tested)", () => {
+    const response = buildHealthResponse({
+      saEmail: "svc@project.iam.gserviceaccount.com",
+      privateKeyConfigured: true,
+      keySource: "env",
+      oauthClientConfigured: false,
+      oauthRefreshTokenConfigured: false,
+      laCalendarId: null,
+      tests: [],
+    });
+    expect(response.overallSuccess).toBe(false);
+  });
+
+  it("test error strings do not contain raw token values", () => {
+    // Simulate a sanitized error string the route would produce
+    const rawGoogleError = "401 Unauthorized: invalid_grant access_token=ya29.ABCDEF123456 Bearer ya29.ABCDEF123456";
+    const sanitized = rawGoogleError
+      .replace(/access_token=[^&\s]+/gi, "[redacted]")
+      .replace(/Bearer [^\s]+/gi, "Bearer [redacted]")
+      .slice(0, 400);
+    expect(sanitized).not.toContain("ya29.ABCDEF123456");
+    expect(sanitized).toContain("[redacted]");
+  });
+});
