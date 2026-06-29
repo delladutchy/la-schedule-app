@@ -70,8 +70,9 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/lib/google", () => ({
   updateAllDayEvent: (...args: unknown[]) => updateAllDayEvent(...args),
   deleteCalendarEvent: (...args: unknown[]) => deleteCalendarEvent(...args),
-  buildWarmedCalendarAuth: () => Promise.resolve({
-    getAccessToken: () => Promise.resolve({ token: "mock-access-token" }),
+  buildWarmedCalendarWriteAuth: () => Promise.resolve({
+    auth: { getAccessToken: () => Promise.resolve({ token: "mock-access-token" }) },
+    mode: "service_account",
   }),
 }));
 

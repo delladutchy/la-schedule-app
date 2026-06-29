@@ -37,6 +37,7 @@ vi.mock("@/lib/google", () => ({
   buildCalendarAuth: () => ({
     getAccessToken: () => Promise.resolve({ token: "mock-access-token" }),
   }),
+  buildCalendarServiceAccountAuth: () => Promise.resolve(null),
 }));
 
 vi.mock("@/lib/config", () => ({

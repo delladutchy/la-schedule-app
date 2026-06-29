@@ -7,6 +7,7 @@ const writeGoogleCalendarWatchMetadataMap = vi.fn();
 
 vi.mock("@/lib/google", () => ({
   registerCalendarWatch: (...args: unknown[]) => registerCalendarWatch(...args),
+  buildCalendarServiceAccountAuth: () => Promise.resolve(null),
 }));
 
 vi.mock("@/lib/google-watch-store", () => ({

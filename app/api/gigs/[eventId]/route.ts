@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { buildAndPersistSnapshot } from "@/lib/sync";
-import { deleteCalendarEvent, updateAllDayEvent, buildWarmedCalendarAuth, type CalendarAuth } from "@/lib/google";
+import { deleteCalendarEvent, updateAllDayEvent, buildWarmedCalendarWriteAuth, type CalendarAuth } from "@/lib/google";
 import {
   classifyGoogleError,
   CALENDAR_AUTH_FAILED_MESSAGE,
@@ -234,13 +234,20 @@ export async function PATCH(
   };
   const authWarmUpStartedAt = Date.now();
   let sharedAuth: CalendarAuth;
+  let calendarAuthMode: "service_account" | "oauth2";
   try {
-    sharedAuth = await buildWarmedCalendarAuth(authOpts);
+    const warmed = await buildWarmedCalendarWriteAuth(authOpts);
+    sharedAuth = warmed.auth;
+    calendarAuthMode = warmed.mode;
     timings.authWarmUpMs = Date.now() - authWarmUpStartedAt;
+    console.info(`[gigs:patch] auth_warm_up_ok mode=${calendarAuthMode} editor=${editorId}`);
   } catch (authErr) {
     timings.authWarmUpMs = Date.now() - authWarmUpStartedAt;
     const cls = classifyGoogleError(authErr);
-    console.error(`[gigs:patch] auth_warm_up_failed editor=${editorId} raw=${cls.raw}`);
+    const saConfigured = !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    console.error(
+      `[gigs:patch] auth_warm_up_failed editor=${editorId} sa_configured=${saConfigured} raw="${cls.raw}"`,
+    );
     logGigRouteTiming("patch", "calendar_auth_failed_warmup", editorId, routeStartedAt, timings);
     return NextResponse.json(
       { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
@@ -429,8 +436,16 @@ export async function PATCH(
       );
     }
     const cls = classifyGoogleError(error);
-    console.error(`[gigs:patch] google_error editor=${editorId} raw=${cls.raw}`);
+    console.error(
+      `[gigs:patch] google_write_failed mode=${calendarAuthMode} calendarId=${editorCalendarId} eventId=${eventId} editor=${editorId} isAuthFailure=${cls.isAuthFailure} raw="${cls.raw}"`,
+    );
     if (cls.isAuthFailure) {
+      const saConfigured = !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+      console.error(
+        saConfigured
+          ? `[gigs:patch] Calendar write failed (auth): verify calendar ${editorCalendarId} is shared with GOOGLE_SERVICE_ACCOUNT_EMAIL with "Make changes to events"`
+          : `[gigs:patch] GOOGLE_REFRESH_TOKEN may be revoked — replace env var GOOGLE_REFRESH_TOKEN in the Netlify dashboard`,
+      );
       logGigRouteTiming("patch", "calendar_auth_failed", editorId, routeStartedAt, timings);
       return NextResponse.json(
         { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
@@ -482,13 +497,20 @@ export async function DELETE(
   };
   const authWarmUpStartedAt = Date.now();
   let sharedAuth: CalendarAuth;
+  let calendarAuthMode: "service_account" | "oauth2";
   try {
-    sharedAuth = await buildWarmedCalendarAuth(authOpts);
+    const warmed = await buildWarmedCalendarWriteAuth(authOpts);
+    sharedAuth = warmed.auth;
+    calendarAuthMode = warmed.mode;
     timings.authWarmUpMs = Date.now() - authWarmUpStartedAt;
+    console.info(`[gigs:delete] auth_warm_up_ok mode=${calendarAuthMode} editor=${editorId}`);
   } catch (authErr) {
     timings.authWarmUpMs = Date.now() - authWarmUpStartedAt;
     const cls = classifyGoogleError(authErr);
-    console.error(`[gigs:delete] auth_warm_up_failed editor=${editorId} raw=${cls.raw}`);
+    const saConfigured = !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    console.error(
+      `[gigs:delete] auth_warm_up_failed editor=${editorId} sa_configured=${saConfigured} raw="${cls.raw}"`,
+    );
     logGigRouteTiming("delete", "calendar_auth_failed_warmup", editorId, routeStartedAt, timings);
     return NextResponse.json(
       { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },
@@ -655,8 +677,16 @@ export async function DELETE(
       );
     }
     const cls = classifyGoogleError(error);
-    console.error(`[gigs:delete] google_error editor=${editorId} raw=${cls.raw}`);
+    console.error(
+      `[gigs:delete] google_write_failed mode=${calendarAuthMode} calendarId=${editorCalendarId} eventId=${eventId} editor=${editorId} isAuthFailure=${cls.isAuthFailure} raw="${cls.raw}"`,
+    );
     if (cls.isAuthFailure) {
+      const saConfigured = !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+      console.error(
+        saConfigured
+          ? `[gigs:delete] Calendar delete failed (auth): verify calendar ${editorCalendarId} is shared with GOOGLE_SERVICE_ACCOUNT_EMAIL with "Make changes to events"`
+          : `[gigs:delete] GOOGLE_REFRESH_TOKEN may be revoked — replace env var GOOGLE_REFRESH_TOKEN in the Netlify dashboard`,
+      );
       logGigRouteTiming("delete", "calendar_auth_failed", editorId, routeStartedAt, timings);
       return NextResponse.json(
         { error: "calendar_auth_failed", message: CALENDAR_AUTH_FAILED_MESSAGE },

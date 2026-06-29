@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
-import { createAllDayEvent, CalendarEventAlreadyExistsError, buildWarmedCalendarAuth, type CalendarAuth } from "@/lib/google";
+import { createAllDayEvent, CalendarEventAlreadyExistsError, buildWarmedCalendarWriteAuth, type CalendarAuth } from "@/lib/google";
 import {
   classifyGoogleError,
   extractOAuthDetail,
@@ -158,30 +158,28 @@ export async function POST(req: Request) {
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     refreshToken: env.GOOGLE_REFRESH_TOKEN,
   };
-  // Log env var presence (never the values) so Netlify logs can confirm
-  // the token is actually loaded into the function's environment.
-  console.info(
-    `[gigs:create] auth_env client_id=${env.GOOGLE_CLIENT_ID ? "set" : "MISSING"} client_secret=${env.GOOGLE_CLIENT_SECRET ? "set" : "MISSING"} refresh_token_len=${env.GOOGLE_REFRESH_TOKEN?.length ?? 0}`,
-  );
   const authWarmUpStartedAt = Date.now();
   let sharedAuth: CalendarAuth;
+  let calendarAuthMode: "service_account" | "oauth2";
   try {
-    sharedAuth = await buildWarmedCalendarAuth(authOpts);
+    const warmed = await buildWarmedCalendarWriteAuth(authOpts);
+    sharedAuth = warmed.auth;
+    calendarAuthMode = warmed.mode;
     timings.authWarmUpMs = Date.now() - authWarmUpStartedAt;
+    console.info(`[gigs:create] auth_warm_up_ok mode=${calendarAuthMode} editor=${editorId}`);
   } catch (authErr) {
     timings.authWarmUpMs = Date.now() - authWarmUpStartedAt;
     const cls = classifyGoogleError(authErr);
     const oauthDetail = extractOAuthDetail(authErr);
-    // Log the raw message AND the OAuth response body so the exact failure
-    // reason is visible in Netlify logs without downloading the full error object.
     console.error(
       `[gigs:create] auth_warm_up_failed editor=${editorId} isAuthFailure=${cls.isAuthFailure} raw="${cls.raw}"${oauthDetail.code ? ` oauth_error="${oauthDetail.code}"` : ""}${oauthDetail.description ? ` oauth_desc="${oauthDetail.description}"` : ""}`,
     );
     if (cls.isAuthFailure) {
-      // "invalid_grant" means the refresh token has been revoked or expired.
-      // The only fix is to re-run the OAuth consent flow and replace the token.
+      const saConfigured = !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
       console.error(
-        `[gigs:create] GOOGLE_REFRESH_TOKEN is invalid or revoked — replace env var GOOGLE_REFRESH_TOKEN in the Netlify dashboard (client_id and client_secret do not need to change)`,
+        saConfigured
+          ? `[gigs:create] service account auth failed — verify GOOGLE_PRIVATE_KEY is set and the calendar is shared with GOOGLE_SERVICE_ACCOUNT_EMAIL`
+          : `[gigs:create] GOOGLE_REFRESH_TOKEN is invalid or revoked — replace env var GOOGLE_REFRESH_TOKEN in the Netlify dashboard`,
       );
     }
     logCreateRouteTiming("calendar_auth_failed_warmup", editorId, routeStartedAt, timings);
@@ -530,11 +528,14 @@ export async function POST(req: Request) {
         const retryCls = classifyGoogleError(retryError);
         const retryOAuth = extractOAuthDetail(retryError);
         console.error(
-          `[gigs:create] google_error editor=${editorId} stage=retry isAuthFailure=${retryCls.isAuthFailure} raw="${retryCls.raw}"${retryOAuth.code ? ` oauth_error="${retryOAuth.code}"` : ""}${retryOAuth.description ? ` oauth_desc="${retryOAuth.description}"` : ""}`,
+          `[gigs:create] google_write_failed mode=${calendarAuthMode} calendarId=${writeCalendar.calendarId} editor=${editorId} stage=retry isAuthFailure=${retryCls.isAuthFailure} raw="${retryCls.raw}"${retryOAuth.code ? ` oauth_error="${retryOAuth.code}"` : ""}${retryOAuth.description ? ` oauth_desc="${retryOAuth.description}"` : ""}`,
         );
         if (retryCls.isAuthFailure) {
+          const saConfigured = !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
           console.error(
-            `[gigs:create] GOOGLE_REFRESH_TOKEN is invalid or revoked (stage=retry) — replace env var GOOGLE_REFRESH_TOKEN in the Netlify dashboard`,
+            saConfigured
+              ? `[gigs:create] Calendar write failed (auth, stage=retry): verify calendar ${writeCalendar.calendarId} is shared with GOOGLE_SERVICE_ACCOUNT_EMAIL with "Make changes to events"`
+              : `[gigs:create] GOOGLE_REFRESH_TOKEN is invalid or revoked (stage=retry) — replace env var GOOGLE_REFRESH_TOKEN in the Netlify dashboard`,
           );
           logCreateRouteTiming("calendar_auth_failed_retry", editorId, routeStartedAt, timings);
           return NextResponse.json(
@@ -556,11 +557,14 @@ export async function POST(req: Request) {
     const cls = classifyGoogleError(error);
     const oauthDetail = extractOAuthDetail(error);
     console.error(
-      `[gigs:create] google_error editor=${editorId} isAuthFailure=${cls.isAuthFailure} raw="${cls.raw}"${oauthDetail.code ? ` oauth_error="${oauthDetail.code}"` : ""}${oauthDetail.description ? ` oauth_desc="${oauthDetail.description}"` : ""}`,
+      `[gigs:create] google_write_failed mode=${calendarAuthMode} calendarId=${writeCalendar.calendarId} editor=${editorId} isAuthFailure=${cls.isAuthFailure} raw="${cls.raw}"${oauthDetail.code ? ` oauth_error="${oauthDetail.code}"` : ""}${oauthDetail.description ? ` oauth_desc="${oauthDetail.description}"` : ""}`,
     );
     if (cls.isAuthFailure) {
+      const saConfigured = !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
       console.error(
-        `[gigs:create] GOOGLE_REFRESH_TOKEN is invalid or revoked — replace env var GOOGLE_REFRESH_TOKEN in the Netlify dashboard`,
+        saConfigured
+          ? `[gigs:create] Calendar write failed (auth): verify the calendar ${writeCalendar.calendarId} is shared with GOOGLE_SERVICE_ACCOUNT_EMAIL and has "Make changes to events" permission`
+          : `[gigs:create] GOOGLE_REFRESH_TOKEN is invalid or revoked — replace env var GOOGLE_REFRESH_TOKEN in the Netlify dashboard`,
       );
       logCreateRouteTiming("calendar_auth_failed", editorId, routeStartedAt, timings);
       return NextResponse.json(

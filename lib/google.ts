@@ -215,6 +215,26 @@ export async function buildWarmedCalendarAuth(opts: CalendarAuthOptions): Promis
   throw lastErr;
 }
 
+/**
+ * Builds a warmed Calendar auth client for write operations (create/update/delete).
+ * Prefers service account when configured (never expires, no refresh token needed).
+ * Falls back to OAuth2 warm-up when service account is not available.
+ *
+ * Returns `{ auth, mode }` so callers can log which path was taken.
+ * Throws if both auth paths fail — callers should catch and surface a safe error.
+ */
+export async function buildWarmedCalendarWriteAuth(
+  opts: CalendarAuthOptions,
+): Promise<{ auth: CalendarAuth; mode: "service_account" | "oauth2" }> {
+  const saAuth = await buildCalendarServiceAccountAuth();
+  if (saAuth) {
+    await saAuth.getAccessToken();
+    return { auth: saAuth, mode: "service_account" };
+  }
+  const oauthAuth = await buildWarmedCalendarAuth(opts);
+  return { auth: oauthAuth, mode: "oauth2" };
+}
+
 function buildCalendarClient(opts: CalendarAuthOptions, sharedAuth?: CalendarAuth) {
   if (sharedAuth) {
     // Both OAuth2Client and GoogleAuth are valid Calendar auth clients.
