@@ -895,12 +895,25 @@ function buildPreviewFilename(laNumber: string | null, jobTitle: string, invoice
 }
 
 /**
- * Builds a `mailto:` link for the Apple Mail fallback button. Per RFC 6068,
- * only the query-string fields (cc/subject/body) need percent-encoding —
- * the `to` address list is joined with commas as-is.
+ * Opens the Gmail draft URL automatically on successful draft creation —
+ * this is the PDF-attached primary path (the Gmail draft already has the
+ * rendered invoice PDF attached server-side). "Open Draft in Gmail" in the
+ * UI is the manual fallback for when a popup/auto-open is blocked.
+ */
+export function openGmailDraftUrl(draftUrl: string | null | undefined): boolean {
+  if (!draftUrl || typeof window === "undefined" || typeof window.open !== "function") return false;
+  window.open(draftUrl, "_blank", "noopener,noreferrer");
+  return true;
+}
+
+/**
+ * Builds a `mailto:` link for the optional Apple Mail secondary action. Per
+ * RFC 6068, only the query-string fields (cc/subject/body) need
+ * percent-encoding — the `to` address list is joined with commas as-is.
  *
- * mailto cannot carry attachments, so this never references the PDF; the
- * separate "Open PDF" button stays visible for manual attachment.
+ * mailto cannot carry attachments — this is a secondary/no-attachment path.
+ * The Gmail draft (opened automatically) is the primary attached-PDF flow;
+ * the separate "Open PDF" button stays visible for manual attachment here.
  */
 export function buildInvoiceMailtoHref(to: string[], cc: string[], subject: string, body: string): string {
   const toPart = to.join(",");
@@ -1073,7 +1086,7 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
         </>
       ) : (
         <div className="invoice-gmail-draft-success">
-          <p className="invoice-sync-success">Draft created successfully in Gmail.</p>
+          <p className="invoice-sync-success">Gmail draft created — opening in Gmail…</p>
           {dialog.draftUrl ? (
             <a
               href={dialog.draftUrl}
@@ -1088,11 +1101,8 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
             href={buildInvoiceMailtoHref(previewTo, previewCc, dialog.editableSubject, dialog.editableBody)}
             className="invoice-gmail-draft-link"
           >
-            Open in Apple Mail →
+            Open in Apple Mail (no attachment) →
           </a>
-          <p className="invoice-status-muted">
-            mailto links can&rsquo;t carry attachments — use Open PDF below to attach it manually.
-          </p>
         </div>
       )}
 
@@ -2390,6 +2400,7 @@ export function InvoiceSection({
           if (j.invoiceData) { setInvoiceData(j.invoiceData); setPacket(j.packet); }
         }
       }).catch(() => { /* non-fatal */ });
+      if (json.draftUrl) openGmailDraftUrl(json.draftUrl);
       setEmailDialog((prev) => ({ ...prev, status: "success", error: null, draftUrl: json.draftUrl ?? null }));
     } catch {
       setEmailDialog((prev) => ({ ...prev, status: "error", error: "Network error — try again" }));

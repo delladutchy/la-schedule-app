@@ -7,14 +7,17 @@
  *   3. Autosave feedback text mapping (status → display text)
  *   4. Unsaved changes detection (saveStatus === "unsaved" || isSaving → hasPending)
  *   5. VOID_STATUS cross-reference: VOID rows don't trigger the duplicate warning
- *   6. Gmail Draft success opens draft URL and keeps fallback link
+ *   6. Gmail Draft success auto-opens the draft URL, keeps the manual fallback
+ *      link, and labels the Apple Mail secondary action as no-attachment
+ *   7. Apple Mail mailto fallback (buildInvoiceMailtoHref)
+ *   8. Gmail Draft friendly error message resolution
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { isEditableKeyboardTarget } from "@/lib/keyboard";
 import { isInvoiceDataRow, VOID_STATUS } from "@/lib/google-sheets";
-import { buildInvoiceMailtoHref, resolveGmailDraftErrorMessage } from "@/components/InvoiceSection";
+import { buildInvoiceMailtoHref, openGmailDraftUrl, resolveGmailDraftErrorMessage } from "@/components/InvoiceSection";
 
 // ---------------------------------------------------------------------------
 // 1. SaveStatus state machine transitions
@@ -255,17 +258,60 @@ describe("VOID_STATUS — voided rows are excluded from live invoice row detecti
 // 6. Gmail Draft success behavior
 // ---------------------------------------------------------------------------
 
+const originalWindow = globalThis.window;
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  if (originalWindow === undefined) {
+    Reflect.deleteProperty(globalThis, "window");
+  } else {
+    Object.defineProperty(globalThis, "window", {
+      value: originalWindow,
+      configurable: true,
+      writable: true,
+    });
+  }
+});
+
 describe("Gmail Draft success behavior", () => {
-  it("does not auto-open Gmail web — keeps the manual fallback link in the dialog source", () => {
-    const source = readFileSync(join(process.cwd(), "components/InvoiceSection.tsx"), "utf8");
-    expect(source).toContain("Open Draft in Gmail");
-    expect(source).toContain('href={dialog.draftUrl}');
-    expect(source).not.toContain("openGmailDraftUrl(json.draftUrl)");
+  it("opens a successful Gmail draft URL in a new tab", () => {
+    const open = vi.fn();
+    Object.defineProperty(globalThis, "window", {
+      value: { open },
+      configurable: true,
+      writable: true,
+    });
+
+    expect(openGmailDraftUrl("https://mail.google.com/mail/#drafts/msg-123")).toBe(true);
+    expect(open).toHaveBeenCalledWith(
+      "https://mail.google.com/mail/#drafts/msg-123",
+      "_blank",
+      "noopener,noreferrer",
+    );
   });
 
-  it("shows the friendly success message instead of raw Gmail wording", () => {
+  it("does not open a window when draft creation did not return a URL", () => {
+    const open = vi.fn();
+    Object.defineProperty(globalThis, "window", {
+      value: { open },
+      configurable: true,
+      writable: true,
+    });
+
+    expect(openGmailDraftUrl(null)).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("auto-opens the draft URL on success, and keeps the manual fallback link in source", () => {
     const source = readFileSync(join(process.cwd(), "components/InvoiceSection.tsx"), "utf8");
-    expect(source).toContain("Draft created successfully in Gmail.");
+    expect(source).toContain("openGmailDraftUrl(json.draftUrl)");
+    expect(source).toContain("Open Draft in Gmail");
+    expect(source).toContain('href={dialog.draftUrl}');
+  });
+
+  it("labels the Apple Mail action as a no-attachment secondary option", () => {
+    const source = readFileSync(join(process.cwd(), "components/InvoiceSection.tsx"), "utf8");
+    expect(source).toContain("Open in Apple Mail (no attachment)");
   });
 
   it("keeps the Open PDF button visible independent of the email dialog", () => {
@@ -313,7 +359,7 @@ describe("buildInvoiceMailtoHref", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. Gmail Draft friendly error message resolution
+// 8. Gmail Draft friendly error message resolution
 // ---------------------------------------------------------------------------
 
 describe("resolveGmailDraftErrorMessage", () => {
