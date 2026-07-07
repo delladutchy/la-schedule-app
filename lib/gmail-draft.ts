@@ -1,5 +1,6 @@
 import "server-only";
 import { google } from "googleapis";
+import { classifyGoogleError, GMAIL_AUTH_FAILED_MESSAGE } from "./google-error";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -115,12 +116,81 @@ export function buildMimeMessage(
 }
 
 // ---------------------------------------------------------------------------
+// Gmail OAuth2 auth (dedicated — never shares Calendar's service account auth)
+// ---------------------------------------------------------------------------
+
+export interface GmailOAuthEnv {
+  clientId: string | undefined;
+  clientSecret: string | undefined;
+  gmailRefreshToken: string | undefined;
+}
+
+/** Thrown when required Gmail OAuth env vars are missing. */
+export class GmailConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GmailConfigError";
+  }
+}
+
+/** Thrown when the Gmail refresh token is invalid, expired, or revoked. */
+export class GmailAuthError extends Error {
+  readonly code = "GMAIL_AUTH_INVALID_GRANT" as const;
+  constructor(message: string = GMAIL_AUTH_FAILED_MESSAGE) {
+    super(message);
+    this.name = "GmailAuthError";
+  }
+}
+
+/**
+ * Builds a Gmail OAuth2 client and warms it with getAccessToken() before
+ * returning, so auth failures surface here rather than mid-request.
+ *
+ * Always uses OAuth2 user auth (gmail.compose scope) — Gmail drafts are
+ * never sent through the Calendar service account, since that account has
+ * no mailbox to compose from.
+ */
+export async function buildGmailOAuthClient(
+  env: GmailOAuthEnv,
+): Promise<InstanceType<typeof google.auth.OAuth2>> {
+  const missing: string[] = [];
+  if (!env.clientId) missing.push("GOOGLE_CLIENT_ID");
+  if (!env.clientSecret) missing.push("GOOGLE_CLIENT_SECRET");
+  if (!env.gmailRefreshToken) missing.push("GOOGLE_GMAIL_REFRESH_TOKEN");
+  if (missing.length > 0) {
+    console.error(`[gmail-draft] missing required env vars: ${missing.join(", ")}`);
+    throw new GmailConfigError(`Missing required Gmail env vars: ${missing.join(", ")}`);
+  }
+
+  const auth = new google.auth.OAuth2(env.clientId, env.clientSecret);
+  auth.setCredentials({ refresh_token: env.gmailRefreshToken });
+
+  try {
+    await auth.getAccessToken();
+  } catch (err) {
+    const { isAuthFailure, raw } = classifyGoogleError(err);
+    if (isAuthFailure) {
+      console.error("[gmail-draft] auth mode=oauth2 token refresh failed: invalid_grant (refresh token expired or revoked)");
+      throw new GmailAuthError();
+    }
+    console.error(`[gmail-draft] auth mode=oauth2 token refresh failed: ${raw}`);
+    throw err;
+  }
+
+  console.log("[gmail-draft] auth mode=oauth2 token refresh ok");
+  return auth;
+}
+
+// ---------------------------------------------------------------------------
 // Gmail API
 // ---------------------------------------------------------------------------
 
 export async function createGmailDraft(opts: GmailDraftOptions): Promise<GmailDraftResult> {
-  const auth = new google.auth.OAuth2(opts.clientId, opts.clientSecret);
-  auth.setCredentials({ refresh_token: opts.gmailRefreshToken });
+  const auth = await buildGmailOAuthClient({
+    clientId: opts.clientId,
+    clientSecret: opts.clientSecret,
+    gmailRefreshToken: opts.gmailRefreshToken,
+  });
 
   const gmail = google.gmail({ version: "v1", auth });
 
@@ -128,10 +198,21 @@ export async function createGmailDraft(opts: GmailDraftOptions): Promise<GmailDr
   // Gmail API requires base64url encoding (no padding, - and _ instead of + and /).
   const rawField = Buffer.from(mimeRaw).toString("base64url");
 
-  const response = await gmail.users.drafts.create({
-    userId: "me",
-    requestBody: { message: { raw: rawField } },
-  });
+  let response;
+  try {
+    response = await gmail.users.drafts.create({
+      userId: "me",
+      requestBody: { message: { raw: rawField } },
+    });
+  } catch (err) {
+    const { isAuthFailure, raw } = classifyGoogleError(err);
+    if (isAuthFailure) {
+      console.error("[gmail-draft] auth mode=oauth2 drafts.create failed: invalid_grant (refresh token expired or revoked)");
+      throw new GmailAuthError();
+    }
+    console.error(`[gmail-draft] drafts.create failed: ${raw}`);
+    throw err;
+  }
 
   const draftId = response.data.id;
   const messageId = response.data.message?.id;

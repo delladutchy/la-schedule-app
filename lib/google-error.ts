@@ -74,6 +74,9 @@ export function extractOAuthDetail(error: unknown): { code: string | undefined; 
 export const CALENDAR_AUTH_FAILED_MESSAGE =
   "Calendar connection needs attention. Please contact Jeff.";
 
+export const GMAIL_AUTH_FAILED_MESSAGE =
+  "Gmail authorization expired or was revoked. Reconnect the Google account / refresh the Gmail OAuth token.";
+
 export const CALENDAR_RATE_LIMIT_MESSAGE =
   "Google Calendar is rate-limiting sync right now. Wait about a minute and try again.";
 

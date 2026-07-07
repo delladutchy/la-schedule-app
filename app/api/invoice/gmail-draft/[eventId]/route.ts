@@ -36,7 +36,7 @@ import { renderInvoicePDF } from "@/lib/invoice-pdf";
 import { upsertSheetRow } from "@/lib/google-sheets";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { getReceiptPagesForPdf } from "@/lib/invoice-attachments";
-import { createGmailDraft } from "@/lib/gmail-draft";
+import { createGmailDraft, GmailAuthError } from "@/lib/gmail-draft";
 
 export const dynamic = "force-dynamic";
 
@@ -368,6 +368,13 @@ export async function POST(
       ],
     });
   } catch (err) {
+    if (err instanceof GmailAuthError) {
+      console.error("[invoice/gmail-draft] Gmail OAuth invalid_grant — refresh token expired or revoked");
+      return NextResponse.json(
+        { ok: false, code: "GMAIL_AUTH_INVALID_GRANT", message: err.message },
+        { status: 401 },
+      );
+    }
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[invoice/gmail-draft] Gmail draft creation failed: ${msg}`);
     return NextResponse.json({ error: "gmail_draft_failed", detail: msg }, { status: 502 });
