@@ -894,10 +894,40 @@ function buildPreviewFilename(laNumber: string | null, jobTitle: string, invoice
   return `Invoice-${numSlug}${nameSlug}.pdf`;
 }
 
-export function openGmailDraftUrl(draftUrl: string | null | undefined): boolean {
-  if (!draftUrl || typeof window === "undefined" || typeof window.open !== "function") return false;
-  window.open(draftUrl, "_blank", "noopener,noreferrer");
-  return true;
+/**
+ * Builds a `mailto:` link for the Apple Mail fallback button. Per RFC 6068,
+ * only the query-string fields (cc/subject/body) need percent-encoding —
+ * the `to` address list is joined with commas as-is.
+ *
+ * mailto cannot carry attachments, so this never references the PDF; the
+ * separate "Open PDF" button stays visible for manual attachment.
+ */
+export function buildInvoiceMailtoHref(to: string[], cc: string[], subject: string, body: string): string {
+  const toPart = to.join(",");
+  const params: string[] = [];
+  if (cc.length > 0) params.push(`cc=${encodeURIComponent(cc.join(","))}`);
+  if (subject) params.push(`subject=${encodeURIComponent(subject)}`);
+  if (body) params.push(`body=${encodeURIComponent(body)}`);
+  return `mailto:${toPart}${params.length > 0 ? `?${params.join("&")}` : ""}`;
+}
+
+interface GmailDraftErrorResponse {
+  code?: string;
+  message?: string;
+  detail?: string;
+  error?: string;
+}
+
+const GMAIL_DRAFT_FALLBACK_ERROR = "Failed to create Gmail draft";
+
+/**
+ * Picks a human-readable error string from a failed gmail-draft API response.
+ * `message` (set for typed errors like GMAIL_AUTH_INVALID_GRANT) always wins
+ * over `detail`/`error` so raw provider text (e.g. "invalid_grant") never
+ * reaches the UI.
+ */
+export function resolveGmailDraftErrorMessage(json: GmailDraftErrorResponse | null | undefined): string {
+  return json?.message ?? json?.detail ?? json?.error ?? GMAIL_DRAFT_FALLBACK_ERROR;
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,7 +1073,7 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
         </>
       ) : (
         <div className="invoice-gmail-draft-success">
-          <p className="invoice-sync-success">Gmail draft created.</p>
+          <p className="invoice-sync-success">Draft created successfully in Gmail.</p>
           {dialog.draftUrl ? (
             <a
               href={dialog.draftUrl}
@@ -1054,6 +1084,15 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
               Open Draft in Gmail →
             </a>
           ) : null}
+          <a
+            href={buildInvoiceMailtoHref(previewTo, previewCc, dialog.editableSubject, dialog.editableBody)}
+            className="invoice-gmail-draft-link"
+          >
+            Open in Apple Mail →
+          </a>
+          <p className="invoice-status-muted">
+            mailto links can&rsquo;t carry attachments — use Open PDF below to attach it manually.
+          </p>
         </div>
       )}
 
@@ -2324,7 +2363,7 @@ export function InvoiceSection({
         }),
       });
       const json = await res.json() as {
-        ok?: boolean; error?: string; detail?: string;
+        ok?: boolean; error?: string; detail?: string; code?: string; message?: string;
         draftId?: string; draftUrl?: string; subject?: string;
         invoice_pdf_url?: string;
       };
@@ -2332,7 +2371,7 @@ export function InvoiceSection({
         setEmailDialog((prev) => ({
           ...prev,
           status: "error",
-          error: json.detail ?? json.error ?? "Failed to create Gmail draft",
+          error: resolveGmailDraftErrorMessage(json),
         }));
         return;
       }
@@ -2351,7 +2390,6 @@ export function InvoiceSection({
           if (j.invoiceData) { setInvoiceData(j.invoiceData); setPacket(j.packet); }
         }
       }).catch(() => { /* non-fatal */ });
-      if (json.draftUrl) openGmailDraftUrl(json.draftUrl);
       setEmailDialog((prev) => ({ ...prev, status: "success", error: null, draftUrl: json.draftUrl ?? null }));
     } catch {
       setEmailDialog((prev) => ({ ...prev, status: "error", error: "Network error — try again" }));

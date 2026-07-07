@@ -11,10 +11,10 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { isEditableKeyboardTarget } from "@/lib/keyboard";
 import { isInvoiceDataRow, VOID_STATUS } from "@/lib/google-sheets";
-import { openGmailDraftUrl } from "@/components/InvoiceSection";
+import { buildInvoiceMailtoHref, resolveGmailDraftErrorMessage } from "@/components/InvoiceSection";
 
 // ---------------------------------------------------------------------------
 // 1. SaveStatus state machine transitions
@@ -255,53 +255,98 @@ describe("VOID_STATUS — voided rows are excluded from live invoice row detecti
 // 6. Gmail Draft success behavior
 // ---------------------------------------------------------------------------
 
-const originalWindow = globalThis.window;
-
-afterEach(() => {
-  vi.restoreAllMocks();
-  if (originalWindow === undefined) {
-    Reflect.deleteProperty(globalThis, "window");
-  } else {
-    Object.defineProperty(globalThis, "window", {
-      value: originalWindow,
-      configurable: true,
-      writable: true,
-    });
-  }
-});
-
 describe("Gmail Draft success behavior", () => {
-  it("opens a successful Gmail draft URL in a new tab", () => {
-    const open = vi.fn();
-    Object.defineProperty(globalThis, "window", {
-      value: { open },
-      configurable: true,
-      writable: true,
-    });
-
-    expect(openGmailDraftUrl("https://mail.google.com/mail/#drafts/msg-123")).toBe(true);
-    expect(open).toHaveBeenCalledWith(
-      "https://mail.google.com/mail/#drafts/msg-123",
-      "_blank",
-      "noopener,noreferrer",
-    );
-  });
-
-  it("does not open a window when draft creation did not return a URL", () => {
-    const open = vi.fn();
-    Object.defineProperty(globalThis, "window", {
-      value: { open },
-      configurable: true,
-      writable: true,
-    });
-
-    expect(openGmailDraftUrl(null)).toBe(false);
-    expect(open).not.toHaveBeenCalled();
-  });
-
-  it("keeps the visible fallback Open Draft link in the dialog source", () => {
+  it("does not auto-open Gmail web — keeps the manual fallback link in the dialog source", () => {
     const source = readFileSync(join(process.cwd(), "components/InvoiceSection.tsx"), "utf8");
     expect(source).toContain("Open Draft in Gmail");
     expect(source).toContain('href={dialog.draftUrl}');
+    expect(source).not.toContain("openGmailDraftUrl(json.draftUrl)");
+  });
+
+  it("shows the friendly success message instead of raw Gmail wording", () => {
+    const source = readFileSync(join(process.cwd(), "components/InvoiceSection.tsx"), "utf8");
+    expect(source).toContain("Draft created successfully in Gmail.");
+  });
+
+  it("keeps the Open PDF button visible independent of the email dialog", () => {
+    const source = readFileSync(join(process.cwd(), "components/InvoiceSection.tsx"), "utf8");
+    expect(source).toContain('{isVerifying ? "Verifying…" : "Open PDF"}');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. Apple Mail mailto fallback
+// ---------------------------------------------------------------------------
+
+describe("buildInvoiceMailtoHref", () => {
+  it("joins multiple to-addresses with commas, unencoded", () => {
+    const href = buildInvoiceMailtoHref(["a@example.com", "b@example.com"], [], "", "");
+    expect(href).toBe("mailto:a@example.com,b@example.com");
+  });
+
+  it("encodes cc, subject, and body as query params", () => {
+    const href = buildInvoiceMailtoHref(
+      ["client@example.com"],
+      ["jeff@example.com"],
+      "Invoice LA#5555",
+      "Line one\n\nThank you,\nJeff",
+    );
+    expect(href).toBe(
+      "mailto:client@example.com?cc=jeff%40example.com&subject=Invoice%20LA%235555&body=Line%20one%0A%0AThank%20you%2C%0AJeff",
+    );
+  });
+
+  it("omits cc/subject/body params entirely when empty", () => {
+    expect(buildInvoiceMailtoHref(["client@example.com"], [], "", "")).toBe("mailto:client@example.com");
+  });
+
+  it("omits an empty cc list but still includes subject and body", () => {
+    const href = buildInvoiceMailtoHref(["client@example.com"], [], "Subj", "Body");
+    expect(href).toBe("mailto:client@example.com?subject=Subj&body=Body");
+    expect(href).not.toContain("cc=");
+  });
+
+  it("never references a PDF attachment (mailto cannot carry one)", () => {
+    const href = buildInvoiceMailtoHref(["client@example.com"], [], "Subj", "Body text");
+    expect(href).not.toMatch(/attach|\.pdf/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. Gmail Draft friendly error message resolution
+// ---------------------------------------------------------------------------
+
+describe("resolveGmailDraftErrorMessage", () => {
+  it("prefers the typed message over raw provider detail/error text", () => {
+    expect(
+      resolveGmailDraftErrorMessage({
+        code: "GMAIL_AUTH_INVALID_GRANT",
+        message: "Gmail authorization expired or was revoked. Reconnect the Google account / refresh the Gmail OAuth token.",
+        detail: "invalid_grant",
+        error: "gmail_draft_failed",
+      }),
+    ).toBe("Gmail authorization expired or was revoked. Reconnect the Google account / refresh the Gmail OAuth token.");
+  });
+
+  it("never surfaces raw invalid_grant text to the UI when message is present", () => {
+    const resolved = resolveGmailDraftErrorMessage({
+      code: "GMAIL_AUTH_INVALID_GRANT",
+      message: "Gmail authorization expired or was revoked. Reconnect the Google account / refresh the Gmail OAuth token.",
+    });
+    expect(resolved.toLowerCase()).not.toContain("invalid_grant");
+  });
+
+  it("falls back to detail when no typed message is present", () => {
+    expect(resolveGmailDraftErrorMessage({ detail: "pdf render failed" })).toBe("pdf render failed");
+  });
+
+  it("falls back to error when neither message nor detail is present", () => {
+    expect(resolveGmailDraftErrorMessage({ error: "recipient_required" })).toBe("recipient_required");
+  });
+
+  it("falls back to a generic message when the response is empty or missing", () => {
+    expect(resolveGmailDraftErrorMessage({})).toBe("Failed to create Gmail draft");
+    expect(resolveGmailDraftErrorMessage(null)).toBe("Failed to create Gmail draft");
+    expect(resolveGmailDraftErrorMessage(undefined)).toBe("Failed to create Gmail draft");
   });
 });

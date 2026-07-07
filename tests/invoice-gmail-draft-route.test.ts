@@ -555,6 +555,24 @@ describe("POST /api/invoice/gmail-draft/[eventId] — draft creation", () => {
     expect(body.error).toBe("gmail_draft_failed");
   });
 
+  it("returns a friendly GMAIL_AUTH_INVALID_GRANT error instead of raw invalid_grant text", async () => {
+    const { GmailAuthError } = await import("@/lib/gmail-draft");
+    mocks.createGmailDraft.mockRejectedValue(new GmailAuthError());
+    const { POST } = await loadRoute();
+    const req = new Request("https://app.local/api/invoice/gmail-draft/evt123", {
+      method: "POST",
+      headers: { ...jeffHeaders(), "Content-Type": "application/json" },
+      body: DEFAULT_BODY,
+    });
+    const res = await POST(req as never, { params: { eventId: "evt123" } });
+    expect(res.status).toBe(401);
+    const body = await res.json() as { ok: boolean; code: string; message: string };
+    expect(body.ok).toBe(false);
+    expect(body.code).toBe("GMAIL_AUTH_INVALID_GRANT");
+    expect(body.message).not.toContain("invalid_grant");
+    expect(body.message.toLowerCase()).toContain("reconnect");
+  });
+
   it("passes CC addresses to createGmailDraft", async () => {
     const { POST } = await loadRoute();
     const req = new Request("https://app.local/api/invoice/gmail-draft/evt123", {
