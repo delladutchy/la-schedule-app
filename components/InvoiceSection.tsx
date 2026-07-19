@@ -317,7 +317,13 @@ type EmailPresetId = "custom" | string;
 interface EmailDialogState {
   open: boolean;
   presetId: EmailPresetId;
-  customTo: string;
+  /**
+   * Comma/semicolon-separated "To" list shown in the Review & Draft dialog.
+   * Seeded from the selected preset's `to` addresses (see seedEditableTo)
+   * but freely editable afterward — editing here never mutates the preset
+   * itself (lib/invoice-recipients.ts), it's local dialog state only.
+   */
+  editableTo: string;
   status: "idle" | "sending" | "success" | "error";
   error: string | null;
   editableSubject: string;
@@ -327,7 +333,7 @@ interface EmailDialogState {
 }
 
 const EMAIL_DIALOG_RESET: EmailDialogState = {
-  open: false, presetId: "", customTo: "", status: "idle", error: null,
+  open: false, presetId: "", editableTo: "", status: "idle", error: null,
   editableSubject: "", editableBody: "", draftUrl: null,
 };
 
@@ -935,6 +941,30 @@ export function buildInvoiceMailtoHref(to: string[], cc: string[], subject: stri
   return `mailto:${toPart}${params.length > 0 ? `?${params.join("&")}` : ""}`;
 }
 
+/**
+ * Splits the editable "To" field (comma/semicolon/newline separated) into a
+ * clean address list. Entries without "@" are dropped — the user may be
+ * mid-typing an address.
+ */
+export function parseRecipientList(raw: string): string[] {
+  return raw
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.includes("@"));
+}
+
+/**
+ * Seeds the editable "To" field when a recipient preset is selected. Only
+ * seeds from configured presets — "custom" and unconfigured presets start
+ * blank. This is a one-time seed: the user can freely edit afterward without
+ * touching the underlying preset (see lib/invoice-recipients.ts).
+ */
+export function seedEditableTo(presetId: string): string {
+  if (!presetId || presetId === "custom") return "";
+  const preset = findPreset(presetId);
+  return preset && isPresetConfigured(preset) ? preset.to.join(", ") : "";
+}
+
 interface GmailDraftErrorResponse {
   code?: string;
   message?: string;
@@ -981,19 +1011,17 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
   const isBusy = dialog.status === "sending";
   const isDone = dialog.status === "success";
 
-  let previewTo: string[] = [];
+  // The "To" list always comes from the editable field — seeded from the
+  // preset on selection (seedEditableTo), but the user's edits here are what
+  // actually gets sent (see handleOpenReview's send handler). The preset
+  // itself is never mutated.
   let previewCc: string[] = [];
   let previewUnconfigured = false;
 
-  if (dialog.presetId === "custom") {
-    const addr = dialog.customTo.trim();
-    // Require a plausible email (must contain @) before counting it as a valid recipient.
-    previewTo = addr.includes("@") ? [addr] : [];
-  } else if (dialog.presetId) {
+  if (dialog.presetId && dialog.presetId !== "custom") {
     const preset = findPreset(dialog.presetId);
     if (preset) {
       if (isPresetConfigured(preset)) {
-        previewTo = preset.to;
         previewCc = preset.cc;
       } else {
         previewUnconfigured = true;
@@ -1001,10 +1029,9 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
     }
   }
 
+  const previewTo = previewUnconfigured ? [] : parseRecipientList(dialog.editableTo);
   const canSend = !isBusy && !isDone && !previewUnconfigured && previewTo.length > 0;
 
-  // "To" preview line: primary addresses, then CC if present.
-  const toLine = previewTo.join(", ");
   const ccLine = previewCc.length > 0 ? previewCc.join(", ") : null;
 
   return (
@@ -1021,7 +1048,10 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
               className="invoice-select invoice-email-select"
               value={dialog.presetId}
               disabled={isBusy}
-              onChange={(e) => onChange((prev) => ({ ...prev, presetId: e.target.value, customTo: "", error: null }))}
+              onChange={(e) => {
+                const id = e.target.value;
+                onChange((prev) => ({ ...prev, presetId: id, editableTo: seedEditableTo(id), error: null }));
+              }}
             >
               <option value="">— choose recipient —</option>
               {RECIPIENT_PRESETS.map((preset) => {
@@ -1036,33 +1066,26 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
             </select>
           </div>
 
-          {dialog.presetId === "custom" ? (
-            <div className="invoice-email-field">
-              <label className="invoice-label-sm" htmlFor="inv-email-custom">Email address</label>
-              <input
-                id="inv-email-custom"
-                type="email"
-                className="invoice-email-full-input"
-                value={dialog.customTo}
-                onChange={(e) => onChange((prev) => ({ ...prev, customTo: e.target.value, error: null }))}
-                placeholder="client@example.com"
-                disabled={isBusy}
-                autoFocus
-              />
-            </div>
-          ) : null}
-
           {previewUnconfigured ? (
             <p className="invoice-status-muted invoice-email-unconfigured">
               This preset is not configured. Edit <code>lib/invoice-recipients.ts</code> to add the address.
             </p>
           ) : null}
 
-          {/* Email review — To and Attachment are read-only; Subject and Message are editable */}
+          {/* Email review — To and Subject/Message are editable; Attachment is read-only.
+              Editing To only affects this draft — it never writes back to the preset. */}
           <div className="invoice-email-review">
             <div className="invoice-email-review-row">
-              <span className="invoice-email-review-label">To</span>
-              <span className="invoice-email-review-value">{toLine || "—"}</span>
+              <label className="invoice-email-review-label" htmlFor="inv-email-to">To</label>
+              <input
+                id="inv-email-to"
+                type="text"
+                className="invoice-email-edit-input"
+                value={dialog.editableTo}
+                onChange={(e) => onChange((prev) => ({ ...prev, editableTo: e.target.value, error: null }))}
+                placeholder="name@example.com, name2@example.com"
+                disabled={isBusy}
+              />
               {ccLine ? (
                 <span className="invoice-email-review-cc">CC: {ccLine}</span>
               ) : null}
@@ -2345,24 +2368,29 @@ export function InvoiceSection({
       return;
     }
 
-    // Resolve addresses.
+    // Resolve addresses. The edited "To" field (not the preset directly) is
+    // always what gets sent — this is what lets the user add/remove
+    // recipients before creating the draft without touching the saved preset.
     let toAddresses: string[] = [];
     let ccAddresses: string[] = [];
 
     if (emailDialog.presetId === "custom") {
-      const addr = emailDialog.customTo.trim();
-      if (!addr) {
+      toAddresses = parseRecipientList(emailDialog.editableTo);
+      if (toAddresses.length === 0) {
         setEmailDialog((prev) => ({ ...prev, error: "Enter a recipient email address." }));
         return;
       }
-      toAddresses = [addr];
     } else if (emailDialog.presetId) {
       const preset = findPreset(emailDialog.presetId);
       if (!preset || !isPresetConfigured(preset)) {
         setEmailDialog((prev) => ({ ...prev, error: "This recipient preset is not configured yet." }));
         return;
       }
-      toAddresses = preset.to;
+      toAddresses = parseRecipientList(emailDialog.editableTo);
+      if (toAddresses.length === 0) {
+        setEmailDialog((prev) => ({ ...prev, error: "Enter at least one recipient email address." }));
+        return;
+      }
       ccAddresses = preset.cc;
     } else {
       setEmailDialog((prev) => ({ ...prev, error: "Select a recipient before creating a draft." }));

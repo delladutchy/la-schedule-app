@@ -37,6 +37,12 @@ export const RECIPIENT_PRESETS: RecipientPreset[] = [
     cc:    [],
   },
   {
+    id:    "light-action-milos-only",
+    label: "Light Action — Milos Only",
+    to:    ["milos@lightaction.com"],
+    cc:    [],
+  },
+  {
     id:    "overture-mike",
     label: "Overture — Mike",
     to:    ["Mpatille@overtureav.com"],
