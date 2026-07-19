@@ -5370,10 +5370,29 @@ html.modal-open body {
   line-height: 1.25;
 }
 
-.invoice-pdf-la-number {
+.invoice-pdf-la-number-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 0.8rem;
   color: var(--text-muted);
   margin: 3px 0 0;
+}
+
+.invoice-pdf-la-number-input {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 1px dashed var(--border);
+  padding: 0 2px 1px;
+  width: 6rem;
+}
+
+.invoice-pdf-la-number-input:focus {
+  outline: none;
+  border-bottom-style: solid;
+  color: var(--text);
 }
 
 .invoice-status-pill {

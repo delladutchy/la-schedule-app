@@ -239,6 +239,34 @@ describe("clientInvoiceNumber", () => {
     expect(clientInvoiceNumber).toContain("LA #71852");
     expect(clientInvoiceNumber).not.toContain("LA#71852");
   });
+
+  // Regression anchor for the invoice #1007 production bug: a stale stored
+  // la_number ("0000", captured before the real number was assigned) silently
+  // overrode the correct, live Calendar title in the PDF header even though
+  // the Job section (parsed straight from gigSummary) already showed it right.
+  it("invoice #1007: stale stored '0000' produces the wrong header despite a correct gigSummary", () => {
+    const { clientInvoiceNumber, jobTitle } = deriveDetailBlock({
+      packetLaNumber: "0000",
+      gigSummary: "LA#72813 — Chase Center",
+      invoiceNumber: "1007",
+      issuedDate: "2026-07-19",
+      workdays: [],
+    });
+    expect(clientInvoiceNumber).toBe("1007 - LA #0000");
+    expect(jobTitle).toBe("LA#72813 — Chase Center");
+  });
+
+  it("invoice #1007: after repairing la_number to 72813, header and Job section agree", () => {
+    const { clientInvoiceNumber, jobTitle } = deriveDetailBlock({
+      packetLaNumber: "72813",
+      gigSummary: "LA#72813 — Chase Center",
+      invoiceNumber: "1007",
+      issuedDate: "2026-07-19",
+      workdays: [],
+    });
+    expect(clientInvoiceNumber).toBe("1007 - LA #72813");
+    expect(jobTitle).toBe("Chase Center");
+  });
 });
 
 // ---------------------------------------------------------------------------

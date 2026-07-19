@@ -462,6 +462,17 @@ function buildAuthHeaders(token: string | null): Record<string, string> {
   return base;
 }
 
+// A hung serverless call (no response, connection never closes) would otherwise
+// leave fetch() pending forever and the caller's "verifying" state stuck.
+// AbortController turns that into a normal rejection the caller already handles.
+const VERIFY_STEP_TIMEOUT_MS = 45_000;
+
+function fetchWithTimeout(input: string, init: RequestInit, timeoutMs = VERIFY_STEP_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 function logInvoicePdfDiagnostic(message: string, details: Record<string, unknown>): void {
   if (process.env.NODE_ENV !== "production") {
     console.log(`[invoice/ui] ${message}`, details);
@@ -1516,6 +1527,14 @@ export function InvoiceSection({
     scheduleSave({ [field]: value.trim() || null });
   }
 
+  // la_number is a stored snapshot (see lib/invoice-data.ts) — it does not
+  // follow later edits to the Calendar event title, so it needs its own
+  // editable field. Server normalizes (strips "LA#"/"LA #" prefix) on save.
+  function handleLaNumberChange(value: string) {
+    setInvoiceData((prev) => (prev ? { ...prev, la_number: value } : prev));
+    scheduleSave({ la_number: value.trim() || null });
+  }
+
   function applyLineItemOverrides(nextOverrides: InvoiceLineItemOverrides) {
     const sanitized = sanitizeInvoiceLineItemOverrides(nextOverrides);
     setLineItemOverrides(sanitized);
@@ -2013,7 +2032,7 @@ export function InvoiceSection({
     // ── Step 2: Regenerate PDF ───────────────────────────────────────────────
     let pdfUrl: string | null = null;
     try {
-      const pdfRes = await fetch(`/api/invoice/pdf/${encodeURIComponent(eventId)}`, {
+      const pdfRes = await fetchWithTimeout(`/api/invoice/pdf/${encodeURIComponent(eventId)}`, {
         method: "POST",
         headers: buildAuthHeaders(editorToken),
         credentials: "same-origin",
@@ -2029,8 +2048,9 @@ export function InvoiceSection({
       pdfUrl = pdfMeta.invoicePdfUrl;
       setInvoiceData((prev) => mergeInvoicePdfMetadata(prev, pdfMeta));
       setPdfState({ status: "done", error: null, action: null });
-    } catch {
-      setPdfState({ status: "error", error: "Network error — PDF not generated", action: null });
+    } catch (err) {
+      const timedOut = err instanceof DOMException && err.name === "AbortError";
+      setPdfState({ status: "error", error: timedOut ? "PDF generation timed out — try again" : "Network error — PDF not generated", action: null });
       setVerifyState({ status: "failed", message: VERIFY_FAIL_MESSAGE, verifiedAt: null, autoRepaired: false, hasUnrelatedClutter: false });
       return { success: false, pdfUrl: null };
     }
@@ -2045,7 +2065,7 @@ export function InvoiceSection({
     let hasUnrelatedClutter = false;
     let newSyncedAt: string | null = null;
     try {
-      const syncRes = await fetch("/api/invoice/sync-sheet", {
+      const syncRes = await fetchWithTimeout("/api/invoice/sync-sheet", {
         method: "POST",
         headers: buildAuthHeaders(editorToken),
         credentials: "same-origin",
@@ -2067,8 +2087,9 @@ export function InvoiceSection({
       hasUnrelatedClutter = syncJson.hasUnrelatedClutter ?? false;
       newSyncedAt = syncJson.syncedAt ?? null;
       setSyncState({ status: "success", message: syncJson.message ?? null, syncedAt: newSyncedAt });
-    } catch {
-      setSyncState({ status: "error", message: "Sheet sync failed — network error", syncedAt: prevSyncedAt });
+    } catch (err) {
+      const timedOut = err instanceof DOMException && err.name === "AbortError";
+      setSyncState({ status: "error", message: timedOut ? "Sheet sync timed out — retry" : "Sheet sync failed — network error", syncedAt: prevSyncedAt });
       setVerifyState({ status: "failed", message: VERIFY_FAIL_MESSAGE, verifiedAt: null, autoRepaired: false, hasUnrelatedClutter: false });
       return { success: false, pdfUrl: null };
     }
@@ -2736,9 +2757,18 @@ export function InvoiceSection({
                 <div className="invoice-status-card-header">
                   <div>
                     <p className="invoice-pdf-number">Invoice #{invoiceNumber ?? "—"}</p>
-                    {laNumber ? (
-                      <p className="invoice-pdf-la-number">LA Job #{laNumber}</p>
-                    ) : null}
+                    <label className="invoice-pdf-la-number-label">
+                      LA Job #
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className="invoice-pdf-la-number-input"
+                        value={laNumber ?? ""}
+                        onChange={(e) => handleLaNumberChange(e.target.value)}
+                        placeholder="e.g. 72813"
+                        aria-label="LA Job #"
+                      />
+                    </label>
                   </div>
                   <span className="invoice-status-pill" data-status={workflowState}>
                     {workflowLabel}

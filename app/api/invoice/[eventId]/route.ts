@@ -6,6 +6,7 @@ import { sanitizeInvoiceLineItemOverrides } from "@/lib/invoice-line-item-overri
 import { getInvoiceData, upsertInvoiceData, markSheetSynced, markSheetSyncError } from "@/lib/invoice-data";
 import { calculateInvoicePacket, generateSheetRow } from "@/lib/invoice-calculations";
 import { upsertSheetRow } from "@/lib/google-sheets";
+import { normalizeLaNumber } from "@/lib/la-number";
 import type { InvoiceDataPatch } from "@/lib/invoice-data";
 import type { InvoiceData, InvoicePacket, WorkdayEntry } from "@/lib/invoice-types";
 
@@ -131,7 +132,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   const patch: InvoiceDataPatch = {};
 
-  if ("la_number" in b) patch.la_number = b.la_number != null ? String(b.la_number) : null;
+  if ("la_number" in b) patch.la_number = normalizeLaNumber(b.la_number != null ? String(b.la_number) : null);
   if ("invoice_status" in b && typeof b.invoice_status === "string") {
     patch.invoice_status = b.invoice_status as InvoiceDataPatch["invoice_status"];
   }
