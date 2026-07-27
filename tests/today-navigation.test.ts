@@ -479,11 +479,11 @@ describe("resolveRequestedWeekStart", () => {
 // highlight is correct even though the cached data itself is stale.
 describe("live todayKey overrides a stale cached payload's baked isToday data", () => {
   const timezone = "America/New_York";
-  const staleCachedTodayKey = "2026-06-04"; // baked into the restored payload
+  const staleCachedTodayKey: string = "2026-06-04"; // baked into the restored payload
   const liveNowMs = DateTime.fromISO("2026-06-05T15:00:00", { zone: timezone }).toMillis();
 
   it("a day row baked as isToday=true for the stale key is correctly NOT today", () => {
-    const rowDate = staleCachedTodayKey;
+    const rowDate: string = staleCachedTodayKey;
     const bakedIsToday = rowDate === staleCachedTodayKey; // what the cached payload asserts
     const liveIsToday = rowDate === computeTodayKeyForZone(timezone, liveNowMs); // what the fix checks
     expect(bakedIsToday).toBe(true);
@@ -491,7 +491,7 @@ describe("live todayKey overrides a stale cached payload's baked isToday data", 
   });
 
   it("the actual current day is correctly identified as today despite the stale cache", () => {
-    const rowDate = "2026-06-05";
+    const rowDate: string = "2026-06-05";
     const bakedIsToday = rowDate === staleCachedTodayKey; // stale payload never marked it
     const liveIsToday = rowDate === computeTodayKeyForZone(timezone, liveNowMs);
     expect(bakedIsToday).toBe(false);

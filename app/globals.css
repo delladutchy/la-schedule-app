@@ -318,6 +318,214 @@ html.modal-open body {
     will-change: auto;
   }
 }
+
+.header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/*
+ * Decorative header tennis scene (components/HeaderTennis.tsx).
+ *
+ * One shared duration custom property + one 0-100% keyframe timeline per
+ * animated part (ball flight, each racket swing, each player's weight
+ * shift) keeps every part of the rally phase-locked — they're all just
+ * reading the same clock, so nothing can drift relative to anything else
+ * even after hours of looping. Every keyframe list's 0% and 100% values
+ * are identical by construction, so the `infinite` loop has no seam.
+ *
+ * All animated properties are `transform` only (translate/rotate) so this
+ * runs on the compositor, not layout — cheap enough to leave running
+ * indefinitely. Animations only exist under `prefers-reduced-motion:
+ * no-preference`; otherwise the scene simply renders its static base pose
+ * (ball at the net apex, both players neutral), which doubles as a
+ * deliberately-designed "polished static" fallback rather than a
+ * paused-mid-motion snapshot.
+ */
+.hdr-tennis {
+  --hdr-tennis-duration: 4.8s;
+  flex: 0 0 auto;
+  width: 112px;
+  height: 32px;
+  display: inline-block;
+  line-height: 0;
+}
+.hdr-tennis-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.hdr-tennis-ground {
+  stroke: var(--border);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+.hdr-tennis-net line {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+.hdr-tennis-net-panel {
+  fill: var(--border-strong);
+  opacity: 0.16;
+  stroke: none;
+}
+.hdr-tennis-net-mesh {
+  opacity: 0.4;
+  stroke-width: 0.5;
+}
+.hdr-tennis-limb {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.hdr-tennis-torso,
+.hdr-tennis-head {
+  fill: var(--text-muted);
+}
+.hdr-tennis-racket {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.1;
+}
+.hdr-tennis-racket-string {
+  stroke: var(--text-muted);
+  stroke-width: 0.6;
+  opacity: 0.7;
+}
+.hdr-tennis-ball {
+  fill: var(--today-accent);
+}
+.hdr-tennis-arm--left,
+.hdr-tennis-arm--right,
+.hdr-tennis-body--left,
+.hdr-tennis-body--right,
+.hdr-tennis-ball {
+  transform-box: view-box;
+}
+.hdr-tennis-arm--left { transform-origin: 22px 12px; }
+.hdr-tennis-arm--right { transform-origin: 98px 12px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .hdr-tennis-ball {
+    animation: hdr-tennis-ball-fly var(--hdr-tennis-duration) linear infinite;
+    will-change: transform;
+  }
+  .hdr-tennis-arm--left {
+    animation: hdr-tennis-swing-left var(--hdr-tennis-duration) linear infinite;
+    will-change: transform;
+  }
+  .hdr-tennis-arm--right {
+    animation: hdr-tennis-swing-right var(--hdr-tennis-duration) linear infinite;
+    will-change: transform;
+  }
+  .hdr-tennis-body--left {
+    animation: hdr-tennis-sway-left var(--hdr-tennis-duration) linear infinite;
+  }
+  .hdr-tennis-body--right {
+    animation: hdr-tennis-sway-right var(--hdr-tennis-duration) linear infinite;
+  }
+
+  /* Page Visibility pause, toggled by HeaderTennis.tsx. */
+  .hdr-tennis--paused .hdr-tennis-ball,
+  .hdr-tennis--paused .hdr-tennis-arm--left,
+  .hdr-tennis--paused .hdr-tennis-arm--right,
+  .hdr-tennis--paused .hdr-tennis-body--left,
+  .hdr-tennis--paused .hdr-tennis-body--right {
+    animation-play-state: paused;
+  }
+}
+
+/*
+ * Ball arc: a symmetric parabola sampled at 16 equal time-steps per
+ * half-rally (left-to-right, then the mirrored right-to-left), expressed
+ * as translate() offsets from the ball's resting position at the net
+ * apex. 0% and 100% are identical (both contact points at the left
+ * racket), so the `infinite` loop boundary is seamless by construction.
+ */
+@keyframes hdr-tennis-ball-fly {
+  0%     { transform: translate(-31px, 6px); }
+  6.25%  { transform: translate(-23.25px, 3.375px); }
+  12.5%  { transform: translate(-15.5px, 1.5px); }
+  18.75% { transform: translate(-7.75px, 0.375px); }
+  25%    { transform: translate(0px, 0px); }
+  31.25% { transform: translate(7.75px, 0.375px); }
+  37.5%  { transform: translate(15.5px, 1.5px); }
+  43.75% { transform: translate(23.25px, 3.375px); }
+  50%    { transform: translate(31px, 6px); }
+  56.25% { transform: translate(23.25px, 3.375px); }
+  62.5%  { transform: translate(15.5px, 1.5px); }
+  68.75% { transform: translate(7.75px, 0.375px); }
+  75%    { transform: translate(0px, 0px); }
+  81.25% { transform: translate(-7.75px, 0.375px); }
+  87.5%  { transform: translate(-15.5px, 1.5px); }
+  93.75% { transform: translate(-23.25px, 3.375px); }
+  100%   { transform: translate(-31px, 6px); }
+}
+
+/*
+ * Racket swings: rotation is 0deg at the shared "neutral/ready" pose (the
+ * arm's static, un-animated SVG pose) and peaks right as the ball reaches
+ * that player's racket (0%/100% for the left player, 50% for the right
+ * player) — the same landmarks the ball keyframes above use for its
+ * contact points, so racket and ball meet in time. The right-player
+ * keyframes are the left player's shape shifted exactly 50% along the
+ * timeline (same shared duration), which is what keeps the two swings
+ * from ever colliding or overlapping.
+ */
+@keyframes hdr-tennis-swing-left {
+  0%   { transform: rotate(25deg); }
+  8%   { transform: rotate(15deg); }
+  20%  { transform: rotate(0deg); }
+  70%  { transform: rotate(0deg); }
+  85%  { transform: rotate(10deg); }
+  95%  { transform: rotate(20deg); }
+  100% { transform: rotate(25deg); }
+}
+@keyframes hdr-tennis-swing-right {
+  0%   { transform: rotate(0deg); }
+  20%  { transform: rotate(0deg); }
+  35%  { transform: rotate(10deg); }
+  45%  { transform: rotate(20deg); }
+  50%  { transform: rotate(25deg); }
+  58%  { transform: rotate(15deg); }
+  70%  { transform: rotate(0deg); }
+  100% { transform: rotate(0deg); }
+}
+
+/* Subtle weight-shift accompanying each swing, same landmarks as above. */
+@keyframes hdr-tennis-sway-left {
+  0%   { transform: translateY(-1px); }
+  8%   { transform: translateY(-0.4px); }
+  20%  { transform: translateY(0px); }
+  70%  { transform: translateY(0px); }
+  85%  { transform: translateY(-0.3px); }
+  95%  { transform: translateY(-0.7px); }
+  100% { transform: translateY(-1px); }
+}
+@keyframes hdr-tennis-sway-right {
+  0%   { transform: translateY(0px); }
+  20%  { transform: translateY(0px); }
+  35%  { transform: translateY(-0.3px); }
+  45%  { transform: translateY(-0.7px); }
+  50%  { transform: translateY(-1px); }
+  58%  { transform: translateY(-0.4px); }
+  70%  { transform: translateY(0px); }
+  100% { transform: translateY(0px); }
+}
+
+@media (max-width: 560px) {
+  .hdr-tennis { width: 76px; height: 22px; }
+}
+@media (max-width: 340px) {
+  .hdr-tennis { display: none; }
+}
+
 .theme-toggle-button {
   appearance: none;
   width: 34px;
