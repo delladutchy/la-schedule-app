@@ -400,6 +400,19 @@ export function MonthBoard({
     const id = window.setTimeout(() => setTodayPulseActive(false), 1100);
     return () => window.clearTimeout(id);
   }, [todayPulseToken]);
+  // Scroll today into view once, after the calendar has rendered a cell for
+  // it. Fires only the first time a `.today` cell appears — a background
+  // data refresh shouldn't yank the user's scroll position — and does
+  // nothing when the displayed month doesn't contain today (e.g. an
+  // intentionally opened `?month=` elsewhere), since no `.today` cell exists.
+  const hasAutoScrolledToTodayRef = useRef(false);
+  useEffect(() => {
+    if (hasAutoScrolledToTodayRef.current) return;
+    const todayEl = document.querySelector<HTMLElement>(".month-day.today");
+    if (!todayEl) return;
+    hasAutoScrolledToTodayRef.current = true;
+    todayEl.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [month, todayKey]);
   const swipeRef = useRef<{
     tracking: boolean;
     startX: number;
@@ -1357,6 +1370,7 @@ export function MonthBoard({
                     if (!d) return null;
                     const dayIndex = dayIndexToVisibleColumn.get(sourceDayIndex) ?? 0;
                     const isPastCurrentMonthDay = d.isCurrentMonth && (monthIsPast || d.date < todayKey);
+                    const isToday = d.date === todayKey;
                     const bookedLabel = d.status === "booked"
                       ? summarizeBookedDayLabel(d.eventNames, d.eventDetails, d.bookedDisplay)
                       : null;
@@ -1398,12 +1412,12 @@ export function MonthBoard({
                         hasCoveringBar ? "month-day--occupied" : "",
                         isPastCurrentMonthDay ? "month-day--past" : "",
                         canBookDay ? "month-day--bookable" : "",
-                        d.isToday ? "today" : "",
-                        d.isToday && todayPulseActive ? "today-pulse" : "",
+                        isToday ? "today" : "",
+                        isToday && todayPulseActive ? "today-pulse" : "",
                         d.isCurrentMonth ? "current" : "outside",
                       ].filter(Boolean).join(" ")}
                       >
-                        <div className={`month-day-num${d.isToday ? " month-day-num--today" : ""}`}>
+                        <div className={`month-day-num${isToday ? " month-day-num--today" : ""}`}>
                           {d.dayOfMonth}
                         </div>
                         {d.isCurrentMonth && !isPastCurrentMonthDay ? (

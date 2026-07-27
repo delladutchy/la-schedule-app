@@ -22,13 +22,16 @@ import {
   isPayloadRenderableForViewTarget,
 } from "@/lib/schedule-view-state";
 import {
+  computeTodayKeyForZone,
   deriveWeekAnchorDateForMonth,
   deriveFocusedDateForMonthKey,
   deriveFocusedDateForWeekTarget,
   deriveListStartFromFocusedDate,
   deriveMonthKeyFromFocusedDate,
   isTodayClickTarget,
+  msUntilNextLocalMidnight,
   normalizeWeekStartForCacheLookup,
+  shouldFollowRouteTargetToNewToday,
 } from "@/lib/today-navigation";
 
 const BACKGROUND_REFRESH_DEBOUNCE_MS = 200;
@@ -467,12 +470,13 @@ export function ScheduleView({
   // never stale from a cached payload (which can carry yesterday's todayKey
   // after an overnight session). The useState initializer runs immediately
   // on the client; the typeof-window guard covers the server-side render of
-  // this client component so hydration produces the same markup.
-  const [clientTodayKey] = useState<string>(() => {
+  // this client component so hydration produces the same markup. Kept fresh
+  // after mount by the resync effect below (tab resume + local-midnight
+  // timer), since a long-lived tab can otherwise carry a stale value across
+  // a day boundary.
+  const [clientTodayKey, setClientTodayKey] = useState<string>(() => {
     if (typeof window === "undefined") return initialBoardWindowPayload.todayKey;
-    return DateTime.now()
-      .setZone(initialBoardWindowPayload.timezone)
-      .toFormat("yyyy-LL-dd");
+    return computeTodayKeyForZone(initialBoardWindowPayload.timezone);
   });
   const [focusedDate, setFocusedDate] = useState<string>(() =>
     deriveInitialFocusedDate(initialBoardWindowPayload, viewMode));
@@ -518,6 +522,75 @@ export function ScheduleView({
   const activePayload: BoardWindowPayload | null =
     activeView === "list" ? renderableListPayload : renderableMonthPayload;
   const hasRenderableActivePayload = activePayload != null;
+
+  // Refs so the day-boundary resync effect below can read the latest
+  // clientTodayKey / route target / view without re-subscribing its
+  // listeners and timer on every navigation, and without reaching into
+  // React state from inside a setState updater (impure updaters get
+  // double-invoked under Strict Mode).
+  const clientTodayKeyRef = useRef(clientTodayKey);
+  useEffect(() => {
+    clientTodayKeyRef.current = clientTodayKey;
+  }, [clientTodayKey]);
+  const routeTargetRef = useRef(routeTarget);
+  useEffect(() => {
+    routeTargetRef.current = routeTarget;
+  }, [routeTarget]);
+  const activeViewRef = useRef(activeView);
+  useEffect(() => {
+    activeViewRef.current = activeView;
+  }, [activeView]);
+
+  // Keep `clientTodayKey` correct across a day boundary: a tab left open
+  // overnight, or backgrounded and resumed on a new day, would otherwise
+  // keep highlighting yesterday as "today" until a full reload. Resyncs on
+  // tab-visible and via a timer scheduled for the next local midnight. If
+  // the user was naturally viewing "today" (not an explicitly navigated-to
+  // week/month), the route target follows forward to the new today too.
+  useEffect(() => {
+    const timezone = initialBoardWindowPayload.timezone;
+    let timeoutId: number | null = null;
+
+    const syncTodayKey = () => {
+      const prev = clientTodayKeyRef.current;
+      const next = computeTodayKeyForZone(timezone);
+      if (next === prev) return;
+      if (shouldFollowRouteTargetToNewToday({
+        viewMode: activeViewRef.current,
+        routeTargetWeekStart: routeTargetRef.current.weekStart,
+        routeTargetMonthKey: routeTargetRef.current.monthKey,
+        previousTodayKey: prev,
+        timezone,
+      })) {
+        setRouteTarget({
+          weekStart: normalizeWeekStartForCacheLookup({ weekStart: next, timezone }),
+          monthKey: next.slice(0, 7),
+        });
+      }
+      setClientTodayKey(next);
+    };
+
+    const scheduleMidnightSync = () => {
+      const delay = msUntilNextLocalMidnight(timezone) + 1000;
+      timeoutId = window.setTimeout(() => {
+        syncTodayKey();
+        scheduleMidnightSync();
+      }, delay);
+    };
+    scheduleMidnightSync();
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        syncTodayKey();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [initialBoardWindowPayload.timezone]);
 
   useEffect(() => {
     if (!isMikeEditor) {
@@ -1097,6 +1170,7 @@ export function ScheduleView({
           ) : (
             <DayBoard
               weeks={effectiveWeekRows}
+              todayKey={effectiveTodayKey}
               initialEditorToken={initialEditorToken}
               initialResolvedEditorId={resolvedEditorId}
               editorCalendarId={editorCalendarId}

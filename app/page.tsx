@@ -1,5 +1,6 @@
 import { getConfig } from "@/lib/config";
 import { todayInZone } from "@/lib/time";
+import { resolveRequestedMonthKey, resolveRequestedWeekStart } from "@/lib/today-navigation";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffLikeProfile, resolveEditorProfile } from "@/lib/editor-profiles";
 import { ScheduleView } from "@/components/ScheduleView";
@@ -176,21 +177,15 @@ export default async function AvailabilityPage({
   // Anchor the requested week/month from searchParams (or default to today)
   // without touching the snapshot. Window-clamping happens client-side once
   // /api/board/window returns the real boundaries.
-  const requestedWeekParam = firstParam(searchParams.start)?.trim();
-  const requestedWeek =
-    requestedWeekParam && /^\d{4}-\d{2}-\d{2}$/.test(requestedWeekParam)
-      ? requestedWeekParam
-      : todayKey;
-  const weekStartDt = DateTime.fromISO(requestedWeek, { zone: tz });
-  const weekStart = weekStartDt.isValid
-    ? weekStartDt.startOf("week").toFormat("yyyy-LL-dd")
-    : todayKey;
-
-  const requestedMonthParam = firstParam(searchParams.month)?.trim();
-  const monthKey =
-    requestedMonthParam && /^\d{4}-\d{2}$/.test(requestedMonthParam)
-      ? requestedMonthParam
-      : todayMonthKey;
+  const weekStart = resolveRequestedWeekStart({
+    requestedWeekParam: firstParam(searchParams.start),
+    todayKey,
+    timezone: tz,
+  });
+  const monthKey = resolveRequestedMonthKey({
+    requestedMonthParam: firstParam(searchParams.month),
+    todayMonthKey,
+  });
 
   const resolvedEditorId = resolveInitialEditorId(initialEditorToken, env);
   const isJeffEditor = resolvedEditorId !== null && isJeffLikeProfile(resolveEditorProfile(resolvedEditorId));

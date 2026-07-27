@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
 import {
+  computeTodayKeyForZone,
   deriveFocusedDateForMonthKey,
   deriveFocusedDateForWeekTarget,
   deriveListStartFromFocusedDate,
   deriveWeekAnchorDateForMonth,
   deriveMonthKeyFromFocusedDate,
   isTodayClickTarget,
+  msUntilNextLocalMidnight,
   normalizeWeekStartForCacheLookup,
+  resolveRequestedMonthKey,
+  resolveRequestedWeekStart,
+  shouldFollowRouteTargetToNewToday,
 } from "@/lib/today-navigation";
 
 const TODAY_KEY = "2026-05-04";
@@ -314,5 +319,207 @@ describe("Today navigation stale-cache regression (Jun 5 highlighted as Jun 4)",
     };
     // One press correctly identifies today navigation
     expect(isTodayClickTarget(todayTarget, ACTUAL_TODAY, "2026-06")).toBe(true);
+  });
+});
+
+describe("computeTodayKeyForZone", () => {
+  it("uses the wall-clock date in the target zone, not the UTC date", () => {
+    // 2026-05-04T02:00:00Z is still 2026-05-03 evening in Los Angeles
+    // (UTC-7 in May, DST). A naive UTC read would shift this forward a day.
+    const nowMs = DateTime.fromISO("2026-05-04T02:00:00Z").toMillis();
+    expect(computeTodayKeyForZone("America/Los_Angeles", nowMs)).toBe("2026-05-03");
+    // The same instant is already 2026-05-04 in a zone ahead of UTC.
+    expect(computeTodayKeyForZone("Pacific/Auckland", nowMs)).toBe("2026-05-04");
+  });
+
+  it("does not shift backward for a zone west of UTC just after UTC midnight", () => {
+    // 2026-05-04T00:30:00Z: in New York (UTC-4 in May) it's still 2026-05-03.
+    const nowMs = DateTime.fromISO("2026-05-04T00:30:00Z").toMillis();
+    expect(computeTodayKeyForZone("America/New_York", nowMs)).toBe("2026-05-03");
+  });
+
+  it("crosses over at the zone's local midnight, not UTC midnight", () => {
+    const zone = "America/Los_Angeles";
+    // One minute before local midnight
+    const justBefore = DateTime.fromObject(
+      { year: 2026, month: 5, day: 3, hour: 23, minute: 59 },
+      { zone },
+    ).toMillis();
+    // One minute after local midnight
+    const justAfter = DateTime.fromObject(
+      { year: 2026, month: 5, day: 4, hour: 0, minute: 1 },
+      { zone },
+    ).toMillis();
+    expect(computeTodayKeyForZone(zone, justBefore)).toBe("2026-05-03");
+    expect(computeTodayKeyForZone(zone, justAfter)).toBe("2026-05-04");
+  });
+});
+
+describe("msUntilNextLocalMidnight", () => {
+  const zone = "America/Los_Angeles";
+
+  it("returns a small delay just before local midnight", () => {
+    const nowMs = DateTime.fromObject(
+      { year: 2026, month: 5, day: 3, hour: 23, minute: 59, second: 30 },
+      { zone },
+    ).toMillis();
+    const delay = msUntilNextLocalMidnight(zone, nowMs);
+    expect(delay).toBeGreaterThan(0);
+    expect(delay).toBeLessThanOrEqual(30_000);
+  });
+
+  it("returns close to a full day just after local midnight", () => {
+    const nowMs = DateTime.fromObject(
+      { year: 2026, month: 5, day: 4, hour: 0, minute: 0, second: 1 },
+      { zone },
+    ).toMillis();
+    const delay = msUntilNextLocalMidnight(zone, nowMs);
+    expect(delay).toBeGreaterThan(23 * 60 * 60 * 1000);
+    expect(delay).toBeLessThanOrEqual(24 * 60 * 60 * 1000);
+  });
+});
+
+describe("shouldFollowRouteTargetToNewToday", () => {
+  const timezone = "America/Los_Angeles";
+
+  it("list view: follows when the displayed week was the previous today's week", () => {
+    expect(shouldFollowRouteTargetToNewToday({
+      viewMode: "list",
+      routeTargetWeekStart: "2026-06-01", // Monday of the week containing Jun 4
+      routeTargetMonthKey: "2026-06",
+      previousTodayKey: "2026-06-04",
+      timezone,
+    })).toBe(true);
+  });
+
+  it("list view: does not follow when the user navigated to a different week", () => {
+    expect(shouldFollowRouteTargetToNewToday({
+      viewMode: "list",
+      routeTargetWeekStart: "2026-06-08", // next week — user paged forward
+      routeTargetMonthKey: "2026-06",
+      previousTodayKey: "2026-06-04",
+      timezone,
+    })).toBe(false);
+  });
+
+  it("month view: follows when the displayed month was the previous today's month", () => {
+    expect(shouldFollowRouteTargetToNewToday({
+      viewMode: "month",
+      routeTargetWeekStart: "2026-06-01",
+      routeTargetMonthKey: "2026-06",
+      previousTodayKey: "2026-06-30",
+      timezone,
+    })).toBe(true);
+  });
+
+  it("month view: does not follow when the user navigated to a different month", () => {
+    expect(shouldFollowRouteTargetToNewToday({
+      viewMode: "month",
+      routeTargetWeekStart: "2026-06-01",
+      routeTargetMonthKey: "2026-07",
+      previousTodayKey: "2026-06-30",
+      timezone,
+    })).toBe(false);
+  });
+});
+
+// Fresh load / URL-selected date coverage for the main page's `?start=` and
+// `?month=` resolution (extracted from app/page.tsx for testability).
+describe("resolveRequestedWeekStart", () => {
+  const timezone = "America/Los_Angeles";
+  const todayKey = "2026-05-04"; // Monday
+
+  it("defaults to today's week on a normal visit with no start param", () => {
+    expect(resolveRequestedWeekStart({
+      requestedWeekParam: undefined,
+      todayKey,
+      timezone,
+    })).toBe("2026-05-04");
+  });
+
+  it("defaults to today's week when the param is an empty/whitespace string", () => {
+    expect(resolveRequestedWeekStart({
+      requestedWeekParam: "   ",
+      todayKey,
+      timezone,
+    })).toBe("2026-05-04");
+  });
+
+  it("honors a valid explicit start param and normalizes it to that week's Monday", () => {
+    expect(resolveRequestedWeekStart({
+      requestedWeekParam: "2026-05-13", // Wednesday
+      todayKey,
+      timezone,
+    })).toBe("2026-05-11"); // Monday of that week
+  });
+
+  it("ignores a malformed start param and falls back to today's week", () => {
+    expect(resolveRequestedWeekStart({
+      requestedWeekParam: "not-a-date",
+      todayKey,
+      timezone,
+    })).toBe("2026-05-04");
+  });
+
+  it("ignores a syntactically-valid but impossible calendar date", () => {
+    expect(resolveRequestedWeekStart({
+      requestedWeekParam: "2026-02-30",
+      todayKey,
+      timezone,
+    })).toBe(todayKey);
+  });
+});
+
+// Persisted stale dates: a cached BoardWindowPayload restored from
+// localStorage (see tests/board-window-cache.test.ts's
+// "synthetic sentinel allows stale todayKey" regression) can carry
+// yesterday's todayKey and per-day isToday flags baked at generation time.
+// DayBoard/MonthBoard no longer trust that baked flag — they compare each
+// day's date against a live todayKey (computeTodayKeyForZone), so the
+// highlight is correct even though the cached data itself is stale.
+describe("live todayKey overrides a stale cached payload's baked isToday data", () => {
+  const timezone = "America/New_York";
+  const staleCachedTodayKey = "2026-06-04"; // baked into the restored payload
+  const liveNowMs = DateTime.fromISO("2026-06-05T15:00:00", { zone: timezone }).toMillis();
+
+  it("a day row baked as isToday=true for the stale key is correctly NOT today", () => {
+    const rowDate = staleCachedTodayKey;
+    const bakedIsToday = rowDate === staleCachedTodayKey; // what the cached payload asserts
+    const liveIsToday = rowDate === computeTodayKeyForZone(timezone, liveNowMs); // what the fix checks
+    expect(bakedIsToday).toBe(true);
+    expect(liveIsToday).toBe(false);
+  });
+
+  it("the actual current day is correctly identified as today despite the stale cache", () => {
+    const rowDate = "2026-06-05";
+    const bakedIsToday = rowDate === staleCachedTodayKey; // stale payload never marked it
+    const liveIsToday = rowDate === computeTodayKeyForZone(timezone, liveNowMs);
+    expect(bakedIsToday).toBe(false);
+    expect(liveIsToday).toBe(true);
+  });
+});
+
+describe("resolveRequestedMonthKey", () => {
+  const todayMonthKey = "2026-05";
+
+  it("defaults to today's month on a normal visit with no month param", () => {
+    expect(resolveRequestedMonthKey({
+      requestedMonthParam: undefined,
+      todayMonthKey,
+    })).toBe("2026-05");
+  });
+
+  it("honors a valid explicit month param", () => {
+    expect(resolveRequestedMonthKey({
+      requestedMonthParam: "2026-11",
+      todayMonthKey,
+    })).toBe("2026-11");
+  });
+
+  it("ignores a malformed month param and falls back to today's month", () => {
+    expect(resolveRequestedMonthKey({
+      requestedMonthParam: "2026/11",
+      todayMonthKey,
+    })).toBe("2026-05");
   });
 });

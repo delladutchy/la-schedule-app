@@ -38,6 +38,7 @@ import {
 
 interface Props {
   weeks: WeekGroup[];
+  todayKey?: string;
   weekendTodayLabel?: string;
   initialEditorToken?: string;
   initialResolvedEditorId?: string | null;
@@ -413,6 +414,7 @@ export function resolveSelectedDayPopupMeta(
  */
 export function DayBoard({
   weeks,
+  todayKey,
   weekendTodayLabel,
   initialEditorToken,
   initialResolvedEditorId = null,
@@ -436,6 +438,19 @@ export function DayBoard({
     const id = window.setTimeout(() => setTodayPulseActive(false), 1100);
     return () => window.clearTimeout(id);
   }, [todayPulseToken]);
+  // Scroll today into view once, after the calendar has rendered a cell for
+  // it. Fires only the first time a `.today` cell appears — a background
+  // data refresh shouldn't yank the user's scroll position — and does
+  // nothing when the displayed week doesn't contain today (e.g. an
+  // intentionally opened `?start=` date), since no `.today` cell exists.
+  const hasAutoScrolledToTodayRef = useRef(false);
+  useEffect(() => {
+    if (hasAutoScrolledToTodayRef.current) return;
+    const todayEl = document.querySelector<HTMLElement>(".board-day.today");
+    if (!todayEl) return;
+    hasAutoScrolledToTodayRef.current = true;
+    todayEl.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [weeks, todayKey]);
   const swipeRef = useRef<{
     tracking: boolean;
     startX: number;
@@ -1355,16 +1370,17 @@ export function DayBoard({
                         const d = groupDay.day;
                         const bookedLabel = groupDay.bookedLabel;
                         const rowKey = `${week.wk.weekOf}-${d.date}`;
+                        const isToday = todayKey ? d.date === todayKey : d.isToday;
                         const todayDayNumber = String(Number(d.date.slice(8, 10)));
                         const todayLabelPrefix =
-                          d.isToday && d.label.endsWith(todayDayNumber)
+                          isToday && d.label.endsWith(todayDayNumber)
                             ? d.label.slice(0, -todayDayNumber.length)
                             : null;
                         const inlineMeta = buildGroupedDayInlineMeta(bookedLabel);
                         return (
                           <li
                             key={`${d.date}-${groupDayIndex}`}
-                            className={`board-day board-day--group-child booked${d.isToday ? " today" : ""}${d.isToday && todayPulseActive ? " today-pulse" : ""}`}
+                            className={`board-day board-day--group-child booked${isToday ? " today" : ""}${isToday && todayPulseActive ? " today-pulse" : ""}`}
                             tabIndex={0}
                             onClick={() => {
                               openDetailPanelForRow(rowKey, bookedLabel, d.date);
@@ -1408,9 +1424,10 @@ export function DayBoard({
               const d = row.day;
               const canBookRow = editorModeActive && d.status === "available";
               const rowKey = `${week.wk.weekOf}-${d.date}`;
+              const isToday = todayKey ? d.date === todayKey : d.isToday;
               const todayDayNumber = String(Number(d.date.slice(8, 10)));
               const todayLabelPrefix =
-                d.isToday && d.label.endsWith(todayDayNumber)
+                isToday && d.label.endsWith(todayDayNumber)
                   ? d.label.slice(0, -todayDayNumber.length)
                   : null;
               const connectorPart = row.connectorPart;
@@ -1424,7 +1441,7 @@ export function DayBoard({
               return (
                 <li
                   key={d.date}
-                  className={`board-day ${d.status}${canBookRow ? " board-day--bookable" : ""}${row.bookedLabel?.isPrivateUnavailable ? " booked-private" : ""}${d.isToday ? " today" : ""}${d.isToday && todayPulseActive ? " today-pulse" : ""}`}
+                  className={`board-day ${d.status}${canBookRow ? " board-day--bookable" : ""}${row.bookedLabel?.isPrivateUnavailable ? " booked-private" : ""}${isToday ? " today" : ""}${isToday && todayPulseActive ? " today-pulse" : ""}`}
                   tabIndex={(canBookRow || (!!bookedLabel && !bookedLabel.isPrivateUnavailable)) ? 0 : undefined}
                   onClick={() => {
                     onDateFocus?.(d.date);
