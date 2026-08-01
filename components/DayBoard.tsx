@@ -35,11 +35,11 @@ import {
   isCallTimeOption,
   isDayNoteChipActive,
 } from "@/lib/call-time-options";
+import { formatWeekendTodayMarkerLabel, isWeekendDateKey } from "@/lib/today-navigation";
 
 interface Props {
   weeks: WeekGroup[];
   todayKey?: string;
-  weekendTodayLabel?: string;
   initialEditorToken?: string;
   initialResolvedEditorId?: string | null;
   editorCalendarId?: string;
@@ -415,7 +415,6 @@ export function resolveSelectedDayPopupMeta(
 export function DayBoard({
   weeks,
   todayKey,
-  weekendTodayLabel,
   initialEditorToken,
   initialResolvedEditorId = null,
   editorCalendarId,
@@ -1005,13 +1004,22 @@ export function DayBoard({
 
   const hideWeekends = isMikeEditor && !showWeekends;
   const visibleWeeks = filterWeekRowsByWeekendVisibility(weeks, hideWeekends);
+  // When weekends are hidden, today's row is filtered out of `visibleWeeks`
+  // entirely if today falls on a Saturday/Sunday — this marker is the only
+  // remaining on-screen indication of where "today" is in that case.
+  const weekendTodayLabel = hideWeekends && todayKey && isWeekendDateKey(todayKey)
+    ? formatWeekendTodayMarkerLabel(todayKey)
+    : null;
   const weekendMarkerDayNumber = weekendTodayLabel?.match(/(\d{1,2})$/)?.[1] ?? null;
   const weekendMarkerLabelPrefix =
     weekendTodayLabel && weekendMarkerDayNumber
       ? weekendTodayLabel.slice(0, -weekendMarkerDayNumber.length)
       : weekendTodayLabel;
-  const weekendMarker = !hideWeekends && weekendTodayLabel ? (
-    <div className="board-weekend-marker" aria-label={`Today: ${weekendTodayLabel}`}>
+  const weekendMarker = weekendTodayLabel ? (
+    <div
+      className={`board-weekend-marker${todayPulseActive ? " today-pulse" : ""}`}
+      aria-label={`Today: ${weekendTodayLabel}`}
+    >
       {weekendMarkerDayNumber && weekendMarkerLabelPrefix ? (
         <span className="board-day-label-today">
           <span>{weekendMarkerLabelPrefix}</span>

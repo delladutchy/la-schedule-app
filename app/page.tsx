@@ -46,6 +46,10 @@ export const dynamic = "force-dynamic";
 // polluting the cache.
 const SYNTHETIC_GENERATED_AT_UTC = "1970-01-01T00:00:00.000Z";
 
+// Temporarily disabled — flip back to `true` to re-enable the animated
+// header scene. Implementation is preserved in components/HeaderTennis.tsx.
+const SHOW_TENNIS_HEADER = false;
+
 interface SearchParams {
   start?: string | string[]; // YYYY-MM-DD
   month?: string | string[]; // YYYY-MM
@@ -237,7 +241,7 @@ export default async function AvailabilityPage({
               </span>
             ))}
           </h1>
-          <HeaderTennis />
+          {SHOW_TENNIS_HEADER ? <HeaderTennis /> : null}
         </div>
         <div className="header-actions">
           <div className="header-editor-tools">

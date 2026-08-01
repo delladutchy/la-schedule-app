@@ -26,6 +26,7 @@ import {
   buildWeekRenderRows,
   summarizeBookedDayLabel,
 } from "@/lib/view";
+import { isWeekendDateKey } from "@/lib/today-navigation";
 
 function makeSnapshot(partial: Partial<Snapshot> = {}): Snapshot {
   return {
@@ -180,6 +181,54 @@ describe("weekend visibility helpers", () => {
 
     const unchanged = filterMonthWeeksForVisibleCurrentMonthDays(weeks, weekdayIndexes, false);
     expect(unchanged).toHaveLength(2);
+  });
+});
+
+// Regression: Mike's Today press did not reliably show/highlight today.
+//
+// Root cause: when Mike hides weekends, `filterWeekRowsByWeekendVisibility`
+// (week/list view) and the day-index filtering behind
+// `filterMonthWeeksForVisibleCurrentMonthDays` (month view) remove
+// Saturday/Sunday rows and columns entirely. If today happens to land on
+// one of those days, its row/cell — including the baked `isToday` flag —
+// is filtered out before it ever reaches the DOM, so nothing highlights.
+// This reproduced only when today was a weekend day, which is why it read
+// as intermittent ("does not reliably show or highlight today") rather
+// than a hard failure. `components/DayBoard.tsx` and
+// `components/MonthBoard.tsx` now render a small persistent
+// "Today: <label>" marker (via `isWeekendDateKey` /
+// `formatWeekendTodayMarkerLabel` in lib/today-navigation.ts) whenever this
+// happens, so today is always indicated regardless of the weekend filter.
+describe("Mike weekend-hidden-today regression (row/column filtering swallows today)", () => {
+  it("week view: today's row is gone from filterWeekRowsByWeekendVisibility output when today is a hidden weekend day", () => {
+    const weeks = [
+      {
+        weekOf: "2026-05-04",
+        label: "Week of May 4",
+        days: [
+          { date: "2026-05-09", label: "Saturday, May 9", isToday: true, isWeekend: true, status: "available" as const },
+          { date: "2026-05-10", label: "Sunday, May 10", isToday: false, isWeekend: true, status: "available" as const },
+        ],
+      },
+    ];
+
+    expect(isWeekendDateKey("2026-05-09")).toBe(true);
+    const visible = filterWeekRowsByWeekendVisibility(weeks, true);
+    // The entire week row is dropped because both its days were weekend
+    // days — the isToday=true row never reaches the render tree.
+    expect(visible).toHaveLength(0);
+
+    // With weekends shown, the same today row survives.
+    const shown = filterWeekRowsByWeekendVisibility(weeks, false);
+    expect(shown[0]?.days.some((d) => d.isToday)).toBe(true);
+  });
+
+  it("month view: the visible day indexes never include the weekend columns where a Saturday/Sunday today would render", () => {
+    const hideWeekends = true;
+    const weekdayIndexes = resolveVisibleDayIndexes(hideWeekends);
+    // Index 5 = Saturday, 6 = Sunday in the Mon-first grid used by MonthBoard.
+    expect(weekdayIndexes).not.toContain(5);
+    expect(weekdayIndexes).not.toContain(6);
   });
 });
 

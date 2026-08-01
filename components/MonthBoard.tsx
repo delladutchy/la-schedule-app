@@ -31,6 +31,7 @@ import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import { JobTimeSection } from "@/components/JobTimeSection";
 import { InvoiceSection, snapUtcToTimeOption } from "@/components/InvoiceSection";
+import { formatWeekendTodayMarkerLabel, isWeekendDateKey } from "@/lib/today-navigation";
 
 interface Props {
   month: MonthBoardData;
@@ -979,6 +980,35 @@ export function MonthBoard({
   const todayMonthKey = todayKey.slice(0, 7);
   const monthIsPast = month.monthKey < todayMonthKey;
   const hideWeekends = isMikeEditor && !showWeekends;
+  // When weekends are hidden, the Sat/Sun grid columns are omitted entirely,
+  // so if today falls on one of them no cell for it exists anywhere in the
+  // grid. This marker is the only remaining on-screen indication of where
+  // "today" is in that case.
+  const weekendTodayLabel = hideWeekends && todayKey && isWeekendDateKey(todayKey)
+    ? formatWeekendTodayMarkerLabel(todayKey)
+    : null;
+  const weekendMarkerDayNumber = weekendTodayLabel?.match(/(\d{1,2})$/)?.[1] ?? null;
+  const weekendMarkerLabelPrefix =
+    weekendTodayLabel && weekendMarkerDayNumber
+      ? weekendTodayLabel.slice(0, -weekendMarkerDayNumber.length)
+      : weekendTodayLabel;
+  const weekendMarker = weekendTodayLabel ? (
+    <div
+      className={`board-weekend-marker${todayPulseActive ? " today-pulse" : ""}`}
+      aria-label={`Today: ${weekendTodayLabel}`}
+    >
+      {weekendMarkerDayNumber && weekendMarkerLabelPrefix ? (
+        <span className="board-day-label-today">
+          <span>{weekendMarkerLabelPrefix}</span>
+          <span className="board-day-today" aria-label="Today">
+            {weekendMarkerDayNumber}
+          </span>
+        </span>
+      ) : (
+        weekendTodayLabel
+      )}
+    </div>
+  ) : null;
   const visibleDayIndexes = resolveVisibleDayIndexes(hideWeekends);
   const visibleWeeks = filterMonthWeeksForVisibleCurrentMonthDays(
     month.weeks,
@@ -1253,6 +1283,8 @@ export function MonthBoard({
       <div className="month-label-row">
         <h2 className="month-label period-label-animate">{month.label}</h2>
       </div>
+
+      {weekendMarker}
 
       <div className="month-weekdays" aria-hidden="true">
         {weekdayLabels.map((label) => (
