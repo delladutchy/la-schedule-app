@@ -31,7 +31,6 @@ import { LocationSuggestions } from "@/components/LocationSuggestions";
 import { useLocationAutocomplete, type LocationSuggestion } from "@/lib/useLocationAutocomplete";
 import { JobTimeSection } from "@/components/JobTimeSection";
 import { InvoiceSection, snapUtcToTimeOption } from "@/components/InvoiceSection";
-import { formatWeekendTodayMarkerLabel, isWeekendDateKey } from "@/lib/today-navigation";
 
 interface Props {
   month: MonthBoardData;
@@ -150,6 +149,19 @@ export function filterMonthWeeksForVisibleCurrentMonthDays(
   if (!hideWeekends) return weeks;
   return weeks.filter((week) =>
     visibleDayIndexes.some((dayIndex) => week.days[dayIndex]?.isCurrentMonth));
+}
+
+/**
+ * Whether the live local "today" falls on a Saturday/Sunday cell somewhere
+ * in this month's grid. The Sat/Sun columns share a single column template
+ * with every week row and the weekday header, so a column can't be hidden
+ * for ordinary weekends but shown for one week's today — instead, when this
+ * returns true, the caller renders the whole month through the normal
+ * (weekends-visible) column layout so today's cell renders via the exact
+ * same day-cell code path and styling as usual.
+ */
+export function monthContainsWeekendToday(weeks: MonthWeek[], todayKey: string): boolean {
+  return weeks.some((week) => week.days.some((day) => day.date === todayKey && day.isWeekend));
 }
 
 function stripJobPrefix(summary: string, jobNumber?: string): string {
@@ -979,36 +991,17 @@ export function MonthBoard({
   }
   const todayMonthKey = todayKey.slice(0, 7);
   const monthIsPast = month.monthKey < todayMonthKey;
-  const hideWeekends = isMikeEditor && !showWeekends;
-  // When weekends are hidden, the Sat/Sun grid columns are omitted entirely,
-  // so if today falls on one of them no cell for it exists anywhere in the
-  // grid. This marker is the only remaining on-screen indication of where
-  // "today" is in that case.
-  const weekendTodayLabel = hideWeekends && todayKey && isWeekendDateKey(todayKey)
-    ? formatWeekendTodayMarkerLabel(todayKey)
-    : null;
-  const weekendMarkerDayNumber = weekendTodayLabel?.match(/(\d{1,2})$/)?.[1] ?? null;
-  const weekendMarkerLabelPrefix =
-    weekendTodayLabel && weekendMarkerDayNumber
-      ? weekendTodayLabel.slice(0, -weekendMarkerDayNumber.length)
-      : weekendTodayLabel;
-  const weekendMarker = weekendTodayLabel ? (
-    <div
-      className={`board-weekend-marker${todayPulseActive ? " today-pulse" : ""}`}
-      aria-label={`Today: ${weekendTodayLabel}`}
-    >
-      {weekendMarkerDayNumber && weekendMarkerLabelPrefix ? (
-        <span className="board-day-label-today">
-          <span>{weekendMarkerLabelPrefix}</span>
-          <span className="board-day-today" aria-label="Today">
-            {weekendMarkerDayNumber}
-          </span>
-        </span>
-      ) : (
-        weekendTodayLabel
-      )}
-    </div>
-  ) : null;
+  const hideWeekendsPreference = isMikeEditor && !showWeekends;
+  // The Sat/Sun grid columns share a single column template with every
+  // other week row and the weekday header, so a column can't be hidden for
+  // some weeks and shown for others without breaking alignment. When the
+  // live "today" falls on a weekend day inside the currently displayed
+  // month, render that whole month through the normal (weekends-visible)
+  // column layout instead — today's cell then renders via the exact same
+  // day-cell code path and styling as usual, rather than being hidden or
+  // needing a separate fallback representation. Other months keep hiding
+  // weekends as normal.
+  const hideWeekends = hideWeekendsPreference && !monthContainsWeekendToday(month.weeks, todayKey);
   const visibleDayIndexes = resolveVisibleDayIndexes(hideWeekends);
   const visibleWeeks = filterMonthWeeksForVisibleCurrentMonthDays(
     month.weeks,
@@ -1283,8 +1276,6 @@ export function MonthBoard({
       <div className="month-label-row">
         <h2 className="month-label period-label-animate">{month.label}</h2>
       </div>
-
-      {weekendMarker}
 
       <div className="month-weekdays" aria-hidden="true">
         {weekdayLabels.map((label) => (

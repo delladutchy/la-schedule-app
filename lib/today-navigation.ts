@@ -198,30 +198,6 @@ export function deriveFocusedDateForMonthKey(opts: {
   return monthStart.set({ day }).toFormat("yyyy-LL-dd");
 }
 
-/**
- * Whether `dateKey` (`yyyy-LL-dd`, already resolved to the display
- * timezone) falls on a Saturday or Sunday. Parsed as a bare calendar date
- * (`zone: "utc"`) rather than the browser's local zone, matching how other
- * already-resolved date keys are treated elsewhere in this module (e.g.
- * `deriveListStartFromFocusedDate`) — the weekday of a calendar date does
- * not depend on which zone offset happens to be attached to it.
- */
-export function isWeekendDateKey(dateKey: string): boolean {
-  const dt = DateTime.fromISO(dateKey, { zone: "utc" });
-  return dt.isValid && (dt.weekday === 6 || dt.weekday === 7);
-}
-
-/**
- * Human label for the weekend-today marker (e.g. "Saturday, Aug 1") shown
- * when today falls on a day hidden by Mike's weekends-off view — the day
- * row itself is filtered out of the board, so this is the only remaining
- * on-screen indication of where "today" is.
- */
-export function formatWeekendTodayMarkerLabel(dateKey: string): string | null {
-  const dt = DateTime.fromISO(dateKey, { zone: "utc" });
-  return dt.isValid ? dt.toFormat("cccc, LLL d") : null;
-}
-
 export function deriveFocusedDateForWeekTarget(opts: {
   focusedDate: string | null;
   targetWeekStart: string;

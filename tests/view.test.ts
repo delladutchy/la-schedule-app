@@ -12,6 +12,7 @@ import {
   filterMonthWeeksForVisibleCurrentMonthDays,
   clipBarToVisibleDayIndexes,
   monthBarGridStyle,
+  monthContainsWeekendToday,
   resolveVisibleDayIndexes,
 } from "@/components/MonthBoard";
 import {
@@ -26,7 +27,6 @@ import {
   buildWeekRenderRows,
   summarizeBookedDayLabel,
 } from "@/lib/view";
-import { isWeekendDateKey } from "@/lib/today-navigation";
 
 function makeSnapshot(partial: Partial<Snapshot> = {}): Snapshot {
   return {
@@ -99,7 +99,7 @@ describe("month row-span rendering geometry", () => {
 });
 
 describe("weekend visibility helpers", () => {
-  it("filters weekend days from week rows and drops empty weeks when hidden", () => {
+  it("filters weekend days from week rows and drops empty weeks when hidden, with no today exemption", () => {
     const weeks = [
       {
         weekOf: "2026-05-04",
@@ -119,6 +119,7 @@ describe("weekend visibility helpers", () => {
       },
     ];
 
+    // No todayKey argument — matches callers that don't need the exemption.
     const hidden = filterWeekRowsByWeekendVisibility(weeks, true);
     expect(hidden).toHaveLength(1);
     expect(hidden[0]?.days.map((d) => d.date)).toEqual(["2026-05-11", "2026-05-12"]);
@@ -184,51 +185,119 @@ describe("weekend visibility helpers", () => {
   });
 });
 
-// Regression: Mike's Today press did not reliably show/highlight today.
+// Regression: on Mike's weekends-hidden link, today (a Saturday) rendered as
+// a separate small "Saturday, Aug 1" marker above the next real week
+// instead of appearing as its normal, real schedule row with its actual
+// event pill (e.g. "LA#72127") and the standard Today highlight — a
+// fabricated stand-in rather than the real row Jeff's link shows for the
+// same date.
 //
-// Root cause: when Mike hides weekends, `filterWeekRowsByWeekendVisibility`
-// (week/list view) and the day-index filtering behind
-// `filterMonthWeeksForVisibleCurrentMonthDays` (month view) remove
-// Saturday/Sunday rows and columns entirely. If today happens to land on
-// one of those days, its row/cell — including the baked `isToday` flag —
-// is filtered out before it ever reaches the DOM, so nothing highlights.
-// This reproduced only when today was a weekend day, which is why it read
-// as intermittent ("does not reliably show or highlight today") rather
-// than a hard failure. `components/DayBoard.tsx` and
-// `components/MonthBoard.tsx` now render a small persistent
-// "Today: <label>" marker (via `isWeekendDateKey` /
-// `formatWeekendTodayMarkerLabel` in lib/today-navigation.ts) whenever this
-// happens, so today is always indicated regardless of the weekend filter.
-describe("Mike weekend-hidden-today regression (row/column filtering swallows today)", () => {
-  it("week view: today's row is gone from filterWeekRowsByWeekendVisibility output when today is a hidden weekend day", () => {
+// Root cause: `filterWeekRowsByWeekendVisibility` (week/list view) removed
+// every Saturday/Sunday row unconditionally, including the row for today
+// itself, so it never reached the render tree — there was nothing left to
+// highlight. In month view, `resolveVisibleDayIndexes`/
+// `filterMonthWeeksForVisibleCurrentMonthDays` remove the Sat/Sun grid
+// columns entirely, so a Saturday/Sunday today has no cell anywhere in the
+// grid.
+//
+// Fix: `filterWeekRowsByWeekendVisibility` now takes `todayKey` and keeps
+// exactly that one row even when it falls on a weekend — it renders through
+// the exact same day-row markup/styling as any other day, with its real
+// event data intact. For month view, since the Sat/Sun columns share one
+// column template with every week row and the weekday header (a column
+// can't be hidden for ordinary weekends but shown for one week's today),
+// `MonthBoard` uses `monthContainsWeekendToday` to fall back to the normal
+// full-week column layout for the whole month whenever it contains a
+// hidden-weekend today, so today's cell renders via the same code path as
+// when weekends are shown. No separate marker or fallback UI is rendered in
+// either view.
+describe("Mike weekend-hidden-today fix: the real row/cell survives instead of a fallback marker", () => {
+  it("week view: filterWeekRowsByWeekendVisibility keeps today's row — with its real event data — even though it's a weekend day", () => {
     const weeks = [
       {
-        weekOf: "2026-05-04",
-        label: "Week of May 4",
+        weekOf: "2026-07-27",
+        label: "Week of Jul 27",
         days: [
-          { date: "2026-05-09", label: "Saturday, May 9", isToday: true, isWeekend: true, status: "available" as const },
-          { date: "2026-05-10", label: "Sunday, May 10", isToday: false, isWeekend: true, status: "available" as const },
+          {
+            date: "2026-08-01",
+            label: "Saturday, Aug 1",
+            isToday: true,
+            isWeekend: true,
+            status: "booked" as const,
+            eventNames: ["LA#72127"],
+          },
+          { date: "2026-08-02", label: "Sunday, Aug 2", isToday: false, isWeekend: true, status: "available" as const },
+        ],
+      },
+      {
+        weekOf: "2026-08-03",
+        label: "Week of Aug 3",
+        days: [
+          { date: "2026-08-03", label: "Monday, Aug 3", isToday: false, isWeekend: false, status: "available" as const },
         ],
       },
     ];
 
-    expect(isWeekendDateKey("2026-05-09")).toBe(true);
-    const visible = filterWeekRowsByWeekendVisibility(weeks, true);
-    // The entire week row is dropped because both its days were weekend
-    // days — the isToday=true row never reaches the render tree.
-    expect(visible).toHaveLength(0);
+    const visible = filterWeekRowsByWeekendVisibility(weeks, true, "2026-08-01");
 
-    // With weekends shown, the same today row survives.
-    const shown = filterWeekRowsByWeekendVisibility(weeks, false);
-    expect(shown[0]?.days.some((d) => d.isToday)).toBe(true);
+    // The current week survives (it isn't dropped as fully empty) and
+    // contains exactly today's row — the ordinary Sunday is still hidden.
+    expect(visible).toHaveLength(2);
+    expect(visible[0]?.weekOf).toBe("2026-07-27");
+    expect(visible[0]?.days).toHaveLength(1);
+    const todayRow = visible[0]?.days[0];
+    expect(todayRow?.date).toBe("2026-08-01");
+    expect(todayRow?.isToday).toBe(true);
+    // The real event data travels with the row unchanged — this is the
+    // actual day object, not a re-derived/fabricated stand-in.
+    expect(todayRow?.eventNames).toEqual(["LA#72127"]);
+
+    // Next week is untouched.
+    expect(visible[1]?.weekOf).toBe("2026-08-03");
   });
 
-  it("month view: the visible day indexes never include the weekend columns where a Saturday/Sunday today would render", () => {
-    const hideWeekends = true;
-    const weekdayIndexes = resolveVisibleDayIndexes(hideWeekends);
-    // Index 5 = Saturday, 6 = Sunday in the Mon-first grid used by MonthBoard.
-    expect(weekdayIndexes).not.toContain(5);
-    expect(weekdayIndexes).not.toContain(6);
+  it("week view: an ordinary (non-today) weekend day is still hidden even when a todayKey is supplied", () => {
+    const weeks = [
+      {
+        weekOf: "2026-07-27",
+        label: "Week of Jul 27",
+        days: [
+          { date: "2026-08-01", label: "Saturday, Aug 1", isToday: false, isWeekend: true, status: "available" as const },
+          { date: "2026-08-02", label: "Sunday, Aug 2", isToday: false, isWeekend: true, status: "available" as const },
+        ],
+      },
+    ];
+
+    // todayKey points elsewhere — neither weekend day matches it.
+    const visible = filterWeekRowsByWeekendVisibility(weeks, true, "2026-08-05");
+    expect(visible).toHaveLength(0);
+  });
+
+  it("month view: monthContainsWeekendToday detects a hidden-weekend today inside the displayed month", () => {
+    const weeks = [
+      {
+        bars: [],
+        days: [
+          { date: "2026-07-27", isWeekend: false },
+          { date: "2026-07-28", isWeekend: false },
+          { date: "2026-07-29", isWeekend: false },
+          { date: "2026-07-30", isWeekend: false },
+          { date: "2026-07-31", isWeekend: false },
+          { date: "2026-08-01", isWeekend: true },
+          { date: "2026-08-02", isWeekend: true },
+        ],
+      },
+    ] as unknown as Parameters<typeof monthContainsWeekendToday>[0];
+
+    expect(monthContainsWeekendToday(weeks, "2026-08-01")).toBe(true); // Saturday today
+    expect(monthContainsWeekendToday(weeks, "2026-07-29")).toBe(false); // weekday today
+    expect(monthContainsWeekendToday(weeks, "2026-09-05")).toBe(false); // today outside this month
+  });
+
+  it("month view: the visible day indexes span the full week whenever the month contains a hidden-weekend today", () => {
+    const containsWeekendToday = true;
+    const weekdayIndexes = resolveVisibleDayIndexes(!containsWeekendToday);
+    expect(weekdayIndexes).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 });
 

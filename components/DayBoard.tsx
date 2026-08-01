@@ -35,7 +35,6 @@ import {
   isCallTimeOption,
   isDayNoteChipActive,
 } from "@/lib/call-time-options";
-import { formatWeekendTodayMarkerLabel, isWeekendDateKey } from "@/lib/today-navigation";
 
 interface Props {
   weeks: WeekGroup[];
@@ -281,15 +280,23 @@ function buildBookingCalendarDays(startIsoDate: string, monthKey: string): {
   };
 }
 
+/**
+ * Filters ordinary Saturday/Sunday rows out of the week list when weekends
+ * are hidden — except the live local "today" row, which always survives
+ * the filter (even on a weekend) so it renders as a normal day row with
+ * its usual styling, event pills, and Today highlight rather than
+ * disappearing or needing a separate fallback representation.
+ */
 export function filterWeekRowsByWeekendVisibility(
   weeks: WeekGroup[],
   hideWeekends: boolean,
+  todayKey?: string,
 ): WeekGroup[] {
   if (!hideWeekends) return weeks;
   return weeks
     .map((week) => ({
       ...week,
-      days: week.days.filter((day) => !day.isWeekend),
+      days: week.days.filter((day) => !day.isWeekend || day.date === todayKey),
     }))
     .filter((week) => week.days.length > 0);
 }
@@ -1003,35 +1010,7 @@ export function DayBoard({
   }
 
   const hideWeekends = isMikeEditor && !showWeekends;
-  const visibleWeeks = filterWeekRowsByWeekendVisibility(weeks, hideWeekends);
-  // When weekends are hidden, today's row is filtered out of `visibleWeeks`
-  // entirely if today falls on a Saturday/Sunday — this marker is the only
-  // remaining on-screen indication of where "today" is in that case.
-  const weekendTodayLabel = hideWeekends && todayKey && isWeekendDateKey(todayKey)
-    ? formatWeekendTodayMarkerLabel(todayKey)
-    : null;
-  const weekendMarkerDayNumber = weekendTodayLabel?.match(/(\d{1,2})$/)?.[1] ?? null;
-  const weekendMarkerLabelPrefix =
-    weekendTodayLabel && weekendMarkerDayNumber
-      ? weekendTodayLabel.slice(0, -weekendMarkerDayNumber.length)
-      : weekendTodayLabel;
-  const weekendMarker = weekendTodayLabel ? (
-    <div
-      className={`board-weekend-marker${todayPulseActive ? " today-pulse" : ""}`}
-      aria-label={`Today: ${weekendTodayLabel}`}
-    >
-      {weekendMarkerDayNumber && weekendMarkerLabelPrefix ? (
-        <span className="board-day-label-today">
-          <span>{weekendMarkerLabelPrefix}</span>
-          <span className="board-day-today" aria-label="Today">
-            {weekendMarkerDayNumber}
-          </span>
-        </span>
-      ) : (
-        weekendTodayLabel
-      )}
-    </div>
-  ) : null;
+  const visibleWeeks = filterWeekRowsByWeekendVisibility(weeks, hideWeekends, todayKey);
   const hasRows = visibleWeeks.some((wk) => wk.days.length > 0);
 
   const openDetailPanelForRow = (rowKey: string, bookedLabel: BookedLabel, date: string): void => {
@@ -1337,7 +1316,6 @@ export function DayBoard({
           onTouchEnd={onTouchEnd}
           onTouchCancel={onTouchCancel}
         >
-          {weekendMarker}
           <div className="board-empty" role="status">
             No availability rows for this range.
           </div>
@@ -1355,7 +1333,6 @@ export function DayBoard({
         onTouchEnd={onTouchEnd}
         onTouchCancel={onTouchCancel}
       >
-        {weekendMarker}
       {weekRows.map((week) => (
         <section
           key={week.wk.weekOf}

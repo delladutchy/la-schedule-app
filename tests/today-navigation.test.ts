@@ -7,9 +7,7 @@ import {
   deriveListStartFromFocusedDate,
   deriveWeekAnchorDateForMonth,
   deriveMonthKeyFromFocusedDate,
-  formatWeekendTodayMarkerLabel,
   isTodayClickTarget,
-  isWeekendDateKey,
   msUntilNextLocalMidnight,
   normalizeWeekStartForCacheLookup,
   resolveRequestedMonthKey,
@@ -523,96 +521,5 @@ describe("resolveRequestedMonthKey", () => {
       requestedMonthParam: "2026/11",
       todayMonthKey,
     })).toBe("2026-05");
-  });
-});
-
-// Regression: on Mike's link, pressing Today did not reliably show or
-// highlight today.
-//
-// Root cause: Mike's weekends-hidden view (`DayBoard`/`MonthBoard`'s
-// `hideWeekends` gate) filters Saturday/Sunday rows and grid columns out of
-// the rendered board entirely. When "today" happened to be a Saturday or
-// Sunday, the day being highlighted had no cell to highlight — Today
-// navigation moved the route/focused-date state correctly (the general
-// stale-cache fix above), but nothing on screen indicated today because its
-// row/column had been filtered away. This only reproduced ~2/7 days, which
-// is why it read as "unreliable" rather than fully broken.
-//
-// Fix: `isWeekendDateKey` + `formatWeekendTodayMarkerLabel` let the boards
-// render a small persistent "Today: <label>" marker whenever the live
-// today-key falls on a day their weekend filter has hidden, so today is
-// always indicated somewhere on screen regardless of which profile or
-// weekend-visibility state is active.
-describe("isWeekendDateKey", () => {
-  it("identifies Saturday and Sunday as weekend days", () => {
-    expect(isWeekendDateKey("2026-05-09")).toBe(true); // Saturday
-    expect(isWeekendDateKey("2026-05-10")).toBe(true); // Sunday
-  });
-
-  it("identifies weekdays as not weekend days", () => {
-    expect(isWeekendDateKey("2026-05-11")).toBe(false); // Monday
-    expect(isWeekendDateKey("2026-05-15")).toBe(false); // Friday
-  });
-
-  it("returns false for an unparseable date defensively", () => {
-    expect(isWeekendDateKey("not-a-date")).toBe(false);
-  });
-});
-
-describe("formatWeekendTodayMarkerLabel", () => {
-  it("formats a weekend date as a human label ending in the day number", () => {
-    expect(formatWeekendTodayMarkerLabel("2026-05-09")).toBe("Saturday, May 9");
-    expect(formatWeekendTodayMarkerLabel("2026-05-10")).toBe("Sunday, May 10");
-  });
-
-  it("returns null for an unparseable date defensively", () => {
-    expect(formatWeekendTodayMarkerLabel("not-a-date")).toBeNull();
-  });
-});
-
-describe("Mike weekend-hidden-today regression: marker fills the gap left by row/column filtering", () => {
-  it("a weekend today produces a marker label that a hidden-weekend view can render", () => {
-    const weekendToday = "2026-05-09"; // Saturday
-    const hideWeekends = true; // Mike, weekends toggled off (the default)
-
-    // Mirrors the boards' `weekendTodayLabel` derivation.
-    const marker = hideWeekends && isWeekendDateKey(weekendToday)
-      ? formatWeekendTodayMarkerLabel(weekendToday)
-      : null;
-
-    expect(marker).toBe("Saturday, May 9");
-  });
-
-  it("does not produce a marker for a weekday today (row/column is never hidden)", () => {
-    const weekdayToday = "2026-05-11"; // Monday
-    const hideWeekends = true;
-
-    const marker = hideWeekends && isWeekendDateKey(weekdayToday)
-      ? formatWeekendTodayMarkerLabel(weekdayToday)
-      : null;
-
-    expect(marker).toBeNull();
-  });
-
-  it("does not produce a marker when weekends are shown, even if today is a weekend day", () => {
-    const weekendToday = "2026-05-09"; // Saturday
-    const hideWeekends = false; // showWeekends toggled on
-
-    const marker = hideWeekends && isWeekendDateKey(weekendToday)
-      ? formatWeekendTodayMarkerLabel(weekendToday)
-      : null;
-
-    expect(marker).toBeNull();
-  });
-
-  it("does not produce a marker for non-Mike profiles (hideWeekends is always false)", () => {
-    const weekendToday = "2026-05-09"; // Saturday
-    const hideWeekends = false; // Jeff/Dave/Milos never hide weekends
-
-    const marker = hideWeekends && isWeekendDateKey(weekendToday)
-      ? formatWeekendTodayMarkerLabel(weekendToday)
-      : null;
-
-    expect(marker).toBeNull();
   });
 });
