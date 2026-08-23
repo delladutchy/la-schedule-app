@@ -122,8 +122,10 @@ function stampReceiptPageHeader(
  * or re-rasterise the underlying PDF content — the stamp draws on top.
  *
  * Returns the original buffer unchanged when there are no PDF receipts to merge.
- * Per-receipt failures are logged and skipped (the receipt's placeholder page in
- * the react-pdf output will remain truthful: "could not be embedded").
+ * Fails closed: if the invoice PDF can't be loaded, or any individual receipt
+ * can't be merged, this throws rather than silently returning a packet that's
+ * missing a receipt the caller believes was included (see ReceiptEmbedError
+ * in lib/invoice-pdf.tsx for the equivalent guard on image receipts).
  */
 export async function appendPdfReceiptPages(
   invoiceBuffer: Buffer,
@@ -136,14 +138,14 @@ export async function appendPdfReceiptPages(
   try {
     merged = await PDFDocument.load(invoiceBuffer);
   } catch (e) {
-    console.error("[invoice-pdf-merge] could not load invoice PDF:", e instanceof Error ? e.message : String(e));
-    return invoiceBuffer;
+    throw new Error(`[invoice-pdf-merge] could not load invoice PDF: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // Embed fonts once into the target document; all stamped pages share them.
   const regular = await merged.embedFont(StandardFonts.Helvetica);
   const bold    = await merged.embedFont(StandardFonts.HelveticaBold);
 
+  const failed: string[] = [];
   for (const receipt of pdfReceipts) {
     try {
       const receiptDoc = await PDFDocument.load(receipt.pdfBytes!);
@@ -158,9 +160,16 @@ export async function appendPdfReceiptPages(
       console.log(`[invoice-pdf-merge] appended + stamped ${indices.length} page(s) from ${receipt.originalFilename}`);
     } catch (e) {
       console.error(
-        `[invoice-pdf-merge] skipping ${receipt.originalFilename} — could not merge: ${e instanceof Error ? e.message : String(e)}`,
+        `[invoice-pdf-merge] failed to merge ${receipt.originalFilename}: ${e instanceof Error ? e.message : String(e)}`,
       );
+      failed.push(receipt.originalFilename);
     }
+  }
+
+  if (failed.length > 0) {
+    throw new Error(
+      `Receipt PDF(s) failed to merge into the invoice packet: ${failed.join(", ")}. Refusing to generate the invoice packet.`,
+    );
   }
 
   const out = await merged.save();

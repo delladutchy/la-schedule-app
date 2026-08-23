@@ -1,4 +1,5 @@
 import "server-only";
+import sharp from "sharp";
 import { getSupabaseServerClient } from "./supabase";
 
 export const ATTACHMENT_BUCKET = "invoice-attachments";
@@ -200,6 +201,37 @@ export interface ReceiptPageData {
 const EMBEDDABLE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 /**
+ * Re-encode a receipt image into a plain baseline sRGB JPEG before handing it to
+ * react-pdf's <Image>. react-pdf's internal JPEG parser (the `jay-peg` package)
+ * hardcodes a fixed 16-byte read for the APP0/JFIF segment and never consumes
+ * its own declared segment length past that — so any legally-longer JFIF
+ * segment (common from camera/export tools; confirmed on real receipt photos)
+ * desyncs its marker scan and it throws "Unknown version N" trying to parse
+ * scan bytes as a marker. react-pdf swallows that per-image and renders
+ * nothing — no error, no placeholder text, just a blank appendix page.
+ * Normalizing here re-encodes with a clean, minimal JFIF header that avoids
+ * the bug entirely (rotate applies EXIF orientation then strips it;
+ * toColorspace flattens to sRGB). Falls back to the original bytes if sharp
+ * itself fails. See tests/invoice-receipt-image-embed.test.ts for a
+ * deterministic repro/regression test, and lib/invoice-pdf.tsx's
+ * verifyImageReceiptsEmbedded() for the fail-closed backstop.
+ */
+async function normalizeReceiptImage(buf: Buffer, mimeType: string, id: string): Promise<string> {
+  try {
+    const normalized = await sharp(buf)
+      .rotate()
+      .toColorspace("srgb")
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: 90, progressive: false })
+      .toBuffer();
+    return `data:image/jpeg;base64,${normalized.toString("base64")}`;
+  } catch (e) {
+    console.warn(`[invoice-attachments] image normalize failed for ${id}, using original bytes (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+    return `data:${mimeType};base64,${buf.toString("base64")}`;
+  }
+}
+
+/**
  * Fetch included receipt attachments for an event and build ReceiptPageData for
  * each one.  Used by PDF, email, and Gmail Draft routes so each generates the
  * same full invoice packet. When older attachment rows are missing LA metadata,
@@ -253,7 +285,7 @@ export async function getReceiptPagesForPdf(
         console.warn(`[invoice-attachments] receipt download failed for ${rec.id} (non-fatal): ${dlErr?.message ?? "no data"}`);
       } else {
         const buf = Buffer.from(await fileData.arrayBuffer());
-        imageDataUrl = `data:${rec.mime_type};base64,${buf.toString("base64")}`;
+        imageDataUrl = await normalizeReceiptImage(buf, rec.mime_type, rec.id);
       }
     } else if (isPdf) {
       // Download PDF bytes so they can be merged into the invoice packet.

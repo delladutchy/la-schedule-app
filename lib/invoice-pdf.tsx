@@ -20,6 +20,7 @@ import {
   View,
   renderToBuffer,
 } from "@react-pdf/renderer";
+import { PDFDocument, PDFDict, PDFName } from "pdf-lib";
 import type { InvoicePacket } from "./invoice-types";
 import { buildMileageInvoicePresentationLines } from "./invoice-calculations";
 import type { ReceiptPageData } from "./invoice-attachments";
@@ -867,6 +868,64 @@ function InvoicePDF({ packet, invoiceNumber, gigSummary, issuedDate, logoSrc, ov
 }
 
 // ---------------------------------------------------------------------------
+// Fail-closed verification
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when a receipt that should have embedded a photo produced a blank
+ * appendix page instead. Callers (the PDF/email/Gmail-draft routes) already
+ * catch renderInvoicePDF failures and return a 500 rather than completing —
+ * this makes that the outcome for a broken receipt embed too, instead of
+ * silently generating (and potentially emailing) an invoice missing a page.
+ */
+export class ReceiptEmbedError extends Error {
+  constructor(filenames: string[]) {
+    super(
+      `Receipt image(s) failed to embed in the PDF and would render as a blank page: ${filenames.join(", ")}. ` +
+      `Refusing to generate the invoice packet.`,
+    );
+    this.name = "ReceiptEmbedError";
+  }
+}
+
+/**
+ * Confirms every receipt with imageDataUrl set actually produced a page with
+ * an embedded image. @react-pdf/renderer's internal JPEG parser (the `jay-peg`
+ * package) can silently fail to decode certain legal JPEGs — e.g. an APP0/JFIF
+ * segment whose declared length is longer than jay-peg's hardcoded 16-byte
+ * struct reads, which desyncs the rest of its marker scan — and that failure
+ * is swallowed internally by react-pdf, leaving a blank page with no error and
+ * no placeholder text. Receipts we could not download/embed at all (HEIC,
+ * failed downloads) are unaffected: those already render an honest "could not
+ * be embedded" placeholder and are not what this guards against.
+ */
+async function verifyImageReceiptsEmbedded(
+  pdfBuffer: Buffer,
+  receiptPages: ReceiptPageData[],
+): Promise<void> {
+  // Same set/order as the JSX filter in InvoicePDF — PDF receipts merged in
+  // later are excluded; these are the ones react-pdf just rendered natively.
+  const nativeReceipts = receiptPages.filter(
+    (r) => !(r.mimeType === "application/pdf" && r.pdfBytes != null),
+  );
+  if (!nativeReceipts.some((r) => r.imageDataUrl != null)) return;
+
+  const doc = await PDFDocument.load(pdfBuffer);
+  const invoicePageCount = doc.getPageCount() - nativeReceipts.length;
+
+  const failed: string[] = [];
+  nativeReceipts.forEach((receipt, i) => {
+    if (receipt.imageDataUrl == null) return; // placeholder page is the expected outcome here
+    const page = doc.getPage(invoicePageCount + i);
+    const xobj = page.node.Resources()?.lookupMaybe(PDFName.of("XObject"), PDFDict);
+    const hasImage = !!xobj && xobj.keys().length > 0;
+    if (!hasImage) failed.push(receipt.originalFilename);
+  });
+
+  if (failed.length > 0) throw new ReceiptEmbedError(failed);
+}
+
+// ---------------------------------------------------------------------------
 // Public render function
 // ---------------------------------------------------------------------------
 
@@ -909,20 +968,20 @@ export async function renderInvoicePDF(opts: RenderInvoicePDFOptions): Promise<B
   });
 
   // Render the invoice + image receipt appendix pages via react-pdf.
+  const receiptPages = opts.receiptPages ?? [];
   const invoiceBuffer = await renderToBuffer(element as React.ReactElement);
+
+  // Fail closed: a receipt we expected to embed as an image must actually have
+  // embedded — never silently return (or let a caller send) a packet with a
+  // blank page where a receipt should be. See ReceiptEmbedError.
+  await verifyImageReceiptsEmbedded(invoiceBuffer, receiptPages);
 
   // Merge PDF receipt pages into the invoice buffer.
   // PDF receipts with pdfBytes were excluded from react-pdf rendering (no placeholder page);
-  // they are appended here as full PDF pages. Per-receipt failures are logged and skipped
-  // without aborting the packet. If all receipts fail to merge, the invoice-only buffer is returned.
-  const receiptPages = opts.receiptPages ?? [];
+  // they are appended here as full PDF pages. A receipt that fails to merge throws
+  // (appendPdfReceiptPages) rather than silently vanishing from the packet.
   const hasPdfReceipts = receiptPages.some((r) => r.mimeType === "application/pdf" && r.pdfBytes != null);
   if (!hasPdfReceipts) return invoiceBuffer;
 
-  try {
-    return await appendPdfReceiptPages(invoiceBuffer, receiptPages);
-  } catch (e) {
-    console.error(`[invoice/pdf] PDF receipt merge failed (returning invoice-only): ${e instanceof Error ? e.message : String(e)}`);
-    return invoiceBuffer;
-  }
+  return await appendPdfReceiptPages(invoiceBuffer, receiptPages);
 }
