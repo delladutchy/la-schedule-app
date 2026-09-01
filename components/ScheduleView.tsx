@@ -41,6 +41,57 @@ const BACKGROUND_REFRESH_MIN_INTERVAL_MS = 30_000;
 // returns to the tab, so freshness is bounded.
 const MOUNT_REFRESH_SKIP_MAX_AGE_MS = 60_000;
 
+/**
+ * Initial-load recovery.
+ *
+ * SSR always ships a synthetic skeleton payload, so the first paint depends
+ * entirely on the mount fetch. That fetch used to be single-shot: any null
+ * response (503, non-ok, shape mismatch) left the board on "Loading calendar…"
+ * forever, because the effect that owns it only re-runs on navigation. That is
+ * why clicking Next "fixed" the hang — it changed a dependency.
+ *
+ * Backoff delays are indexed by the zero-based attempt number, so the initial
+ * attempt plus one entry per delay gives the total attempt cap.
+ */
+export const BOARD_LOAD_RETRY_BACKOFF_MS: readonly number[] = [1_000, 3_000];
+export const BOARD_LOAD_MAX_ATTEMPTS = BOARD_LOAD_RETRY_BACKOFF_MS.length + 1;
+
+export type BoardLoadRetryPlan =
+  | { action: "none" }
+  | { action: "retry"; delayMs: number }
+  | { action: "fail" };
+
+/**
+ * Decide what to do after a mount refresh settles.
+ *
+ * `none`  — a payload landed (or one arrived from another source, or the
+ *           effect was torn down); nothing to recover from.
+ * `retry` — nothing renderable yet and the attempt budget still has room.
+ * `fail`  — budget exhausted; surface the load-failed state with a Retry
+ *           button instead of an endless skeleton.
+ */
+export function resolveBoardLoadRetryPlan(opts: {
+  attempt: number;
+  appliedPayload: boolean;
+  hasRenderableActivePayload: boolean;
+  cancelled: boolean;
+}): BoardLoadRetryPlan {
+  if (opts.cancelled) return { action: "none" };
+  if (opts.appliedPayload || opts.hasRenderableActivePayload) return { action: "none" };
+  const delayMs = BOARD_LOAD_RETRY_BACKOFF_MS[opts.attempt];
+  if (delayMs == null) return { action: "fail" };
+  return { action: "retry", delayMs };
+}
+
+/** What the board area renders: real content, the skeleton, or the failed state. */
+export function resolveBoardLoadUiState(opts: {
+  isLoading: boolean;
+  loadFailed: boolean;
+}): "ready" | "skeleton" | "failed" {
+  if (!opts.isLoading) return "ready";
+  return opts.loadFailed ? "failed" : "skeleton";
+}
+
 const MIKE_SHOW_WEEKENDS_STORAGE_KEY = "la_schedule_mike_show_weekends";
 const MIKE_SHOW_WEEKENDS_COOKIE_KEY = "la_schedule_mike_show_weekends";
 
@@ -482,6 +533,14 @@ export function ScheduleView({
     deriveInitialFocusedDate(initialBoardWindowPayload, viewMode));
   const [hasExplicitFocusedDate, setHasExplicitFocusedDate] = useState(false);
   const [todayPulseToken, setTodayPulseToken] = useState(0);
+  // Initial-load recovery state. `loadAttempt` is the zero-based automatic
+  // attempt counter and drives the backoff; `manualRetryToken` lets the Retry
+  // button re-run the fetch effect even when the counter is already reset.
+  // Both are effect dependencies, so a change re-enters the existing refresh
+  // path rather than starting a second loading mechanism.
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [manualRetryToken, setManualRetryToken] = useState(0);
+  const [loadFailed, setLoadFailed] = useState(false);
   const lastBackgroundRefreshAtRef = useRef(0);
   const [routeTarget, setRouteTarget] = useState<RouteTargetCoordinates>(() => ({
     weekStart: normalizeWeekStartForCacheLookup({
@@ -754,12 +813,14 @@ export function ScheduleView({
       // Any other view value (defensive) is silently dropped.
     };
 
-    const refresh = async (reason: "mount" | "visible") => {
+    // Resolves to true when at least one stage produced a payload we applied.
+    const refresh = async (reason: "mount" | "visible"): Promise<boolean> => {
+      let appliedPayload = false;
       try {
         const now = Date.now();
         if (now - lastBackgroundRefreshAtRef.current < BACKGROUND_REFRESH_MIN_INTERVAL_MS
             && reason !== "mount") {
-          return;
+          return appliedPayload;
         }
         lastBackgroundRefreshAtRef.current = now;
         // The URL's coordinates are the source of truth for what to fetch.
@@ -780,17 +841,21 @@ export function ScheduleView({
           // arrives shortly after and quietly upgrades the cached payload.
           const fastPromise = fetchBoardWindowPayload({ ...baseParams, scope: "selected" });
           const fullPromise = fetchBoardWindowPayload({ ...baseParams });
-          fastPromise.then((fast) => { if (fast) applyResponse(fast); }).catch(() => { /* aborted */ });
+          const fastApplied = fastPromise
+            .then((fast) => { if (fast) { applyResponse(fast); return true; } return false; })
+            .catch(() => false); // aborted
           const full = await fullPromise;
-          if (full) applyResponse(full);
-          return;
+          if (full) { applyResponse(full); appliedPayload = true; }
+          if (await fastApplied) appliedPayload = true;
+          return appliedPayload;
         }
 
         // Visibility refresh: single full fetch.
         const fresh = await fetchBoardWindowPayload(baseParams);
-        if (fresh) applyResponse(fresh);
+        if (fresh) { applyResponse(fresh); appliedPayload = true; }
+        return appliedPayload;
       } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return;
+        if (err instanceof Error && err.name === "AbortError") return appliedPayload;
         throw err;
       }
     };
@@ -805,11 +870,37 @@ export function ScheduleView({
       && ssrAgeMs < MOUNT_REFRESH_SKIP_MAX_AGE_MS;
 
     let debounceId: number | null = null;
+    let retryId: number | null = null;
+
+    // Recovery scheduling for the initial load. Only one timer can be pending
+    // per effect run, and the cleanup below clears it, so retries cannot stack
+    // across re-runs or leak past unmount/navigation.
+    const settleAfterMountRefresh = (appliedPayload: boolean) => {
+      const plan = resolveBoardLoadRetryPlan({
+        attempt: loadAttempt,
+        appliedPayload,
+        hasRenderableActivePayload,
+        cancelled,
+      });
+      if (plan.action === "none") return;
+      if (plan.action === "fail") {
+        console.warn(`[board] initial load failed after ${BOARD_LOAD_MAX_ATTEMPTS} attempts`);
+        setLoadFailed(true);
+        return;
+      }
+      console.info(`[board] initial load retry scheduled attempt=${loadAttempt + 1} delayMs=${plan.delayMs}`);
+      retryId = window.setTimeout(() => {
+        setLoadAttempt((prev) => prev + 1);
+      }, plan.delayMs);
+    };
+
     if (!hasRenderableActivePayload) {
       // Recovery path: if target-aware gating has no renderable payload yet,
       // fetch the focused target immediately instead of waiting for debounce.
       console.info("[perf] auto refresh scheduled reason=missing_target_payload");
-      void refresh("mount");
+      void refresh("mount")
+        .then(settleAfterMountRefresh)
+        .catch(() => { settleAfterMountRefresh(false); });
     } else if (ssrIsFreshAndRecent) {
       // [perf] temporary instrumentation — remove once perf review concludes.
       console.info(`[perf] auto refresh scheduled reason=skipped_ssr_fresh ssrAgeMs=${ssrAgeMs}`);
@@ -839,6 +930,9 @@ export function ScheduleView({
       if (debounceId !== null) {
         window.clearTimeout(debounceId);
       }
+      if (retryId !== null) {
+        window.clearTimeout(retryId);
+      }
       document.removeEventListener("visibilitychange", onVisibility);
     };
     // We intentionally only re-run on editor / SSR-payload identity
@@ -852,7 +946,27 @@ export function ScheduleView({
     routeTargetWeekStart,
     routeTargetMonthKey,
     hasRenderableActivePayload,
+    loadAttempt,
+    manualRetryToken,
   ]);
+
+  // Clear recovery state once any renderable payload exists — including one
+  // that arrived from cache hydration or a prev/next derivation rather than
+  // from a retry. Functional updates that return the previous value are a
+  // no-op in React, so this cannot loop back into the fetch effect.
+  useEffect(() => {
+    if (!hasRenderableActivePayload) return;
+    setLoadAttempt((prev) => (prev === 0 ? prev : 0));
+    setLoadFailed((prev) => (prev ? false : prev));
+  }, [hasRenderableActivePayload]);
+
+  // Manual Retry: reset the automatic budget and bump the token so the fetch
+  // effect re-runs and re-enters the same refresh path immediately.
+  const handleRetryLoad = useCallback(() => {
+    setLoadFailed(false);
+    setLoadAttempt(0);
+    setManualRetryToken((prev) => prev + 1);
+  }, []);
 
   const invalidatePersistedCache = useCallback(() => {
     clearPersistedCache(persistedBucket);
@@ -930,8 +1044,24 @@ export function ScheduleView({
   // toggles never re-enter the skeleton if the user has visited that
   // view before in this session (its slot persists).
   const isLoading = initialPayloadIsSynthetic && !activePayload;
+  const boardLoadUiState = resolveBoardLoadUiState({ isLoading, loadFailed });
   const isWeekendsHidden = isMikeEditor && !showWeekends;
   const skeletonVisibleDayCount = isWeekendsHidden ? 5 : 7;
+
+  // Compact terminal state for a first load that never succeeded. Replaces the
+  // skeleton so the board can't sit on "Loading calendar…" indefinitely.
+  const renderBoardLoadFailed = () => (
+    <div className="board-load-failed" role="status" aria-live="polite">
+      <p className="board-load-failed-text">Couldn&apos;t load the calendar.</p>
+      <button
+        type="button"
+        className="board-load-failed-retry"
+        onClick={handleRetryLoad}
+      >
+        Retry
+      </button>
+    </div>
+  );
 
   // After 500 ms of sustained loading, show "Loading calendar…" so a slow
   // /api/board/window response doesn't look stuck. Hidden again the moment
@@ -1154,7 +1284,9 @@ export function ScheduleView({
             {renderWeekendToggle("weekend-visibility-row--nav")}
           </nav>
 
-          {isLoading ? (
+          {boardLoadUiState === "failed" ? (
+            renderBoardLoadFailed()
+          ) : boardLoadUiState === "skeleton" ? (
             <>
               <BoardSkeleton variant="list" visibleDayCount={skeletonVisibleDayCount} />
               {showExtendedLoadingText ? (
@@ -1251,7 +1383,9 @@ export function ScheduleView({
             {renderWeekendToggle("weekend-visibility-row--nav")}
           </nav>
 
-          {isLoading ? (
+          {boardLoadUiState === "failed" ? (
+            renderBoardLoadFailed()
+          ) : boardLoadUiState === "skeleton" ? (
             <>
               <BoardSkeleton variant="month" visibleDayCount={skeletonVisibleDayCount} />
               {showExtendedLoadingText ? (

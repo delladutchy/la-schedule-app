@@ -4392,6 +4392,39 @@ html.modal-open body {
   animation: la-skeleton-fade-in 220ms ease forwards;
 }
 
+/* Terminal state for an initial board load that never succeeded, after the
+   automatic retries are exhausted. Replaces the skeleton so the board never
+   sits on "Loading calendar…" indefinitely. */
+.board-load-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 16px;
+  text-align: center;
+}
+
+.board-load-failed-text {
+  font-size: 13px;
+  color: var(--text-subtle);
+  margin: 0;
+}
+
+.board-load-failed-retry {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.board-load-failed-retry:hover {
+  border-color: var(--text-subtle);
+}
+
 @keyframes la-skeleton-fade-in {
   to { opacity: 1; }
 }
