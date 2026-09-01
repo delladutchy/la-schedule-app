@@ -6576,6 +6576,16 @@ html.modal-open body {
   text-decoration: underline;
 }
 
+/* Explicit "Mark as Sent" confirmation, shown after a Gmail draft is created */
+.invoice-mark-sent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
 /* Collapsed sent-details section inside the invoice status card */
 .invoice-sent-summary {
   margin-top: 10px;

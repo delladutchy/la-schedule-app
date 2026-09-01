@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InvoiceSection, snapUtcToTimeOption } from "@/components/InvoiceSection";
 import { snapCallTimeToOption } from "@/lib/invoice-calculations";
+import type { InvoiceData } from "@/lib/invoice-types";
 import type { WorklistEntry, WorklistFilter } from "@/lib/invoice-worklist";
 
 // ---------------------------------------------------------------------------
@@ -156,6 +157,27 @@ export function InvoiceWorklist() {
   }, [token]);
 
   useEffect(() => { void load(months); }, [load, months]);
+
+  /**
+   * Patch a single row from the invoice record the panel just saved, so the
+   * status badge / invoice # / total update immediately. Deliberately targeted:
+   * re-running load() would refetch the whole 18-month calendar window.
+   */
+  const handleInvoiceUpdated = useCallback((eventId: string, data: InvoiceData) => {
+    setEntries((prev) => prev.map((entry) => (
+      entry.eventId === eventId
+        ? {
+            ...entry,
+            invoiceStatus:    data.invoice_status,
+            invoiceNumber:    data.invoice_number,
+            invoiceTotal:     data.invoice_total,
+            invoicePdfUrl:    data.invoice_pdf_url,
+            amountPaid:       data.amount_paid,
+            remainingBalance: data.remaining_balance,
+          }
+        : entry
+    )));
+  }, []);
 
   // Close panel on Escape
   useEffect(() => {
@@ -365,6 +387,7 @@ export function InvoiceWorklist() {
                   : undefined
             }
             defaultEndTime={selected.endTimeUtc ? snapUtcToTimeOption(selected.endTimeUtc) : undefined}
+            onInvoiceUpdated={handleInvoiceUpdated}
           />
         </div>
       ) : null}

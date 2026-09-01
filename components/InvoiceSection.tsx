@@ -330,11 +330,19 @@ interface EmailDialogState {
   editableBody: string;
   /** Set on successful Gmail draft creation — used to show the "Open Draft" link. */
   draftUrl: string | null;
+  /**
+   * "Mark as Sent" confirmation state, shown only after a draft exists.
+   * Creating a draft never advances this on its own — the user has to confirm
+   * that they actually sent the mail from Gmail.
+   */
+  markSentStatus: "idle" | "confirming" | "marking" | "done" | "error";
+  markSentError: string | null;
 }
 
 const EMAIL_DIALOG_RESET: EmailDialogState = {
   open: false, presetId: "", editableTo: "", status: "idle", error: null,
   editableSubject: "", editableBody: "", draftUrl: null,
+  markSentStatus: "idle", markSentError: null,
 };
 
 interface ExpenseFields {
@@ -456,6 +464,11 @@ interface Props {
   defaultEndTime?: string;   // snapped 12h time from job endUtc
   jobLocation?: string;      // Google Calendar location field
   onPendingChange?: (hasPending: boolean) => void;
+  /**
+   * Fired whenever the invoice record for this event changes, so a parent list
+   * (InvoiceWorklist) can patch that one row in place — no calendar refetch.
+   */
+  onInvoiceUpdated?: (eventId: string, data: InvoiceData) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -993,6 +1006,8 @@ interface EmailDialogProps {
   onChange: React.Dispatch<React.SetStateAction<EmailDialogState>>;
   /** Called when the user clicks the primary action (Create Gmail Draft). */
   onSend: () => void;
+  /** Called only after the user explicitly confirms the invoice was sent. */
+  onMarkSent: () => void;
   onClose: () => void;
   filename: string;
 }
@@ -1007,7 +1022,7 @@ function InvoicePreviewLabel({ label, description }: { label: string; descriptio
   );
 }
 
-function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialogProps) {
+function EmailDialog({ dialog, onChange, onSend, onMarkSent, onClose, filename }: EmailDialogProps) {
   const isBusy = dialog.status === "sending";
   const isDone = dialog.status === "success";
 
@@ -1137,6 +1152,49 @@ function EmailDialog({ dialog, onChange, onSend, onClose, filename }: EmailDialo
           >
             Open in Apple Mail (no attachment) →
           </a>
+
+          {/* Creating a draft only gets the invoice to "Draft". The send itself
+              happens inside Gmail, which the app cannot observe — so the status
+              advances to "Sent" only when the user confirms it here. */}
+          <div className="invoice-mark-sent">
+            {dialog.markSentStatus === "done" ? (
+              <p className="invoice-sync-success">Marked as sent.</p>
+            ) : dialog.markSentStatus === "confirming" ? (
+              <>
+                <p className="invoice-status-muted">
+                  Confirm you sent this invoice from Gmail. This sets the invoice to Sent.
+                </p>
+                <div className="invoice-email-actions">
+                  <button
+                    type="button"
+                    className="invoice-pdf-create-btn"
+                    onClick={onMarkSent}
+                  >
+                    Yes, I sent it
+                  </button>
+                  <button
+                    type="button"
+                    className="invoice-pdf-regen-btn"
+                    onClick={() => onChange((prev) => ({ ...prev, markSentStatus: "idle", markSentError: null }))}
+                  >
+                    Not yet
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="invoice-pdf-create-btn"
+                disabled={dialog.markSentStatus === "marking"}
+                onClick={() => onChange((prev) => ({ ...prev, markSentStatus: "confirming", markSentError: null }))}
+              >
+                {dialog.markSentStatus === "marking" ? "Marking as sent…" : "Mark as Sent"}
+              </button>
+            )}
+            {dialog.markSentError ? (
+              <p className="invoice-error" role="alert">{dialog.markSentError}</p>
+            ) : null}
+          </div>
         </div>
       )}
 
@@ -1180,6 +1238,7 @@ export function InvoiceSection({
   defaultEndTime,
   jobLocation,
   onPendingChange,
+  onInvoiceUpdated,
 }: Props) {
   const [fetchState, setFetchState] = useState<FetchState>({ status: "loading" });
   const [invoiceData, setInvoiceData] = useState<InvoiceData | null>(null);
@@ -1615,6 +1674,15 @@ export function InvoiceSection({
     const hasPending = saveStatus === "unsaved" || isSaving;
     onPendingChange?.(hasPending);
   }, [saveStatus, isSaving, onPendingChange]);
+
+  // Push every invoice-record change up to the parent list so the worklist row
+  // (status badge, invoice #, total) stays current without a reload. Held in a
+  // ref so an unmemoised parent callback can't retrigger the effect.
+  const onInvoiceUpdatedRef = useRef(onInvoiceUpdated);
+  useEffect(() => { onInvoiceUpdatedRef.current = onInvoiceUpdated; }, [onInvoiceUpdated]);
+  useEffect(() => {
+    if (invoiceData) onInvoiceUpdatedRef.current?.(eventId, invoiceData);
+  }, [eventId, invoiceData]);
 
   // Auto-expand Advanced Recovery Tools when pipeline verification fails so
   // the user can see and use the manual tools without needing to know to open them.
@@ -2456,6 +2524,61 @@ export function InvoiceSection({
     }
   }
 
+  /**
+   * Explicit user confirmation that the Gmail draft was actually sent.
+   * Only reachable from the "Mark as Sent" → "Yes, I sent it" confirmation in
+   * EmailDialog — never fired automatically by draft creation.
+   */
+  async function handleMarkSent() {
+    if (emailDialog.markSentStatus === "marking") return;
+    setEmailDialog((prev) => ({ ...prev, markSentStatus: "marking", markSentError: null }));
+
+    // Send the recipients/subject actually used for this draft. The server
+    // falls back to stored values and never invents an address.
+    const toAddresses = parseRecipientList(emailDialog.editableTo);
+    const preset = emailDialog.presetId && emailDialog.presetId !== "custom"
+      ? findPreset(emailDialog.presetId)
+      : null;
+    const ccAddresses = preset && isPresetConfigured(preset) ? preset.cc : [];
+
+    try {
+      const res = await fetch(`/api/invoice/mark-sent/${encodeURIComponent(eventId)}`, {
+        method: "POST",
+        headers: buildAuthHeaders(editorToken),
+        credentials: "same-origin",
+        body: JSON.stringify({
+          to: toAddresses,
+          cc: ccAddresses,
+          subject: emailDialog.editableSubject || undefined,
+          gigSummary,
+        }),
+      });
+      const json = await res.json().catch(() => ({})) as {
+        ok?: boolean; error?: string; detail?: string;
+        invoiceData?: InvoiceData | null; packet?: InvoicePacket | null;
+      };
+      if (!res.ok || !json.ok) {
+        setEmailDialog((prev) => ({
+          ...prev,
+          markSentStatus: "error",
+          markSentError: json.detail ?? json.error ?? `Could not mark sent (${res.status}).`,
+        }));
+        return;
+      }
+      if (json.invoiceData) {
+        setInvoiceData(json.invoiceData);
+        setPacket(json.packet ?? calculateInvoicePacket(json.invoiceData));
+      }
+      setEmailDialog((prev) => ({ ...prev, markSentStatus: "done", markSentError: null }));
+    } catch {
+      setEmailDialog((prev) => ({
+        ...prev,
+        markSentStatus: "error",
+        markSentError: "Network error — try again",
+      }));
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Render guards
   // ---------------------------------------------------------------------------
@@ -2924,6 +3047,7 @@ export function InvoiceSection({
                   dialog={emailDialog}
                   onChange={setEmailDialog}
                   onSend={() => { void handleSendEmail(); }}
+                  onMarkSent={() => { void handleMarkSent(); }}
                   onClose={() => setEmailDialog(EMAIL_DIALOG_RESET)}
                   filename={emailFilename}
                 />
