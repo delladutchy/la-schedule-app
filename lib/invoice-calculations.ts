@@ -450,6 +450,29 @@ function wholeMilesForSheet(value: number | null | undefined): number {
   return Number.isFinite(numeric) ? Math.round(numeric) : 0;
 }
 
+/**
+ * The DATE the Sheet's column B should carry: the first day the work was
+ * actually performed.
+ *
+ * This used to be `new Date()` — the moment the row happened to be synced —
+ * which put an invoice-creation date in a column the Sheet's own Import Map
+ * documents as "Use actual job/invoice date". Rows could land up to two weeks
+ * after the job, so income could not be placed in the right period from the
+ * Sheet alone. Falls back to today only when a record carries no workdays.
+ */
+export function resolveSheetServiceDate(
+  workdays: ReadonlyArray<{ date: string }>,
+  fallbackToday: string = new Date().toISOString().slice(0, 10),
+): string {
+  let earliest: string | null = null;
+  for (const w of workdays) {
+    const d = typeof w?.date === "string" ? w.date.trim() : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    if (earliest === null || d < earliest) earliest = d;
+  }
+  return earliest ?? fallbackToday;
+}
+
 export function generateSheetRow(
   packet: InvoicePacket,
   gigSummary: string,
@@ -469,7 +492,7 @@ export function generateSheetRow(
   const paymentMethod = pm.paymentMethod?.trim() || (hasPaymentRecorded ? "Direct Deposit" : "");
   return {
     invoiceNumber: invoiceNumber ?? packet.invoiceNumber ?? packet.laNumber ?? "",
-    date: new Date().toISOString().slice(0, 10),
+    date: resolveSheetServiceDate(packet.workdays),
     laJobNumber: resolveSheetLaJobNumber(packet.laNumber, gigSummary, invoiceNumber, packet.invoiceNumber),
     gigEvent: finalGigEvent,
     totalPay: packet.estimatedTotal,
