@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Truck } from "lucide-react";
-import type { InvoiceData, InvoicePacket, MileageMode, WorkdayEntry } from "@/lib/invoice-types";
+import type { InvoiceData, InvoicePacket, InvoiceStatus, MileageMode, WorkdayEntry } from "@/lib/invoice-types";
 import { INVOICE_STATUS_LABELS, TERMINAL_STATUSES } from "@/lib/invoice-types";
 import {
   RECIPIENT_PRESETS,
@@ -159,6 +159,27 @@ const WORKFLOW_LABELS: Record<WorkflowState, string> = {
   paid:             "Paid",
   needs_attention:  "Needs attention",
 };
+
+/**
+ * Whether the panel offers the standalone "Mark as Sent" recovery action.
+ *
+ * The in-dialog control only appears right after a draft is created in this
+ * session. An invoice drafted days ago is still stuck at draft_created with no
+ * way to record that it was sent, so the panel offers the same action when the
+ * loaded record is a real, drafted invoice: it has a number, it has a PDF, and
+ * its status is exactly draft_created.
+ *
+ * Deliberately excludes none / ready (no invoice yet), sheet_synced (never
+ * drafted), and sent / partially_paid / paid / void (already past sending) —
+ * the same set POST /api/invoice/mark-sent rejects.
+ */
+export function canMarkSentFromPanel(opts: {
+  invoiceNumber: string | null;
+  hasPdf: boolean;
+  invoiceStatus: InvoiceStatus | null | undefined;
+}): boolean {
+  return Boolean(opts.invoiceNumber) && opts.hasPdf && opts.invoiceStatus === "draft_created";
+}
 
 interface SheetDuplicateRow {
   rowNumber: number;
@@ -2672,6 +2693,13 @@ export function InvoiceSection({
             ? "ready_to_send"
             : "ready_to_review";
   const workflowLabel = WORKFLOW_LABELS[workflowState];
+  // Standalone "Mark as Sent" for invoices drafted in an earlier session.
+  // Hidden while the review dialog is open — that dialog carries its own copy.
+  const showPanelMarkSent = !emailDialog.open && canMarkSentFromPanel({
+    invoiceNumber,
+    hasPdf,
+    invoiceStatus: currentStatus,
+  });
   const invoiceSentAt = invoiceData?.invoice_sent_at ?? null;
   const invoiceSentTo = invoiceData?.invoice_sent_to ?? null;
   const invoiceSentSubject = invoiceData?.invoice_sent_subject ?? null;
@@ -3040,6 +3068,50 @@ export function InvoiceSection({
                   {isVerifying ? "Verifying…" : "Open PDF"}
                 </button>
               </div>
+
+              {/* Recovery action for invoices drafted in an earlier session —
+                  same confirmation and same POST /api/invoice/mark-sent as the
+                  in-dialog control. Hidden while the review dialog is open so
+                  only one Mark as Sent control is ever on screen. */}
+              {showPanelMarkSent ? (
+                <div className="invoice-mark-sent invoice-mark-sent--panel">
+                  {emailDialog.markSentStatus === "confirming" ? (
+                    <>
+                      <p className="invoice-status-muted">
+                        Confirm this invoice was already sent. This sets it to Sent.
+                      </p>
+                      <div className="invoice-email-actions">
+                        <button
+                          type="button"
+                          className="invoice-pdf-create-btn"
+                          onClick={() => { void handleMarkSent(); }}
+                        >
+                          Yes, I sent it
+                        </button>
+                        <button
+                          type="button"
+                          className="invoice-pdf-regen-btn"
+                          onClick={() => setEmailDialog((prev) => ({ ...prev, markSentStatus: "idle", markSentError: null }))}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="invoice-pdf-regen-btn"
+                      disabled={emailDialog.markSentStatus === "marking"}
+                      onClick={() => setEmailDialog((prev) => ({ ...prev, markSentStatus: "confirming", markSentError: null }))}
+                    >
+                      {emailDialog.markSentStatus === "marking" ? "Marking as sent…" : "Mark as Sent"}
+                    </button>
+                  )}
+                  {emailDialog.markSentError ? (
+                    <p className="invoice-error" role="alert">{emailDialog.markSentError}</p>
+                  ) : null}
+                </div>
+              ) : null}
 
               {/* Email dialog — inline below action row */}
               {emailDialog.open ? (

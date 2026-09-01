@@ -6586,6 +6586,14 @@ html.modal-open body {
   border-top: 1px solid var(--border);
 }
 
+/* Same control as a recovery action in the panel, for invoices drafted in an
+   earlier session. Secondary weight — it is not the primary workflow. */
+.invoice-mark-sent--panel {
+  align-items: flex-start;
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
 /* Collapsed sent-details section inside the invoice status card */
 .invoice-sent-summary {
   margin-top: 10px;
