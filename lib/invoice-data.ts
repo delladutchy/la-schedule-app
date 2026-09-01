@@ -66,6 +66,7 @@ function coerceInvoiceData(row: Record<string, unknown>): InvoiceData {
 /** Lightweight invoice row for payment-matching and reconciliation UIs. */
 export interface InvoiceListItem {
   google_event_id:  string;
+  client:           string;
   invoice_number:   string | null;
   la_number:        string | null;
   invoice_total:    number | null;
@@ -85,7 +86,7 @@ export async function listInvoicesForPayments(): Promise<InvoiceListItem[]> {
   const { data, error } = await client
     .from("invoice_data")
     .select(
-      "google_event_id, invoice_number, la_number, invoice_total, amount_paid, remaining_balance, invoice_status, invoice_sent_at",
+      "google_event_id, client, invoice_number, la_number, invoice_total, amount_paid, remaining_balance, invoice_status, invoice_sent_at",
     )
     .not("invoice_total", "is", null)
     .order("invoice_number", { ascending: false });
@@ -96,6 +97,7 @@ export async function listInvoicesForPayments(): Promise<InvoiceListItem[]> {
     const r = row as Record<string, unknown>;
     return {
       google_event_id:  String(r.google_event_id  ?? ""),
+      client:           String(r.client ?? "Light Action"),
       invoice_number:   r.invoice_number   != null ? String(r.invoice_number)   : null,
       la_number:        r.la_number        != null ? String(r.la_number)        : null,
       invoice_total:    r.invoice_total    != null ? Number(r.invoice_total)    : null,

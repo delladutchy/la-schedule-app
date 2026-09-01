@@ -407,17 +407,19 @@ export function mainSheetDataRowRange(rowNumber: number): string {
 async function ensureMainSheetHeaders(
   sheets: ReturnType<typeof google.sheets>,
   sheetId: string,
+  targetSheetName = SHEET_NAME,
 ): Promise<void> {
+  const quotedTargetSheetName = `'${targetSheetName.replace(/'/g, "''")}'`;
   await sheets.spreadsheets.values.update({
     spreadsheetId: sheetId,
-    range: MAIN_SHEET_HEADER_RANGE,
+    range: `${quotedTargetSheetName}!A1:AH1`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [SHEET_HEADERS] },
   });
 
   try {
     const spreadsheetRes = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
-    const tabMeta = spreadsheetRes.data.sheets?.find((s) => s.properties?.title === SHEET_NAME);
+    const tabMeta = spreadsheetRes.data.sheets?.find((s) => s.properties?.title === targetSheetName);
     const numericTabId = tabMeta?.properties?.sheetId;
     if (numericTabId == null) return;
 
@@ -834,7 +836,10 @@ export interface SheetPaymentUpdate {
  *
  * Throws on auth/API failure so callers can catch and handle non-fatally.
  */
-export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Promise<void> {
+export async function updateSheetPaymentColumns(
+  update: SheetPaymentUpdate,
+  options: { sheetName?: string } = {},
+): Promise<void> {
   const normLa = normalizeLA(update.laJobNumber);
   const normInv = update.invoiceNumber.trim();
   if (!normLa && !normInv) return; // can't find a row without a key
@@ -844,10 +849,12 @@ export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Pro
 
   const auth = await getSheetAuth();
   const sheets = google.sheets({ version: "v4", auth });
+  const targetSheetName = options.sheetName?.trim() || SHEET_NAME;
+  const quotedTargetSheetName = `'${targetSheetName.replace(/'/g, "''")}'`;
 
   const readRes = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
-    range: `${QUOTED_SHEET_NAME}!A:T`, // read through STATUS column to skip void rows
+    range: `${quotedTargetSheetName}!A:T`, // read through STATUS column to skip void rows
   });
 
   const rows = readRes.data.values ?? [];
@@ -870,7 +877,7 @@ export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Pro
 
   if (matchRowIndex < 0) return; // row not in sheet yet — no-op
 
-  await ensureMainSheetHeaders(sheets, sheetId);
+  await ensureMainSheetHeaders(sheets, sheetId, targetSheetName);
 
   // Columns T:AB = COLUMN_ORDER indices 19–27 (status → paymentBatchRef).
   // We also refresh column A (invoiceNumber) via a separate range.
@@ -892,8 +899,8 @@ export async function updateSheetPaymentColumns(update: SheetPaymentUpdate): Pro
     requestBody: {
       valueInputOption: "USER_ENTERED",
       data: [
-        { range: `${QUOTED_SHEET_NAME}!A${matchRowIndex}`, values: [[update.invoiceNumber]] },
-        { range: `${QUOTED_SHEET_NAME}!T${matchRowIndex}:AB${matchRowIndex}`, values: [tAbValues] },
+        { range: `${quotedTargetSheetName}!A${matchRowIndex}`, values: [[update.invoiceNumber]] },
+        { range: `${quotedTargetSheetName}!T${matchRowIndex}:AB${matchRowIndex}`, values: [tAbValues] },
       ],
     },
   });

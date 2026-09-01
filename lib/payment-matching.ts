@@ -11,6 +11,7 @@
 
 export interface InvoiceForMatching {
   google_event_id:  string;
+  client?:           string | null;
   invoice_number:   string | null;
   la_number:        string | null;
   invoice_total:    number | null;
