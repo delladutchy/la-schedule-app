@@ -23,7 +23,30 @@ const SESSION_COOKIE_NAME = "la_editor_session";
 
 export const SHELL_BUCKET_NAMESPACE_EDITOR = "ed";
 export const SHELL_BUCKET_ANON = "anon";
-export const SHELL_CACHE_NAME = "la-app-shell:v1";
+/**
+ * Bumped v1 → v2 with the date-scoped shell key below. The SW activate
+ * handler deletes every cache outside PRESERVED_CACHE_NAMES, so bumping the
+ * name evicts the v1 cache — including shells poisoned with past dates.
+ */
+export const SHELL_CACHE_NAME = "la-app-shell:v2";
+
+/**
+ * Local calendar date (YYYY-MM-DD) that scopes a shell cache entry to one day.
+ *
+ * The SSR shell hard-embeds todayKey / weekStart / monthKey. A dateless key let
+ * an August shell be replayed in September: routeTarget was seeded with past
+ * coordinates, /api/board/window clamped them to the current week/month, and
+ * the exact-match render gate rejected every response — the board hung on the
+ * skeleton. Keying by date means a shell can never outlive the day it
+ * describes. Device-local date is deliberate: it rotates at the user's own
+ * midnight, which is when the embedded values go stale for them.
+ */
+export function shellCacheDateStamp(now: Date = new Date()): string {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 export function parseCookieValue(
   cookieHeader: string | null | undefined,
@@ -81,7 +104,11 @@ export function deriveShellBucket(cookieHeader: string | null): string {
   return SHELL_BUCKET_ANON;
 }
 
-export function buildShellCacheKey(rawUrl: string, bucket: string): string {
+export function buildShellCacheKey(
+  rawUrl: string,
+  bucket: string,
+  dateStamp: string = shellCacheDateStamp(),
+): string {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -96,7 +123,20 @@ export function buildShellCacheKey(rawUrl: string, bucket: string): string {
   const search = entries.length === 0
     ? ""
     : "?" + entries.map(([k, v]) => k + "=" + v).join("&");
-  return "shell:" + bucket + ":" + url.pathname + search;
+  // Date segment sits after the bucket so a shell cached on one day is never
+  // read back on another.
+  return "shell:" + bucket + ":" + dateStamp + ":" + url.pathname + search;
+}
+
+/**
+ * True when a shell cache key belongs to a day other than `dateStamp`.
+ * Used to prune yesterday's entries so the date-scoped cache stays bounded.
+ */
+export function isStaleShellCacheKey(key: string, dateStamp: string): boolean {
+  // Accepts a raw string key or the absolute URL form the Cache API stores
+  // when a string key is passed to cache.put().
+  if (!key.includes("shell:")) return false;
+  return !key.includes(":" + dateStamp + ":");
 }
 
 /**

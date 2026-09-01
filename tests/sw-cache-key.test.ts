@@ -3,6 +3,9 @@ import {
   SHELL_BUCKET_ANON,
   SHELL_BUCKET_NAMESPACE_EDITOR,
   buildShellCacheKey,
+  isStaleShellCacheKey,
+  shellCacheDateStamp,
+  SHELL_CACHE_NAME,
   decodeSessionEditorIdFromCookie,
   deriveShellBucket,
   parseCookieValue,
@@ -122,8 +125,8 @@ describe("buildShellCacheKey", () => {
   });
 
   it("normalizes parameter ordering for stable keys", () => {
-    const a = buildShellCacheKey("https://example.com/?view=list&start=2026-05-04", "ed:mike");
-    const b = buildShellCacheKey("https://example.com/?start=2026-05-04&view=list", "ed:mike");
+    const a = buildShellCacheKey("https://example.com/?view=list&start=2026-05-04", "ed:mike", "2026-09-01");
+    const b = buildShellCacheKey("https://example.com/?start=2026-05-04&view=list", "ed:mike", "2026-09-01");
     expect(a).toBe(b);
   });
 
@@ -271,5 +274,88 @@ describe("end-to-end token-leakage guard", () => {
     expect(key).not.toContain("editor=");
     expect(shouldBypassShellCacheForRequest(url)).toBe(true);
     expect(shouldPersistResponseForRequest(url)).toBe(false);
+  });
+});
+
+// ── Date-scoped shell cache (calendar stale-shell regression) ────────────────
+//
+// The SSR shell hard-embeds todayKey / weekStart / monthKey. With a dateless
+// key, an August shell was replayed in September: routeTarget was seeded with
+// past coordinates, /api/board/window clamped them to the current week/month,
+// and the client's exact-match render gate rejected every response — the board
+// hung on "Loading calendar…" for PWA users.
+
+describe("shellCacheDateStamp", () => {
+  it("formats the local calendar date as YYYY-MM-DD", () => {
+    expect(shellCacheDateStamp(new Date(2026, 8, 1))).toBe("2026-09-01");
+    expect(shellCacheDateStamp(new Date(2026, 7, 31))).toBe("2026-08-31");
+  });
+
+  it("zero-pads single-digit months and days", () => {
+    expect(shellCacheDateStamp(new Date(2026, 0, 5))).toBe("2026-01-05");
+  });
+});
+
+describe("shell cache key changes across dates", () => {
+  const url = "https://example.com/?view=month";
+
+  it("produces a different key on a different day", () => {
+    const august = buildShellCacheKey(url, "ed:mike", "2026-08-24");
+    const september = buildShellCacheKey(url, "ed:mike", "2026-09-01");
+    expect(august).not.toBe(september);
+  });
+
+  it("a shell cached in August is never read back in September", () => {
+    const cached = buildShellCacheKey(url, "ed:mike", "2026-08-24");
+    const lookup = buildShellCacheKey(url, "ed:mike", "2026-09-01");
+    expect(cached).not.toBe(lookup); // cache.match(lookup) misses → network
+  });
+
+  it("stays stable within the same day", () => {
+    expect(buildShellCacheKey(url, "ed:mike", "2026-09-01"))
+      .toBe(buildShellCacheKey(url, "ed:mike", "2026-09-01"));
+  });
+
+  it("still partitions by editor bucket on the same date", () => {
+    expect(buildShellCacheKey(url, "ed:mike", "2026-09-01"))
+      .not.toBe(buildShellCacheKey(url, "ed:dave", "2026-09-01"));
+  });
+
+  it("still excludes the raw editor token", () => {
+    const token = "mike-editor-token-0123456789-secret";
+    const key = buildShellCacheKey(`https://example.com/?editor=${token}`, "ed:mike", "2026-09-01");
+    expect(key).not.toContain(token);
+    expect(key).not.toContain("editor=");
+  });
+
+  it("defaults to today when no stamp is supplied", () => {
+    expect(buildShellCacheKey(url, "ed:mike")).toContain(shellCacheDateStamp());
+  });
+});
+
+describe("old shell cache version is replaced/evicted", () => {
+  it("bumps the shell cache name past the poisoned v1", () => {
+    // The SW activate handler deletes every cache not in PRESERVED_CACHE_NAMES,
+    // so a new name evicts the entire v1 cache on update.
+    expect(SHELL_CACHE_NAME).toBe("la-app-shell:v2");
+    expect(SHELL_CACHE_NAME).not.toBe("la-app-shell:v1");
+  });
+
+  it("prunes entries from other days", () => {
+    const today = "2026-09-01";
+    const stale = buildShellCacheKey("https://example.com/", "ed:mike", "2026-08-24");
+    const fresh = buildShellCacheKey("https://example.com/", "ed:mike", today);
+    expect(isStaleShellCacheKey(stale, today)).toBe(true);
+    expect(isStaleShellCacheKey(fresh, today)).toBe(false);
+  });
+
+  it("recognises the absolute URL form the Cache API stores", () => {
+    const today = "2026-09-01";
+    expect(isStaleShellCacheKey("https://app.example/shell:ed:mike:2026-08-24:/", today)).toBe(true);
+    expect(isStaleShellCacheKey("https://app.example/shell:ed:mike:2026-09-01:/", today)).toBe(false);
+  });
+
+  it("ignores unrelated cache entries", () => {
+    expect(isStaleShellCacheKey("https://app.example/brand/logo.png", "2026-09-01")).toBe(false);
   });
 });

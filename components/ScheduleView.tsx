@@ -83,6 +83,52 @@ export function resolveBoardLoadRetryPlan(opts: {
   return { action: "retry", delayMs };
 }
 
+export interface MountResponseReconciliation {
+  /** Non-null when routeTarget should move to the server's coordinates. */
+  adoptedTarget: RouteTargetCoordinates | null;
+  /** True when the payload can render for the (possibly adopted) target. */
+  renderable: boolean;
+}
+
+/**
+ * Reconcile a mount response against the coordinates we asked for.
+ *
+ * /api/board/window silently clamps a past week/month up to the current one
+ * (resolveSelectedCacheCoordinates) and answers 200/ok with DIFFERENT
+ * `selected` coordinates than requested. A stale PWA shell seeds routeTarget
+ * with past coordinates, so the response could never satisfy the exact-match
+ * render gate and the board sat on the skeleton forever.
+ *
+ * The server is authoritative about clamping, so on the mount recovery path we
+ * adopt what it returned. Adoption is refused for a response belonging to a
+ * different view, and the caller additionally refuses it for a superseded
+ * navigation.
+ */
+export function reconcileMountResponseTarget(opts: {
+  allowAdoption: boolean;
+  activeView: "list" | "month";
+  payloadView: "list" | "month";
+  requestedTarget: RouteTargetCoordinates;
+  returnedTarget: RouteTargetCoordinates;
+}): MountResponseReconciliation {
+  if (opts.payloadView !== opts.activeView) {
+    return { adoptedTarget: null, renderable: false };
+  }
+  // Mirrors the per-view coordinate rule in isPayloadRenderableForViewTarget.
+  const matchesRequested = opts.activeView === "list"
+    ? opts.returnedTarget.weekStart === opts.requestedTarget.weekStart
+    : opts.returnedTarget.monthKey === opts.requestedTarget.monthKey;
+  if (matchesRequested) return { adoptedTarget: null, renderable: true };
+  if (!opts.allowAdoption) return { adoptedTarget: null, renderable: false };
+  return {
+    adoptedTarget: {
+      weekStart: opts.returnedTarget.weekStart,
+      monthKey: opts.returnedTarget.monthKey,
+    },
+    renderable: true,
+  };
+}
+
 /** What the board area renders: real content, the skeleton, or the failed state. */
 export function resolveBoardLoadUiState(opts: {
   isLoading: boolean;
@@ -787,16 +833,56 @@ export function ScheduleView({
     // matching, and wide-window richness so a fresh response replaces
     // a stale-coord fallback but a same-coord response only upgrades
     // when it has more data.
-    const applyResponse = (incoming: BoardWindowPayload): void => {
-      if (cancelled) return;
+    // The coordinates this effect run actually fetched with.
+    const requestedTarget: RouteTargetCoordinates = {
+      weekStart: routeTargetWeekStart,
+      monthKey: routeTargetMonthKey,
+    };
+
+    // Returns true only when a payload that can actually render for the
+    // active view was applied — a 200 rejected for target mismatch must not
+    // look like a successful load, or the retry/failure state never engages.
+    const applyResponse = (
+      incoming: BoardWindowPayload,
+      allowCoordinateAdoption: boolean,
+    ): boolean => {
+      if (cancelled) return false;
       setBoardWindowCache((prev) => ({
         ...prev,
         [buildBoardWindowCacheKey(incoming)]: incoming,
       }));
-      const target = {
-        weekStart: routeTargetWeekStart,
-        monthKey: routeTargetMonthKey,
-      };
+
+      const reconciliation = reconcileMountResponseTarget({
+        allowAdoption: allowCoordinateAdoption,
+        activeView,
+        payloadView: incoming.selected.view,
+        requestedTarget,
+        returnedTarget: {
+          weekStart: incoming.selected.weekStart,
+          monthKey: incoming.selected.monthKey,
+        },
+      });
+
+      let target = requestedTarget;
+      const adopted = reconciliation.adoptedTarget;
+      if (adopted) {
+        console.info(
+          `[board] adopting server coordinates view=${activeView}`
+          + ` requested=${requestedTarget.weekStart}/${requestedTarget.monthKey}`
+          + ` returned=${adopted.weekStart}/${adopted.monthKey}`,
+        );
+        // Late-response guard: only move the target if it is still the one
+        // this run requested. A response from an abandoned navigation can
+        // never yank the user back (the `cancelled` check above already
+        // covers in-effect navigation; this covers the commit-time race).
+        setRouteTarget((prev) => (
+          prev.weekStart === requestedTarget.weekStart && prev.monthKey === requestedTarget.monthKey
+            ? adopted
+            : prev
+        ));
+        target = adopted;
+      }
+
       if (incoming.selected.view === "list") {
         setListPayload((prev) => (
           isPayloadAnImprovement({ incoming, current: prev, target })
@@ -811,10 +897,15 @@ export function ScheduleView({
         ));
       }
       // Any other view value (defensive) is silently dropped.
+      return reconciliation.renderable;
     };
 
-    // Resolves to true when at least one stage produced a payload we applied.
-    const refresh = async (reason: "mount" | "visible"): Promise<boolean> => {
+    // Resolves to true when at least one stage produced a renderable payload.
+    // `allowCoordinateAdoption` is set only by the mount recovery path.
+    const refresh = async (
+      reason: "mount" | "visible",
+      allowCoordinateAdoption = false,
+    ): Promise<boolean> => {
       let appliedPayload = false;
       try {
         const now = Date.now();
@@ -842,17 +933,17 @@ export function ScheduleView({
           const fastPromise = fetchBoardWindowPayload({ ...baseParams, scope: "selected" });
           const fullPromise = fetchBoardWindowPayload({ ...baseParams });
           const fastApplied = fastPromise
-            .then((fast) => { if (fast) { applyResponse(fast); return true; } return false; })
+            .then((fast) => (fast ? applyResponse(fast, allowCoordinateAdoption) : false))
             .catch(() => false); // aborted
           const full = await fullPromise;
-          if (full) { applyResponse(full); appliedPayload = true; }
+          if (full && applyResponse(full, allowCoordinateAdoption)) appliedPayload = true;
           if (await fastApplied) appliedPayload = true;
           return appliedPayload;
         }
 
         // Visibility refresh: single full fetch.
         const fresh = await fetchBoardWindowPayload(baseParams);
-        if (fresh) { applyResponse(fresh); appliedPayload = true; }
+        if (fresh && applyResponse(fresh, allowCoordinateAdoption)) appliedPayload = true;
         return appliedPayload;
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") return appliedPayload;
@@ -898,7 +989,8 @@ export function ScheduleView({
       // Recovery path: if target-aware gating has no renderable payload yet,
       // fetch the focused target immediately instead of waiting for debounce.
       console.info("[perf] auto refresh scheduled reason=missing_target_payload");
-      void refresh("mount")
+      // Recovery path only: allow adopting server-clamped coordinates.
+      void refresh("mount", true)
         .then(settleAfterMountRefresh)
         .catch(() => { settleAfterMountRefresh(false); });
     } else if (ssrIsFreshAndRecent) {

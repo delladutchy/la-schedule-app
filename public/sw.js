@@ -22,7 +22,10 @@
  *     keep both in sync if you change the bucket / key shape.        !!!
  */
 
-const SHELL_CACHE_NAME = "la-app-shell:v1";
+// Bumped v1 -> v2 with the date-scoped shell key below. The activate handler
+// deletes every cache outside PRESERVED_CACHE_NAMES, so this evicts v1 —
+// including shells poisoned with a past date.
+const SHELL_CACHE_NAME = "la-app-shell:v2";
 const STATIC_CACHE_NAME = "la-static:v1";
 const SESSION_COOKIE_NAME = "la_editor_session";
 const KNOWN_EDITORS = ["jeff", "legacy", "dave", "milos", "mike"];
@@ -98,8 +101,11 @@ async function handleNavigationRequest(event, req) {
     }
 
     const bucket = deriveShellBucket(req.headers.get("cookie"));
-    const cacheKey = buildShellCacheKey(req.url, bucket);
+    const dateStamp = shellCacheDateStamp();
+    const cacheKey = buildShellCacheKey(req.url, bucket, dateStamp);
     const cache = await caches.open(SHELL_CACHE_NAME);
+    // Housekeeping only — never blocks the response.
+    event.waitUntil(pruneStaleShellEntries(cache, dateStamp));
     const cached = await cache.match(cacheKey);
 
     if (cached) {
@@ -289,7 +295,22 @@ function deriveShellBucket(cookieHeader) {
   return "anon";
 }
 
-function buildShellCacheKey(rawUrl, bucket) {
+function shellCacheDateStamp(now) {
+  const d = now || new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return year + "-" + month + "-" + day;
+}
+
+function isStaleShellCacheKey(key, dateStamp) {
+  // Accepts a raw string key or the absolute URL form the Cache API stores.
+  if (key.indexOf("shell:") === -1) return false;
+  return key.indexOf(":" + dateStamp + ":") === -1;
+}
+
+function buildShellCacheKey(rawUrl, bucket, dateStamp) {
+  const stamp = dateStamp || shellCacheDateStamp();
   let url;
   try { url = new URL(rawUrl); } catch (e) {
     return "shell:" + bucket + ":invalid";
@@ -300,5 +321,21 @@ function buildShellCacheKey(rawUrl, bucket) {
   const search = entries.length === 0
     ? ""
     : "?" + entries.map(function (kv) { return kv[0] + "=" + kv[1]; }).join("&");
-  return "shell:" + bucket + ":" + url.pathname + search;
+  // Date segment sits after the bucket so a shell cached on one day is never
+  // read back on another. The SSR shell embeds todayKey/weekStart/monthKey.
+  return "shell:" + bucket + ":" + stamp + ":" + url.pathname + search;
+}
+
+// Drop shell entries from other days so the date-scoped cache stays bounded.
+async function pruneStaleShellEntries(cache, dateStamp) {
+  try {
+    const keys = await cache.keys();
+    await Promise.all(keys.map(function (request) {
+      return isStaleShellCacheKey(request.url, dateStamp)
+        ? cache.delete(request)
+        : Promise.resolve(false);
+    }));
+  } catch (e) {
+    // Best-effort housekeeping; never block a navigation.
+  }
 }
