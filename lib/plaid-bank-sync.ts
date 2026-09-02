@@ -15,6 +15,7 @@ import {
 } from "./plaid-client";
 import { collectPlaidSyncUpdates } from "./plaid-sync-pages";
 import { decideProviderTransactionChange } from "./provider-transaction-change";
+import { findCrossSourceOverlap } from "./bank-overlap-store";
 
 export interface BankProviderConnection {
   id: string;
@@ -46,6 +47,7 @@ export interface BankProviderAccount {
   account_type: string | null;
   account_subtype: string | null;
   enabled: boolean;
+  reconciliation_enabled: boolean;
 }
 
 export type PublicBankProviderAccount = Omit<BankProviderAccount, "provider_account_id" | "persistent_account_id">;
@@ -159,6 +161,9 @@ async function storeAccounts(connectionId: string, accounts: AccountBase[]): Pro
     account_type: String(account.type),
     account_subtype: account.subtype != null ? String(account.subtype) : null,
     enabled: true,
+    // Light Action payroll enters only the Wells Fargo checking account ending
+    // 8155. All other linked accounts remain available as bank history only.
+    reconciliation_enabled: account.mask === "8155",
   })), { onConflict: "connection_id,provider_account_id" });
   if (error) throw new Error(`[bank-provider] store accounts failed: ${error.message}`);
 }
@@ -324,6 +329,129 @@ async function fetchPlaidSync(config: PlaidRuntimeConfig, accessToken: string, i
       hasMore: response.data.has_more,
     };
   }, initialCursor);
+}
+
+export interface PlaidHistoryBackfillResult {
+  apply: boolean;
+  availablePosted: number;
+  selectedPosted: number;
+  alreadyStored: number;
+  imported: number;
+  remainingToImport: number;
+  byAccount: Array<{ mask: string | null; name: string; selected: number; alreadyStored: number; imported: number }>;
+  lightActionDeposits: Array<{
+    externalTransactionId: string;
+    postedDate: string;
+    amount: number;
+    accountMask: string | null;
+    expectedAction: "duplicate" | "blocked";
+    evidenceKind: string | null;
+  }>;
+}
+
+/**
+ * Replays posted transactions from the current Plaid Item without changing its
+ * incremental cursor. This is intentionally bounded to 2026 and refuses to
+ * write if any in-scope Light Action deposit lacks one clear historical overlap.
+ */
+export async function backfillPlaid2026History(
+  connectionId: string,
+  options: { apply?: boolean; fromDate?: string; toDate?: string; createdBy?: string; maxImports?: number } = {},
+): Promise<PlaidHistoryBackfillResult> {
+  const fromDate = options.fromDate ?? "2026-01-01";
+  const toDate = options.toDate ?? "2026-07-31";
+  if (!/^2026-\d{2}-\d{2}$/.test(fromDate) || !/^2026-\d{2}-\d{2}$/.test(toDate) || fromDate > toDate) {
+    throw new Error("Plaid historical backfill is restricted to a valid 2026 date range");
+  }
+  const { env } = getConfig();
+  const config = requirePlaidRuntimeConfig(env);
+  const connection = await getBankProviderConnection(connectionId);
+  if (!connection?.access_token_encrypted || connection.connection_status === "disconnected") {
+    throw new Error("Bank connection is not active");
+  }
+  const accessToken = decryptBankAccessToken(connection.access_token_encrypted, config.encryptionKey);
+  const sync = await fetchPlaidSync(config, accessToken, null);
+  const accounts = await listEnabledAccounts(connection.id);
+  const normalized = [...sync.added, ...sync.modified].flatMap((transaction) => {
+    const account = accounts.get(transaction.account_id);
+    if (!account) return [];
+    const value = normalizePlaidPostedTransaction(transaction, {
+      providerItemId: connection.provider_item_id,
+      institutionId: connection.institution_id,
+      institutionName: connection.institution_name,
+      accountId: account.provider_account_id,
+      accountName: account.account_name,
+      accountMask: account.mask,
+    });
+    return value ? [{ transaction: value, account }] : [];
+  });
+  const selected = normalized.filter(({ transaction }) => transaction.postedDate >= fromDate && transaction.postedDate <= toDate);
+  const db = getSupabaseServerClient();
+  const ids = selected.map(({ transaction }) => transaction.externalTransactionId);
+  const existingIds = new Set<string>();
+  for (let index = 0; index < ids.length; index += 200) {
+    const { data, error } = await db.from("bank_transactions").select("external_transaction_id")
+      .eq("source", "plaid").in("external_transaction_id", ids.slice(index, index + 200));
+    if (error) throw new Error(`[bank-provider] backfill existing lookup failed: ${error.message}`);
+    for (const row of data ?? []) existingIds.add(String(row.external_transaction_id));
+  }
+
+  const lightActionDeposits: PlaidHistoryBackfillResult["lightActionDeposits"] = [];
+  for (const { transaction, account } of selected) {
+    if (existingIds.has(transaction.externalTransactionId) || transaction.amount <= 0 || !/light\s*action/i.test(transaction.description)) continue;
+    if (account.mask !== "8155" || account.reconciliation_enabled !== true) continue;
+    const overlap = await findCrossSourceOverlap({
+      source: transaction.source, postedDate: transaction.postedDate, amount: transaction.amount,
+      description: transaction.description, sourceAccount: transaction.sourceAccount,
+    });
+    lightActionDeposits.push({
+      externalTransactionId: transaction.externalTransactionId,
+      postedDate: transaction.postedDate,
+      amount: transaction.amount,
+      accountMask: account.mask,
+      expectedAction: overlap.action === "duplicate" ? "duplicate" : "blocked",
+      evidenceKind: overlap.action === "duplicate" ? overlap.candidate.kind : null,
+    });
+  }
+  const blocked = lightActionDeposits.filter((deposit) => deposit.expectedAction === "blocked");
+  if (blocked.length > 0) {
+    throw new Error(`Historical backfill blocked: ${blocked.length} Light Action deposit(s) lack one unambiguous existing-payment overlap`);
+  }
+
+  const stats = new Map<string, PlaidHistoryBackfillResult["byAccount"][number]>();
+  for (const { transaction, account } of selected) {
+    const key = account.provider_account_id;
+    const stat = stats.get(key) ?? { mask: account.mask, name: account.account_name, selected: 0, alreadyStored: 0, imported: 0 };
+    stat.selected += 1;
+    if (existingIds.has(transaction.externalTransactionId)) stat.alreadyStored += 1;
+    stats.set(key, stat);
+  }
+  let imported = 0;
+  if (options.apply) {
+    // Re-check the live account flags immediately before any writes.
+    const scoped = [...accounts.values()].filter((account) => account.reconciliation_enabled);
+    if (scoped.length !== 1 || scoped[0]?.mask !== "8155") {
+      throw new Error("Historical backfill blocked: account 8155 is not the sole reconciliation-enabled account");
+    }
+    const maximum = Math.max(1, Math.floor(options.maxImports ?? Number.MAX_SAFE_INTEGER));
+    for (const { transaction, account } of selected) {
+      if (existingIds.has(transaction.externalTransactionId)) continue;
+      await importOrRefreshPostedTransaction(transaction, options.createdBy ?? "plaid-2026-history-backfill");
+      imported += 1;
+      stats.get(account.provider_account_id)!.imported += 1;
+      if (imported >= maximum) break;
+    }
+  }
+  return {
+    apply: options.apply === true,
+    availablePosted: normalized.length,
+    selectedPosted: selected.length,
+    alreadyStored: selected.filter(({ transaction }) => existingIds.has(transaction.externalTransactionId)).length,
+    imported,
+    remainingToImport: selected.length - existingIds.size - imported,
+    byAccount: [...stats.values()].sort((a, b) => (a.mask ?? "").localeCompare(b.mask ?? "")),
+    lightActionDeposits,
+  };
 }
 
 export async function markBankRecoveryPoll(connectionId: string): Promise<void> {

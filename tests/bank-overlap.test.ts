@@ -36,6 +36,19 @@ describe("cross-source first-sync overlap guard", () => {
     expect(result).toMatchObject({ action: "duplicate", candidate: { kind: "legacy_paid_invoices" } });
   });
 
+  it.each([
+    ["2026-06-17", 5928.28, [["QB-71761", 2190.68], ["QB-71852", 1311.04], ["QB-72316", 590], ["QB-72317", 590], ["QB-72318", 590], ["QB-UAE-20260602", 656.56]]],
+    ["2026-07-15", 2913.62, [["1006", 2913.62]]],
+    ["2026-07-29", 1313.12, [["1008", 1313.12]]],
+  ] as const)("corroborates the %s historical payment without creating a batch", (postedDate, amount, invoiceRows) => {
+    const paidInvoices = invoiceRows.map(([number, amountPaid]) => ({
+      googleEventId: `event-${number}`, invoiceNumber: number, paidDate: postedDate, amountPaid,
+    }));
+    expect(decideCrossSourceOverlap({ ...input, postedDate, amount }, { ...empty, paidInvoices })).toMatchObject({
+      action: "duplicate", candidate: { kind: "legacy_paid_invoices" },
+    });
+  });
+
   it("routes multiple same-date/same-amount candidates to review", () => {
     const candidate = (id: string) => ({ paymentBatchId: id, receivedDate: input.postedDate, amount: input.amount,
       bankAccount: input.sourceAccount, reference: id, bankTransactionId: null, allocationIds: [], invoiceEventIds: [] });

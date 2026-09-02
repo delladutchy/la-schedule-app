@@ -41,16 +41,16 @@ describe("isAccountInReconciliationScope", () => {
     expect(mocks.maybeSingle).not.toHaveBeenCalled();
   });
 
-  it("fails open for an unknown account", async () => {
+  it("fails closed for an unknown provider account", async () => {
     mocks.maybeSingle.mockResolvedValue({ data: null, error: null });
     const { isAccountInReconciliationScope } = await import("@/lib/bank-account-scope");
-    expect(await isAccountInReconciliationScope("acct-unknown")).toBe(true);
+    expect(await isAccountInReconciliationScope("acct-unknown")).toBe(false);
   });
 
-  it("fails open when the lookup errors", async () => {
+  it("fails closed when the provider-account lookup errors", async () => {
     mocks.maybeSingle.mockResolvedValue({ data: null, error: { message: "boom" } });
     const { isAccountInReconciliationScope } = await import("@/lib/bank-account-scope");
-    expect(await isAccountInReconciliationScope("acct-8155")).toBe(true);
+    expect(await isAccountInReconciliationScope("acct-8155")).toBe(false);
   });
 });
 
@@ -88,6 +88,14 @@ describe("scope gate placement in the reconciliation flow", () => {
     const sql = read("supabase/migrations/20260904_account_reconciliation_scope.sql");
     expect(sql).toContain("ADD COLUMN IF NOT EXISTS reconciliation_enabled BOOLEAN NOT NULL DEFAULT true");
     expect(sql).not.toMatch(/\b(UPDATE|DELETE|INSERT)\b\s+(public\.)?(invoice_data|payment_batches|payment_batch_allocations|bank_transactions)/i);
+  });
+
+  it("future accounts default out of reconciliation and 8155 is explicitly selected", () => {
+    const sql = read("supabase/migrations/20260905_plaid_history_backfill_safety.sql");
+    expect(sql).toContain("ALTER COLUMN reconciliation_enabled SET DEFAULT false");
+    expect(sql).toContain("mask = '8155'");
+    const provider = read("lib/plaid-bank-sync.ts");
+    expect(provider).toContain('reconciliation_enabled: account.mask === "8155"');
   });
 });
 
