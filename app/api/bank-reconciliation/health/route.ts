@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getEnvConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
+import { requireBankUnlock } from "@/lib/bank-admin-guard";
 import { getBankReconciliationHealth } from "@/lib/bank-reconciliation-health";
 
 export const dynamic = "force-dynamic";
@@ -17,8 +18,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const env = getEnvConfig();
   const auth = authorizeEditorRequest(request, env);
   const bearer = (request.headers.get("authorization") ?? "").match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
-  if (!(auth.ok && isJeffEditorId(auth.editorId)) && !constantTimeEqual(bearer, env.ADMIN_TOKEN)) {
+  const isAdminToken = constantTimeEqual(bearer, env.ADMIN_TOKEN);
+  if (!(auth.ok && isJeffEditorId(auth.editorId)) && !isAdminToken) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  // Browser access additionally requires the Bank PIN. The ADMIN_TOKEN path is
+  // for monitoring and keeps working without one.
+  if (!isAdminToken) {
+    const locked = requireBankUnlock(request);
+    if (locked) return locked;
   }
   try {
     return NextResponse.json(await getBankReconciliationHealth(), { headers: { "Cache-Control": "no-store" } });

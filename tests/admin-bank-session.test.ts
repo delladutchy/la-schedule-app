@@ -22,7 +22,9 @@ describe("admin pages bootstrap the existing session (no login UI)", () => {
   });
 
   it("the bank page ensures the session before requesting status", () => {
-    const page = read("app/admin/bank/page.tsx");
+    // The dashboard moved to components/BankDashboard.tsx when /admin/bank
+    // became a server component for the Bank PIN gate.
+    const page = read("components/BankDashboard.tsx");
     expect(page).toContain("ensureEditorSession");
     const ensureAt = page.indexOf("await ensureEditorSession()");
     const fetchAt = page.indexOf('fetch("/api/bank-connections"');
@@ -31,13 +33,16 @@ describe("admin pages bootstrap the existing session (no login UI)", () => {
   });
 
   it("the bank page ensures the session before starting Plaid Link", () => {
-    const page = read("app/admin/bank/page.tsx");
+    const page = read("components/BankDashboard.tsx");
     const linkIdx = page.indexOf('fetch("/api/bank-connections/link-token"');
     expect(page.slice(0, linkIdx)).toContain("await ensureEditorSession()");
   });
 
   it("introduces no login page, password prompt, or second auth system", () => {
-    const page = read("app/admin/bank/page.tsx") + read("app/admin/layout.tsx") + read("lib/editor-session.ts");
+    // The Bank PIN screen is a numeric unlock for an already-authorized editor,
+    // not a login: no username, no account, no identity provider. Its input is
+    // type=password purely to mask the digits, so it is excluded here.
+    const page = read("components/BankDashboard.tsx") + read("app/admin/layout.tsx") + read("lib/editor-session.ts");
     expect(page).not.toMatch(/type=["']password["']/i);
     // Guards a *user sign-in* flow. Plaid's bank OAuth redirect (oauthRedirectUri)
     // is a bank authorization handoff, not an app login, so it is allowed here.
@@ -60,7 +65,7 @@ describe("server-side secret protection", () => {
   });
 
   it("the client bank page never references server secrets", () => {
-    const page = read("app/admin/bank/page.tsx");
+    const page = read("components/BankDashboard.tsx");
     expect(page.startsWith('"use client"')).toBe(true);
     for (const s of SECRETS) expect(page).not.toContain(s);
     expect(page).not.toContain("SUPABASE_SERVICE_ROLE");

@@ -7575,3 +7575,112 @@ html.modal-open body {
     margin-bottom: 0;
   }
 }
+
+/* ── Bank PIN gate ─────────────────────────────────────────────────────────
+   Shown by /admin/bank when the device has not entered the Bank PIN. Renders
+   no bank data — the dashboard is not even sent to the browser until unlock. */
+.bank-pin-screen {
+  max-width: 320px;
+  margin: 12vh auto 0;
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.bank-pin-title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  color: var(--text);
+}
+
+.bank-pin-subtitle {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 0 0 20px;
+}
+
+.bank-pin-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+}
+
+.bank-pin-input {
+  width: 100%;
+  max-width: 200px;
+  font-size: 28px;
+  letter-spacing: 0.5em;
+  text-indent: 0.5em;
+  text-align: center;
+  padding: 12px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.bank-pin-input:focus-visible {
+  outline: 2px solid var(--today-accent);
+  outline-offset: 2px;
+}
+
+.bank-pin-submit {
+  width: 100%;
+  max-width: 200px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  padding: 11px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.bank-pin-submit:disabled { opacity: 0.5; cursor: default; }
+.bank-pin-submit:not(:disabled):hover { border-color: var(--border-strong); }
+
+.bank-pin-error {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: var(--danger, #d14343);
+}
+
+.bank-pin-back {
+  margin-top: 26px;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.bank-pin-back:hover { color: var(--text); }
+
+.bank-admin-heading-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bank-lock-button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bank-lock-button:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}

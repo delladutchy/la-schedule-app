@@ -92,7 +92,7 @@ describe("scope gate placement in the reconciliation flow", () => {
 });
 
 describe("Plaid OAuth return handling", () => {
-  const page = read("app/admin/bank/page.tsx");
+  const page = read("components/BankDashboard.tsx");
 
   it("never passes receivedRedirectUri without a token", () => {
     expect(page).toContain("receivedRedirectUri: linkToken && oauthRedirectUri ? oauthRedirectUri : undefined");

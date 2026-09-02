@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest, isSameOriginEditorMutation } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
+import { requireBankUnlock } from "@/lib/bank-admin-guard";
 import {
   completePlaidReconnect,
   disconnectPlaidConnection,
@@ -15,6 +16,8 @@ function authorize(request: NextRequest) {
   const auth = authorizeEditorRequest(request, env);
   if (!auth.ok) return { ok: false as const, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
   if (!isJeffEditorId(auth.editorId)) return { ok: false as const, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
+  const locked = requireBankUnlock(request);
+  if (locked) return { ok: false as const, response: locked };
   return { ok: true as const, auth };
 }
 

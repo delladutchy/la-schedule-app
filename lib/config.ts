@@ -169,6 +169,11 @@ const EnvSchema = z.object({
   PLAID_REDIRECT_URI: z.string().url().optional(),
   /** Base64-encoded 32-byte AES key used to encrypt provider access tokens. */
   BANK_TOKEN_ENCRYPTION_KEY: z.string().min(1).optional(),
+  /**
+   * 4-digit PIN gating /admin/bank on top of the existing editor session.
+   * Server-only: never exposed to the client bundle or any API response.
+   */
+  BANK_ADMIN_PIN: z.string().regex(/^\d{4}$/, "BANK_ADMIN_PIN must be exactly 4 digits").optional(),
   /** Display-only billing metadata; Plaid does not expose contracted rates via API. */
   PLAID_PLAN_NAME: z.string().min(1).optional(),
   PLAID_EXPECTED_MONTHLY_COST: z.string().regex(/^\d+(?:\.\d{1,2})?$/).transform(Number).optional(),

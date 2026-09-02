@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getEnvConfig } from "@/lib/config";
 import { authorizeEditorRequest, isSameOriginEditorMutation } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
+import { requireBankUnlock } from "@/lib/bank-admin-guard";
 import { applyReviewedBankTransaction, dismissBankReconciliationReview, reconcileBankTransaction } from "@/lib/bank-transactions";
 import type { AutomaticAllocation } from "@/lib/bank-reconciliation";
 
@@ -11,6 +12,8 @@ export async function POST(request: NextRequest, { params }: { params: { transac
   const auth = authorizeEditorRequest(request, getEnvConfig());
   if (!auth.ok) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!isJeffEditorId(auth.editorId)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  const locked = requireBankUnlock(request);
+  if (locked) return locked;
   if (!isSameOriginEditorMutation(request)) return NextResponse.json({ error: "forbidden_origin" }, { status: 403 });
   let body: { action?: "retry" | "dismiss" | "apply"; allocations?: AutomaticAllocation[] };
   try { body = await request.json() as typeof body; } catch { return NextResponse.json({ error: "invalid_body" }, { status: 400 }); }
