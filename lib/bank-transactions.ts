@@ -11,6 +11,7 @@ import {
   type ReconciliationDecision,
 } from "./bank-reconciliation";
 import { findCrossSourceOverlap } from "./bank-overlap-store";
+import { isAccountInReconciliationScope } from "./bank-account-scope";
 import type { AutomaticAllocation } from "./bank-reconciliation";
 
 export interface StoredBankTransaction {
@@ -117,7 +118,11 @@ export async function reconcileBankTransaction(
   // those before loading invoices; only a plausible Light Action deposit needs
   // the existing matching engine and invoice query.
   let decision: ReconciliationDecision;
-  if (transaction.amount <= 0) {
+  if (!(await isAccountInReconciliationScope(transaction.provider_account_id))) {
+    // Imported and retained for tax/accounting analysis, but out of scope for
+    // invoice reconciliation — never reaches the matcher or the review queue.
+    decision = { action: "ignore", reason: "account_not_reconciled", allocations: [], candidateMatches: [] };
+  } else if (transaction.amount <= 0) {
     decision = { action: "ignore", reason: "not_a_deposit", allocations: [], candidateMatches: [] };
   } else if (!/light\s*action/i.test(transaction.description)) {
     decision = { action: "review", reason: "unrecognized_counterparty", allocations: [], candidateMatches: [] };

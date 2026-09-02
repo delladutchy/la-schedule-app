@@ -118,8 +118,14 @@ export default function BankConnectionPage() {
 
   useEffect(() => { void loadStatus(); }, [loadStatus]);
 
+  // Capture the OAuth return URL once, before anything rewrites the address bar.
+  // Reading window.location on every render made receivedRedirectUri flip to
+  // undefined mid-flight once history.replaceState stripped oauth_state_id.
+  const [oauthRedirectUri, setOauthRedirectUri] = useState<string | null>(null);
+
   useEffect(() => {
     if (!window.location.search.includes("oauth_state_id")) return;
+    setOauthRedirectUri(window.location.href);
     const storedToken = window.sessionStorage.getItem(LINK_TOKEN_KEY);
     const storedConnectionId = window.sessionStorage.getItem(LINK_CONNECTION_KEY);
     if (storedToken) {
@@ -146,15 +152,24 @@ export default function BankConnectionPage() {
           });
       const data = await response.json() as { detail?: string; error?: string };
       if (!response.ok) throw new Error(data.detail ?? data.error ?? "Could not save bank connection.");
-      window.sessionStorage.removeItem(LINK_TOKEN_KEY);
-      window.sessionStorage.removeItem(LINK_CONNECTION_KEY);
-      setLinkToken(null);
-      setLinkConnectionId(null);
-      window.history.replaceState({}, "", "/admin/bank");
-      await loadStatus();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save bank connection.");
+      return;
     }
+    // Past this point the connection is saved on the server. Nothing here may
+    // surface as an error — a cosmetic cleanup failure must never make a
+    // successful bank connection look like it failed.
+    try {
+      window.sessionStorage.removeItem(LINK_TOKEN_KEY);
+      window.sessionStorage.removeItem(LINK_CONNECTION_KEY);
+    } catch { /* storage unavailable — nothing to clean up */ }
+    setLinkToken(null);
+    setLinkConnectionId(null);
+    setOauthRedirectUri(null);
+    try {
+      window.history.replaceState({}, "", "/admin/bank");
+    } catch { /* address-bar tidy-up only */ }
+    await loadStatus();
   }, [linkConnectionId, loadStatus]);
 
   const plaidConfig = useMemo(() => ({
@@ -168,10 +183,13 @@ export default function BankConnectionPage() {
         setLinkConnectionId(null);
       }
     },
-    receivedRedirectUri: typeof window !== "undefined" && window.location.search.includes("oauth_state_id")
-      ? window.location.href
-      : undefined,
-  }), [linkToken, onSuccess]);
+    // Only pass receivedRedirectUri alongside a token. react-plaid-link creates
+    // the handler when `token || publicKey || receivedRedirectUri` is set, so a
+    // redirect URI on its own made it call Plaid.create({ token: null, ... }),
+    // which throws in Safari as "The string did not match the expected pattern."
+    // even though the OAuth exchange itself had already succeeded.
+    receivedRedirectUri: linkToken && oauthRedirectUri ? oauthRedirectUri : undefined,
+  }), [linkToken, oauthRedirectUri, onSuccess]);
   const { open, ready } = usePlaidLink(plaidConfig);
 
   useEffect(() => {

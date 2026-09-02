@@ -39,7 +39,9 @@ describe("admin pages bootstrap the existing session (no login UI)", () => {
   it("introduces no login page, password prompt, or second auth system", () => {
     const page = read("app/admin/bank/page.tsx") + read("app/admin/layout.tsx") + read("lib/editor-session.ts");
     expect(page).not.toMatch(/type=["']password["']/i);
-    expect(page).not.toMatch(/\bsignIn\(|\boauth\b|magic.?link/i);
+    // Guards a *user sign-in* flow. Plaid's bank OAuth redirect (oauthRedirectUri)
+    // is a bank authorization handoff, not an app login, so it is allowed here.
+    expect(page).not.toMatch(/\bsignIn\(|magic.?link|next-auth|getServerSession|oauth.{0,12}(login|sign.?in|provider)/i);
     expect(page).not.toContain("Log in as Jeff first");
   });
 });

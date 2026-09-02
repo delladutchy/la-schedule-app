@@ -33,7 +33,7 @@ export type ReconciliationDecision =
     }
   | {
       action: "ignore";
-      reason: "not_a_deposit";
+      reason: "not_a_deposit" | "account_not_reconciled";
       allocations: [];
       candidateMatches: [];
     }
