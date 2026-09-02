@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePlaidLink, type PlaidLinkOnSuccess } from "react-plaid-link";
 import { ensureEditorSession } from "@/lib/editor-session";
+import { CloseToSchedule } from "@/components/CloseToSchedule";
 
 interface BankAccount {
   id: string;
@@ -275,6 +276,7 @@ export function BankDashboard() {
 
   return (
     <main className="admin bank-admin">
+      <CloseToSchedule />
       <div className="bank-admin-heading">
         <div>
           <h1>Bank Connection</h1>

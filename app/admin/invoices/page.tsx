@@ -13,11 +13,12 @@
  */
 
 import { InvoiceWorklist } from "@/components/InvoiceWorklist";
+import { CloseToSchedule } from "@/components/CloseToSchedule";
 
 export default function InvoicesPage() {
   return (
     <>
-      <a href="/" className="worklist-back-link">← Back to Schedule</a>
+      <CloseToSchedule />
       <InvoiceWorklist />
     </>
   );

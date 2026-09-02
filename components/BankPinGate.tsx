@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ensureEditorSession } from "@/lib/editor-session";
+import { CloseToSchedule } from "@/components/CloseToSchedule";
 
 /**
  * 4-digit PIN screen for /admin/bank.
@@ -55,35 +56,37 @@ export function BankPinGate() {
   }, [busy, pin]);
 
   return (
-    <div className="bank-pin-screen">
-      <h1 className="bank-pin-title">Bank</h1>
-      <p className="bank-pin-subtitle">Enter 4-digit PIN</p>
-      <form
-        className="bank-pin-form"
-        onSubmit={(event) => { event.preventDefault(); void submit(); }}
-      >
-        <input
-          ref={inputRef}
-          className="bank-pin-input"
-          type="password"
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          pattern="\d{4}"
-          maxLength={4}
-          value={pin}
-          aria-label="4-digit bank PIN"
-          onChange={(event) => {
-            setPin(event.target.value.replace(/\D/g, "").slice(0, 4));
-            setError(null);
-          }}
-          disabled={busy}
-        />
-        <button type="submit" className="bank-pin-submit" disabled={busy || pin.length !== 4}>
-          {busy ? "Unlocking…" : "Unlock"}
-        </button>
-      </form>
-      {error ? <p className="bank-pin-error" role="alert">{error}</p> : null}
-      <a href="/" className="bank-pin-back">← Back to Schedule</a>
-    </div>
+    <>
+      <CloseToSchedule />
+      <div className="bank-pin-screen">
+        <h1 className="bank-pin-title">Bank</h1>
+        <p className="bank-pin-subtitle">Enter 4-digit PIN</p>
+        <form
+          className="bank-pin-form"
+          onSubmit={(event) => { event.preventDefault(); void submit(); }}
+        >
+          <input
+            ref={inputRef}
+            className="bank-pin-input"
+            type="password"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="\d{4}"
+            maxLength={4}
+            value={pin}
+            aria-label="4-digit bank PIN"
+            onChange={(event) => {
+              setPin(event.target.value.replace(/\D/g, "").slice(0, 4));
+              setError(null);
+            }}
+            disabled={busy}
+          />
+          <button type="submit" className="bank-pin-submit" disabled={busy || pin.length !== 4}>
+            {busy ? "Unlocking…" : "Unlock"}
+          </button>
+        </form>
+        {error ? <p className="bank-pin-error" role="alert">{error}</p> : null}
+      </div>
+    </>
   );
 }
