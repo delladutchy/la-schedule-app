@@ -2692,6 +2692,14 @@ html.modal-open body {
     min-height: 32px;
   }
 
+  /* Container gap stays 0 so the sync control keeps its own spacing. Space the
+     pill links individually instead, and tighten them slightly now that Bank
+     sits alongside Invoices on a narrow iPhone header. */
+  .mobile-header-editor-tools .header-invoices-link {
+    margin-left: 6px;
+    padding: 6px 9px;
+  }
+
   .mobile-header-editor-tools .editor-sync-control {
     display: inline-flex;
     align-items: center;

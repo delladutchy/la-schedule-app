@@ -248,14 +248,20 @@ export default async function AvailabilityPage({
             <EditorSyncButton initialEditorToken={initialEditorToken} />
             <EditorHistoryButton initialEditorToken={initialEditorToken} />
             {isJeffEditor ? (
-              <a href="/admin/invoices" className="header-invoices-link">Invoices</a>
+              <>
+                <a href="/admin/invoices" className="header-invoices-link">Invoices</a>
+                <a href="/admin/bank" className="header-invoices-link">Bank</a>
+              </>
             ) : null}
           </div>
           <div className="mobile-header-editor-tools" aria-label="Editor tools">
             <EditorSyncButton initialEditorToken={initialEditorToken} />
             <EditorHistoryButton initialEditorToken={initialEditorToken} buttonLabel="History" />
             {isJeffEditor ? (
-              <a href="/admin/invoices" className="header-invoices-link">Invoices</a>
+              <>
+                <a href="/admin/invoices" className="header-invoices-link">Invoices</a>
+                <a href="/admin/bank" className="header-invoices-link">Bank</a>
+              </>
             ) : null}
           </div>
           <ThemeToggle />
