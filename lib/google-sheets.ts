@@ -796,6 +796,15 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
     userMessage = "Sheet updated";
   }
 
+  // Keep the master ledger newest-first after every write. Best-effort: a sort
+  // failure must never fail an invoice sync that already succeeded.
+  try {
+    const movedTo = await sortMainSheetByServiceDate(String(row.invoiceNumber ?? "").trim());
+    if (movedTo !== null) finalRowNumber = movedTo;
+  } catch (sortError) {
+    console.error(`[google-sheets] service-date sort failed (non-fatal): ${sortError instanceof Error ? sortError.message : String(sortError)}`);
+  }
+
   return {
     action,
     rowNumber:            finalRowNumber!,
@@ -806,6 +815,84 @@ export async function upsertSheetRow(row: SheetRow): Promise<UpsertSheetRowResul
     hasUnrelatedClutter,
     userMessage,
   };
+}
+
+/**
+ * Re-sort the main sheet's data rows so the newest service date is at the top.
+ *
+ * LA PAY is the working master ledger, so the most recent job should be
+ * immediately visible. Rows are ordered strictly by the DATE column, which
+ * carries the actual service date — QuickBooks-era ("QB-") and LA Schedule
+ * (numeric) invoices interleave by date rather than grouping by origin.
+ * Ties break on invoice number ascending, so the order is deterministic.
+ *
+ * The TOTALS row and anything below it never participate; its SUM ranges are
+ * fixed, so re-ordering the rows above cannot change any total. Ordering only —
+ * no cell value is altered, only the row a value sits on.
+ *
+ * Called at the end of upsertSheetRow so every future invoice lands in the
+ * correct newest-first position automatically, rather than being appended.
+ *
+ * `trackInvoiceNumber` returns that invoice's row number AFTER the sort, so a
+ * caller that reports a row to the user does not hand back a stale one.
+ */
+export async function sortMainSheetByServiceDate(
+  trackInvoiceNumber?: string,
+): Promise<number | null> {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error("[google-sheets] GOOGLE_SHEET_ID must be set");
+  const auth = await getSheetAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const read = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_SHEET_NAME}!A:${MAIN_SHEET_LAST_COLUMN}`,
+  });
+  const rows = read.data.values ?? [];
+  let totalsRow = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (isTotalsRow(String(rows[i]?.[0] ?? "").trim())) { totalsRow = i + 1; break; }
+  }
+  const lastDataRow = totalsRow > 0 ? totalsRow - 1 : rows.length;
+  if (lastDataRow <= 1) return null;
+
+  const block = rows.slice(1, lastDataRow);
+  const data = block.filter((r) => String(r?.[0] ?? "").trim() !== "");
+  if (data.length < 2) return null;
+
+  const serviceDate = (r: unknown[]): number => {
+    const v = r[1];
+    if (typeof v === "number") return v;
+    const parsed = Date.parse(String(v ?? ""));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const invoiceKey = (r: unknown[]): string => String(r[0] ?? "").trim();
+
+  const sorted = [...data].sort((a, b) => {
+    const delta = serviceDate(b) - serviceDate(a);      // newest first
+    if (delta !== 0) return delta;
+    return invoiceKey(a).localeCompare(invoiceKey(b));  // deterministic tiebreak
+  });
+
+  const width = COLUMN_ORDER.length;
+  const padded = sorted.map((r) => {
+    const out = [...r];
+    while (out.length < width) out.push("");
+    return out.slice(0, width);
+  });
+  while (padded.length < block.length) padded.push(new Array(width).fill(""));
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range: `${QUOTED_SHEET_NAME}!A2:${MAIN_SHEET_LAST_COLUMN}${lastDataRow}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: padded },
+  });
+
+  if (!trackInvoiceNumber) return null;
+  const tracked = trackInvoiceNumber.trim();
+  const index = sorted.findIndex((r) => invoiceKey(r) === tracked);
+  return index >= 0 ? index + 2 : null;   // +2: row 1 is the header
 }
 
 // ---------------------------------------------------------------------------
