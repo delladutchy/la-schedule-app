@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePlaidLink, type PlaidLinkOnSuccess } from "react-plaid-link";
+import { ensureEditorSession } from "@/lib/editor-session";
 
 interface BankAccount {
   id: string;
@@ -89,8 +90,20 @@ export default function BankConnectionPage() {
   const loadStatus = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/bank-connections", { credentials: "same-origin" });
-      if (response.status === 401 || response.status === 403) throw new Error("Not authorized. Log in as Jeff first.");
+      // No sign-in step: refresh the existing editor session from the token this
+      // device already stored, then request. If the cookie had lapsed, retry once
+      // after the refresh rather than reporting an authorization failure.
+      await ensureEditorSession();
+      let response = await fetch("/api/bank-connections", { credentials: "same-origin" });
+      if (response.status === 401 || response.status === 403) {
+        await ensureEditorSession();
+        response = await fetch("/api/bank-connections", { credentials: "same-origin" });
+      }
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(
+          "This device isn't linked to LA Schedule yet. Open the LA Schedule home screen once, then reload this page.",
+        );
+      }
       if (!response.ok) throw new Error("Could not load bank connection status.");
       setStatus(await response.json() as ConnectionStatus);
       const reviewResponse = await fetch("/api/bank-reconciliation/reviews", { credentials: "same-origin" });
@@ -169,6 +182,7 @@ export default function BankConnectionPage() {
     setError(null);
     setBusyId(connectionId ?? "new");
     try {
+      await ensureEditorSession();
       const response = await fetch("/api/bank-connections/link-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
