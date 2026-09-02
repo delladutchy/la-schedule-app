@@ -52,6 +52,59 @@ export interface WorklistEntry {
 }
 
 /**
+ * First day the LA Schedule invoice ledger covers.
+ *
+ * Everything before this belongs to the QuickBooks-era archive: 2025 jobs were
+ * invoiced outside this app, so the calendar-driven worklist was labelling them
+ * "Needs Invoice" purely because no invoice_data row existed. Clamping here —
+ * in the data layer rather than the API route — means no Range selection can
+ * pull an archived year back in.
+ *
+ * Display boundary only. Nothing is deleted, and no calendar event is modified.
+ */
+export const INVOICE_LEDGER_START_DATE = "2026-01-01";
+
+/** True when a job's start date falls inside the invoice ledger. */
+export function isWithinInvoiceLedger(
+  startDate: string,
+  ledgerStartDate: string = INVOICE_LEDGER_START_DATE,
+): boolean {
+  return startDate >= ledgerStartDate;
+}
+
+/** Clamp a requested window start so it can never precede the ledger start. */
+export function clampToInvoiceLedgerStart(
+  timeMinMs: number,
+  timezone: string,
+  ledgerStartDate: string = INVOICE_LEDGER_START_DATE,
+): number {
+  const ledgerStartMs = DateTime.fromISO(ledgerStartDate, { zone: timezone })
+    .startOf("day").toUTC().toMillis();
+  return Math.max(timeMinMs, ledgerStartMs);
+}
+
+/**
+ * Calendar start/end for display.
+ *
+ * Google gives all-day events an EXCLUSIVE end (the day after the last day), so
+ * those need one day subtracted. Timed events already carry a real end instant;
+ * subtracting a day from those produced an end earlier than the start — visible
+ * on same-day timed entries such as flight confirmations.
+ */
+export function deriveWorklistDateRange(opts: {
+  startMs: number;
+  endMs: number;
+  isAllDay: boolean;
+  timezone: string;
+}): { startDate: string; endDate: string } {
+  const startDate = DateTime.fromMillis(opts.startMs, { zone: opts.timezone }).toFormat("yyyy-LL-dd");
+  const rawEnd = DateTime.fromMillis(opts.endMs, { zone: opts.timezone });
+  const endDate = (opts.isAllDay ? rawEnd.minus({ days: 1 }) : rawEnd).toFormat("yyyy-LL-dd");
+  // Defensive floor: an end can never render before its start.
+  return { startDate, endDate: endDate < startDate ? startDate : endDate };
+}
+
+/**
  * Fetch all gig events from the LA Google Calendar for the given UTC-ms window,
  * then merge with Supabase invoice_data to produce a combined worklist.
  *
@@ -89,10 +142,15 @@ export async function listWorklistEntries(opts: {
     endTimeUtc: string | null;
     /** callTime from app-owned description block; only set for all-day events. */
     callTimeDefault: string | null;
+    /** Google all-day events use a date-only, exclusive end boundary. */
+    isAllDay: boolean;
   }> = [];
 
   const TIME_CHUNK_MS = 60 * 24 * 60 * 60 * 1000; // 60-day chunks
-  let chunkStart = opts.timeMinMs;
+  // Never query earlier than the ledger start, whatever Range was requested.
+  const windowStartMs = clampToInvoiceLedgerStart(opts.timeMinMs, tz);
+  if (opts.timeMaxMs <= windowStartMs) return [];
+  let chunkStart = windowStartMs;
   while (chunkStart < opts.timeMaxMs) {
     const chunkEnd = Math.min(chunkStart + TIME_CHUNK_MS, opts.timeMaxMs);
     let pageToken: string | undefined;
@@ -144,6 +202,7 @@ export async function listWorklistEntries(opts: {
           startTimeUtc,
           endTimeUtc,
           callTimeDefault,
+          isAllDay: !item.start?.dateTime,
         });
       }
       pageToken = resp.data.nextPageToken ?? undefined;
@@ -221,9 +280,9 @@ export async function listWorklistEntries(opts: {
   // ── Build WorklistEntry[] ─────────────────────────────────────────────────
   const entries: WorklistEntry[] = rawEvents.map((ev) => {
     const parsed    = parseLaJobSummary(ev.summary);
-    const startDate = DateTime.fromMillis(ev.startMs, { zone: tz }).toFormat("yyyy-LL-dd");
-    // endMs is exclusive (start of day after last day)
-    const endDate   = DateTime.fromMillis(ev.endMs, { zone: tz }).minus({ days: 1 }).toFormat("yyyy-LL-dd");
+    const { startDate, endDate } = deriveWorklistDateRange({
+      startMs: ev.startMs, endMs: ev.endMs, isAllDay: ev.isAllDay, timezone: tz,
+    });
     const workDates = enumerateIsoDatesInRange(startDate, endDate);
     const inv       = invoiceByEventId.get(ev.eventId);
 
@@ -248,7 +307,11 @@ export async function listWorklistEntries(opts: {
     };
   });
 
-  const dedupedEntries = dedupeWorklistEntries(entries);
+  // Google returns events that merely overlap the window, so a job starting in
+  // the archived year can still come back. Exclude by start date.
+  const ledgerEntries = entries.filter((entry) => isWithinInvoiceLedger(entry.startDate));
+
+  const dedupedEntries = dedupeWorklistEntries(ledgerEntries);
 
   // Newest first
   dedupedEntries.sort((a, b) => b.startDate.localeCompare(a.startDate));
