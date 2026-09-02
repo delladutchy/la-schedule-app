@@ -17,6 +17,12 @@
   path     = "/api/cron/google-watch-renew"
   schedule = "17 4 * * *"
 
+# Webhooks are the primary trigger; this cursor-based poll is a recovery path
+# for delayed/missed provider events and is safe to run repeatedly.
+[[crons]]
+  path     = "/api/cron/bank-sync"
+  schedule = "7,22,37,52 * * * *"
+
 # Security headers on every response.
 [[headers]]
   for = "/*"

@@ -105,10 +105,18 @@ export async function reconcileBankTransaction(
     return { action: "auto_apply", reason: "unique_exact_match", allocations: [], candidateMatches: [], paymentBatchId };
   }
 
-  const invoices = await listInvoicesForPayments();
-  const decision: ReconciliationDecision = transaction.amount > 0 && !/light\s*action/i.test(transaction.description)
-    ? { action: "review", reason: "unrecognized_counterparty", allocations: [], candidateMatches: [] }
-    : decideAutomaticReconciliation(transaction.amount, invoices);
+  // Provider feeds contain many withdrawals and unrelated deposits. Classify
+  // those before loading invoices; only a plausible Light Action deposit needs
+  // the existing matching engine and invoice query.
+  let decision: ReconciliationDecision;
+  if (transaction.amount <= 0) {
+    decision = { action: "ignore", reason: "not_a_deposit", allocations: [], candidateMatches: [] };
+  } else if (!/light\s*action/i.test(transaction.description)) {
+    decision = { action: "review", reason: "unrecognized_counterparty", allocations: [], candidateMatches: [] };
+  } else {
+    const invoices = await listInvoicesForPayments();
+    decision = decideAutomaticReconciliation(transaction.amount, invoices);
+  }
   if (decision.action === "ignore") {
     const { error: ignoreError } = await db.from("bank_transactions").update({
       reconciliation_status: "ignored",

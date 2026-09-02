@@ -2396,6 +2396,45 @@ html.modal-open body {
   word-break: break-all;
 }
 
+/* Bank connection admin */
+.bank-admin { max-width: 760px; }
+.bank-admin-heading,
+.bank-connection-title,
+.bank-toolbar,
+.bank-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bank-admin-heading { align-items: flex-start; margin-bottom: 18px; }
+.bank-admin-heading p { margin: 6px 0 0; max-width: 600px; color: var(--text-muted); font-size: 14px; line-height: 1.45; }
+.bank-admin-heading a { white-space: nowrap; font-size: 14px; }
+.bank-toolbar { justify-content: flex-start; margin: 14px 0; }
+.bank-connection-card { margin-top: 14px; }
+.bank-connection-title { align-items: flex-start; margin-bottom: 12px; }
+.bank-connection-title h2 { display: inline; margin-right: 8px; }
+.bank-provider,
+.bank-muted { color: var(--text-muted); font-size: 13px; }
+.bank-health { display: inline-block; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 600; background: var(--border); }
+.bank-health--healthy { color: #08783e; background: #e4f7ec; }
+.bank-health--syncing,
+.bank-health--pending { color: #765800; background: #fff3c4; }
+.bank-health--degraded,
+.bank-health--relogin_required { color: #9b2c20; background: #fde8e5; }
+.bank-health--disconnected { color: var(--text-muted); }
+:root[data-theme="dark"] .bank-health--healthy { color: #86efac; background: #14532d; }
+:root[data-theme="dark"] .bank-health--syncing,
+:root[data-theme="dark"] .bank-health--pending { color: #fcd34d; background: #451a03; }
+:root[data-theme="dark"] .bank-health--degraded,
+:root[data-theme="dark"] .bank-health--relogin_required { color: #fca5a5; background: #450a0a; }
+.bank-actions { justify-content: flex-start; flex-wrap: wrap; margin-top: 14px; }
+.bank-disconnect { color: #9b2c20; }
+@media (max-width: 640px) {
+  .bank-admin-heading { display: block; }
+  .bank-admin-heading a { display: inline-block; margin-top: 10px; }
+}
+
 /* QuickBooks admin page */
 .qb-section {
   margin-top: 24px;

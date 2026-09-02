@@ -156,6 +156,20 @@ const EnvSchema = z.object({
   /** Optional canonical public site URL used for webhook registration. */
   PUBLIC_SITE_URL: z.string().url().optional(),
 
+  // ── Plaid bank transaction sync (all optional; connection UI reports gaps) ─
+
+  /** Plaid environment. Use sandbox locally, production for Wells Fargo. */
+  PLAID_ENV: z.enum(["sandbox", "production"]).default("sandbox"),
+  /** Server-only Plaid application credentials. */
+  PLAID_CLIENT_ID: z.string().min(1).optional(),
+  PLAID_SECRET: z.string().min(1).optional(),
+  /** Public HTTPS endpoint registered on each Plaid Item. */
+  PLAID_WEBHOOK_URL: z.string().url().optional(),
+  /** OAuth return URI registered in the Plaid dashboard. */
+  PLAID_REDIRECT_URI: z.string().url().optional(),
+  /** Base64-encoded 32-byte AES key used to encrypt provider access tokens. */
+  BANK_TOKEN_ENCRYPTION_KEY: z.string().min(1).optional(),
+
   /**
    * If true (default), the public homepage will attempt a one-time server-side
    * snapshot bootstrap when it detects an unavailable state (for example, a

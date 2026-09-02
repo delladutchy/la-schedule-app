@@ -732,6 +732,7 @@ export default function PaymentsPage() {
       <div className="admin-page-header">
         <h1 className="admin-page-title">Invoice Payments</h1>
         <p className="admin-page-subtitle">Record Light Action direct deposits and allocate them across unpaid invoices</p>
+        <p className="admin-page-subtitle"><a href="/admin/bank">Manage automatic bank connection</a></p>
       </div>
 
       {batches.length > 0 ? (
