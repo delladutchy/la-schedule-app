@@ -826,6 +826,23 @@ export interface SheetPaymentUpdate {
   paymentBatchRef:     string; // column AB
 }
 
+export function findSheetPaymentUpdateRow(
+  rows: unknown[][],
+  laJobNumber: string,
+  invoiceNumber: string,
+): number {
+  const normLa = normalizeLA(laJobNumber);
+  const normInv = invoiceNumber.trim();
+  for (let i = 1; i < rows.length; i++) {
+    const cellA = String(rows[i]?.[0] ?? "").trim();
+    const cellC = String(rows[i]?.[2] ?? "").trim();
+    const cellT = String(rows[i]?.[19] ?? "").trim();
+    if (cellT === VOID_STATUS) continue;
+    if ((normLa && existingRowLaKey(cellA, cellC) === normLa) || (normInv && cellA === normInv)) return i + 1;
+  }
+  return -1;
+}
+
 /**
  * Targeted update of payment columns (T:AB) in an existing sheet row.
  * Also refreshes column A (invoice number) in case it was generated in the old JU-format.
@@ -858,22 +875,7 @@ export async function updateSheetPaymentColumns(
   });
 
   const rows = readRes.data.values ?? [];
-  let matchRowIndex = -1;
-
-  for (let i = 1; i < rows.length; i++) {
-    const cellA = String(rows[i]?.[0]  ?? "").trim();
-    const cellC = String(rows[i]?.[2]  ?? "").trim();
-    const cellT = String(rows[i]?.[19] ?? "").trim(); // T: STATUS
-    if (cellT === VOID_STATUS) continue; // skip voided rows — they are neutralised
-    if (normLa && existingRowLaKey(cellA, cellC) === normLa) {
-      matchRowIndex = i + 1;
-      break;
-    }
-    if (normInv && cellA === normInv) {
-      matchRowIndex = i + 1;
-      break;
-    }
-  }
+  const matchRowIndex = findSheetPaymentUpdateRow(rows, normLa, normInv);
 
   if (matchRowIndex < 0) return; // row not in sheet yet — no-op
 

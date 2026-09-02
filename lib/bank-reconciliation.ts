@@ -7,6 +7,8 @@ export interface BankTransactionImport {
   amount: number;
   description: string;
   sourceAccount: string | null;
+  /** Provider account id, stored server-side only and never returned to the browser. */
+  providerAccountId?: string | null;
   rawMetadata: Record<string, unknown>;
 }
 
@@ -25,7 +27,7 @@ export type ReconciliationDecision =
     }
   | {
       action: "review";
-      reason: "no_exact_match" | "ambiguous_exact_match" | "unrecognized_counterparty";
+      reason: "no_exact_match" | "ambiguous_exact_match" | "unrecognized_counterparty" | "ambiguous_cross_source_overlap";
       allocations: [];
       candidateMatches: AutomaticAllocation[][];
     }
@@ -34,6 +36,12 @@ export type ReconciliationDecision =
       reason: "not_a_deposit";
       allocations: [];
       candidateMatches: [];
+    }
+  | {
+      action: "duplicate";
+      reason: "cross_source_duplicate";
+      allocations: [];
+      candidateMatches: AutomaticAllocation[][];
     };
 
 function round2(value: number): number {

@@ -20,11 +20,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!result.ok) return result.response;
   const config = getPlaidConfigurationStatus(result.env);
   const connections = await listPublicBankConnections();
+  const connected = connections.filter((connection) => connection.connection_status !== "disconnected");
   return NextResponse.json({
     provider: "plaid",
     environment: result.env.PLAID_ENV,
     configured: config.configured,
     missingConfig: config.missing,
+    billing: {
+      configuredPlan: result.env.PLAID_PLAN_NAME ?? null,
+      connectedItemCount: connected.length,
+      connectedAccountCount: connected.reduce((count, connection) => count + connection.accounts.filter((account) => account.enabled).length, 0),
+      expectedMonthlyCost: result.env.PLAID_EXPECTED_MONTHLY_COST ?? null,
+      expectedMonthlyCostLabel: "User-entered expected monthly cost",
+      rateStatement: "Plaid pricing is managed in the Plaid Dashboard. LA Schedule cannot determine your contracted rate automatically.",
+    },
     connections,
   });
 }

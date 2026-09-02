@@ -10,6 +10,8 @@ import {
   type BankTransactionImport,
   type ReconciliationDecision,
 } from "./bank-reconciliation";
+import { findCrossSourceOverlap } from "./bank-overlap-store";
+import type { AutomaticAllocation } from "./bank-reconciliation";
 
 export interface StoredBankTransaction {
   id: string;
@@ -19,8 +21,9 @@ export interface StoredBankTransaction {
   amount: number;
   description: string;
   source_account: string | null;
+  provider_account_id: string | null;
   raw_metadata: Record<string, unknown>;
-  reconciliation_status: "pending" | "review" | "applied" | "reversed" | "ignored";
+  reconciliation_status: "pending" | "review" | "applied" | "duplicate" | "reversed" | "ignored";
   reconciliation_details: Record<string, unknown>;
 }
 
@@ -39,6 +42,7 @@ function coerceTransaction(row: Record<string, unknown>): StoredBankTransaction 
     amount: Number(row.amount ?? 0),
     description: String(row.description ?? ""),
     source_account: row.source_account != null ? String(row.source_account) : null,
+    provider_account_id: row.provider_account_id != null ? String(row.provider_account_id) : null,
     raw_metadata: (row.raw_metadata as Record<string, unknown> | null) ?? {},
     reconciliation_status: String(row.reconciliation_status ?? "pending") as StoredBankTransaction["reconciliation_status"],
     reconciliation_details: (row.reconciliation_details as Record<string, unknown> | null) ?? {},
@@ -69,6 +73,7 @@ export async function importBankTransactions(
       amount: transaction.amount,
       description: transaction.description,
       source_account: transaction.sourceAccount,
+      provider_account_id: transaction.providerAccountId ?? null,
       raw_metadata: transaction.rawMetadata,
     }).select("*").single();
 
@@ -104,6 +109,9 @@ export async function reconcileBankTransaction(
       ? transaction.reconciliation_details.paymentBatchId : undefined;
     return { action: "auto_apply", reason: "unique_exact_match", allocations: [], candidateMatches: [], paymentBatchId };
   }
+  if (transaction.reconciliation_status === "duplicate") {
+    return { action: "duplicate", reason: "cross_source_duplicate", allocations: [], candidateMatches: [] };
+  }
 
   // Provider feeds contain many withdrawals and unrelated deposits. Classify
   // those before loading invoices; only a plausible Light Action deposit needs
@@ -114,6 +122,48 @@ export async function reconcileBankTransaction(
   } else if (!/light\s*action/i.test(transaction.description)) {
     decision = { action: "review", reason: "unrecognized_counterparty", allocations: [], candidateMatches: [] };
   } else {
+    const overlap = await findCrossSourceOverlap({
+      source: transaction.source,
+      postedDate: transaction.posted_date,
+      amount: transaction.amount,
+      description: transaction.description,
+      sourceAccount: transaction.source_account,
+    });
+    if (overlap.action === "duplicate") {
+      const candidate = overlap.candidate;
+      const { error } = await db.rpc("mark_bank_transaction_duplicate", {
+        p_bank_transaction_id: transaction.id,
+        p_duplicate_of_bank_transaction_id: candidate.bankTransactionId,
+        p_linked_payment_batch_id: candidate.paymentBatchId,
+        p_details: {
+          reason: "cross_source_duplicate",
+          evidence: candidate,
+          providerTransactionSource: transaction.source,
+          postedDate: transaction.posted_date,
+          amount: transaction.amount,
+          linkedAt: new Date().toISOString(),
+        },
+      });
+      if (error) throw new Error(`[bank] duplicate provenance link failed: ${error.message}`);
+      return { action: "duplicate", reason: "cross_source_duplicate", allocations: [], candidateMatches: [] };
+    }
+    if (overlap.action === "review") {
+      const { error: reviewError } = await db.from("bank_reconciliation_reviews").upsert({
+        bank_transaction_id: transaction.id,
+        reason: overlap.reason,
+        candidate_matches: overlap.candidates,
+        review_status: "open",
+        resolved_at: null,
+        resolution_notes: null,
+      }, { onConflict: "bank_transaction_id" });
+      if (reviewError) throw new Error(`[bank] overlap review write failed: ${reviewError.message}`);
+      const { error: updateError } = await db.from("bank_transactions").update({
+        reconciliation_status: "review",
+        reconciliation_details: { reason: overlap.reason, evidence: overlap.candidates },
+      }).eq("id", transaction.id);
+      if (updateError) throw new Error(`[bank] overlap review status failed: ${updateError.message}`);
+      return { action: "review", reason: overlap.reason, allocations: [], candidateMatches: [] };
+    }
     const invoices = await listInvoicesForPayments();
     decision = decideAutomaticReconciliation(transaction.amount, invoices);
   }
@@ -168,9 +218,39 @@ export async function reverseBankTransactionReconciliation(transactionId: string
 export async function listOpenBankReconciliationReviews(): Promise<Record<string, unknown>[]> {
   const db = getSupabaseServerClient();
   const { data, error } = await db.from("bank_reconciliation_reviews")
-    .select("*, bank_transactions(*)").eq("review_status", "open").order("created_at");
+    .select("id, bank_transaction_id, reason, candidate_matches, created_at, bank_transactions(id, posted_date, amount, description, source_account, reconciliation_status)")
+    .eq("review_status", "open").order("created_at");
   if (error) throw new Error(`[bank] list reviews failed: ${error.message}`);
   return (data ?? []) as Record<string, unknown>[];
+}
+
+export async function applyReviewedBankTransaction(
+  transactionId: string,
+  allocations: AutomaticAllocation[],
+  reviewedBy: string,
+): Promise<string> {
+  const db = getSupabaseServerClient();
+  const { data, error } = await db.rpc("apply_bank_transaction_reconciliation", {
+    p_bank_transaction_id: transactionId,
+    p_allocations: allocations,
+    p_created_by: reviewedBy,
+  });
+  if (error) throw new Error(`[bank] reviewed apply failed: ${error.message}`);
+  await Promise.all(allocations.map((allocation) => syncInvoicePaymentToYearSheet(allocation.googleEventId)));
+  return String(data ?? "");
+}
+
+export async function dismissBankReconciliationReview(transactionId: string, reviewedBy: string): Promise<void> {
+  const db = getSupabaseServerClient();
+  const now = new Date().toISOString();
+  const { error } = await db.from("bank_reconciliation_reviews").update({
+    review_status: "dismissed", resolved_at: now, resolution_notes: `Dismissed by ${reviewedBy}.`,
+  }).eq("bank_transaction_id", transactionId).eq("review_status", "open");
+  if (error) throw new Error(`[bank] dismiss review failed: ${error.message}`);
+  const { error: transactionError } = await db.from("bank_transactions").update({
+    reconciliation_status: "ignored", reconciliation_details: { reason: "review_dismissed", reviewedBy, reviewedAt: now },
+  }).eq("id", transactionId).eq("reconciliation_status", "review");
+  if (transactionError) throw new Error(`[bank] dismiss transaction failed: ${transactionError.message}`);
 }
 
 async function syncInvoicePaymentToYearSheet(googleEventId: string): Promise<void> {

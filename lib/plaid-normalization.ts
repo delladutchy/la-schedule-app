@@ -28,6 +28,7 @@ export function normalizePlaidPostedTransaction(
     amount,
     description,
     sourceAccount: `${context.institutionName} — ${context.accountName}${context.accountMask ? ` ••••${context.accountMask}` : ""}`,
+    providerAccountId: transaction.account_id,
     rawMetadata: {
       provider: "plaid",
       item_id: context.providerItemId,

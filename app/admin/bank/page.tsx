@@ -22,6 +22,9 @@ interface BankConnection {
   consent_expiration_time: string | null;
   last_successful_sync_at: string | null;
   last_webhook_at: string | null;
+  last_recovery_poll_at: string | null;
+  last_cursor_advanced_at: string | null;
+  cursor_initialized: boolean;
   last_error_code: string | null;
   last_error_message: string | null;
   connected_at: string;
@@ -35,6 +38,24 @@ interface ConnectionStatus {
   configured: boolean;
   missingConfig: string[];
   connections: BankConnection[];
+  billing: {
+    configuredPlan: string | null;
+    connectedItemCount: number;
+    connectedAccountCount: number;
+    expectedMonthlyCost: number | null;
+    expectedMonthlyCostLabel: string;
+    rateStatement: string;
+  };
+}
+
+interface ReviewAllocation { googleEventId: string; invoiceNumber: string | null; amount: number }
+interface BankReview {
+  id: string;
+  bank_transaction_id: string;
+  reason: string;
+  candidate_matches: ReviewAllocation[][] | Record<string, unknown>[];
+  created_at: string;
+  bank_transactions: { posted_date: string; amount: number; description: string; source_account: string | null; reconciliation_status: string } | null;
 }
 
 const LINK_TOKEN_KEY = "la_plaid_link_token";
@@ -63,6 +84,7 @@ export default function BankConnectionPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [linkConnectionId, setLinkConnectionId] = useState<string | null>(null);
+  const [reviews, setReviews] = useState<BankReview[]>([]);
 
   const loadStatus = useCallback(async () => {
     setLoading(true);
@@ -71,6 +93,8 @@ export default function BankConnectionPage() {
       if (response.status === 401 || response.status === 403) throw new Error("Not authorized. Log in as Jeff first.");
       if (!response.ok) throw new Error("Could not load bank connection status.");
       setStatus(await response.json() as ConnectionStatus);
+      const reviewResponse = await fetch("/api/bank-reconciliation/reviews", { credentials: "same-origin" });
+      if (reviewResponse.ok) setReviews((await reviewResponse.json() as { reviews: BankReview[] }).reviews);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not load bank connection status.");
@@ -186,6 +210,26 @@ export default function BankConnectionPage() {
     }
   }
 
+  async function reviewAction(review: BankReview, action: "retry" | "dismiss" | "apply" | "reverse", allocations?: ReviewAllocation[]) {
+    if ((action === "dismiss" || action === "reverse") && !window.confirm(`${action === "reverse" ? "Reverse the existing payment allocation" : "Dismiss this review"}? This is an explicit ledger action.`)) return;
+    setBusyId(review.bank_transaction_id);
+    setError(null);
+    try {
+      const endpoint = action === "reverse"
+        ? `/api/bank-transactions/${review.bank_transaction_id}/reverse`
+        : `/api/bank-transactions/${review.bank_transaction_id}/review`;
+      const response = await fetch(endpoint, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+        body: action === "reverse" ? undefined : JSON.stringify({ action, allocations }),
+      });
+      const data = await response.json() as { detail?: string; error?: string };
+      if (!response.ok) throw new Error(data.detail ?? data.error ?? "Review action failed.");
+      await loadStatus();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Review action failed.");
+    } finally { setBusyId(null); }
+  }
+
   return (
     <main className="admin bank-admin">
       <div className="bank-admin-heading">
@@ -240,9 +284,13 @@ export default function BankConnectionPage() {
             <dd>{fmtDate(connection.last_successful_sync_at)}</dd>
             <dt>Last webhook</dt>
             <dd>{fmtDate(connection.last_webhook_at)}</dd>
+            <dt>Last recovery poll</dt>
+            <dd>{fmtDate(connection.last_recovery_poll_at)}</dd>
+            <dt>Cursor state</dt>
+            <dd>{connection.cursor_initialized ? `Initialized${connection.last_cursor_advanced_at ? ` — advanced ${fmtDate(connection.last_cursor_advanced_at)}` : ""}` : "Awaiting first sync"}</dd>
             <dt>Consent expires</dt>
             <dd>{connection.consent_expiration_time ? fmtDate(connection.consent_expiration_time) : "No date reported"}</dd>
-            {connection.last_error_code && <><dt>Connection issue</dt><dd>{connection.last_error_code}</dd></>}
+            {connection.last_error_code && <><dt>Connection issue</dt><dd>{connection.last_error_code}{connection.last_error_message ? ` — ${connection.last_error_message}` : ""}</dd></>}
           </dl>
           {connection.connection_status !== "disconnected" && (
             <div className="bank-actions">
@@ -257,6 +305,48 @@ export default function BankConnectionPage() {
       {status && status.connections.length === 0 && status.configured && (
         <section className="qb-section"><p className="bank-muted">No bank account is connected yet.</p></section>
       )}
+
+      {status && (
+        <section className="qb-section">
+          <h2>Plaid billing</h2>
+          <dl className="kv">
+            <dt>Environment</dt><dd>{status.environment}</dd>
+            <dt>Configured plan</dt><dd>{status.billing.configuredPlan ?? "Not configured"}</dd>
+            <dt>Connected Items / accounts</dt><dd>{status.billing.connectedItemCount} / {status.billing.connectedAccountCount}</dd>
+            {status.billing.expectedMonthlyCost != null && <><dt>{status.billing.expectedMonthlyCostLabel}</dt><dd>${status.billing.expectedMonthlyCost.toFixed(2)}</dd></>}
+          </dl>
+          <p className="bank-muted">{status.billing.rateStatement}</p>
+          <p className="bank-muted">To verify the exact rate, open Plaid Dashboard → Team Settings → Billing → Contracts &amp; Rates.</p>
+          <a href="https://dashboard.plaid.com" target="_blank" rel="noreferrer">Open Plaid Dashboard</a>
+        </section>
+      )}
+
+      <section className="qb-section">
+        <h2>Reconciliation review queue</h2>
+        {reviews.length === 0 && <p className="bank-muted">No deposits currently require review.</p>}
+        {reviews.map((review) => {
+          const transaction = Array.isArray(review.bank_transactions) ? review.bank_transactions[0] : review.bank_transactions;
+          const candidates = Array.isArray(review.candidate_matches) ? review.candidate_matches : [];
+          const applyCandidates = candidates.filter((candidate): candidate is ReviewAllocation[] => Array.isArray(candidate) && candidate.length > 0 && candidate.every((entry) => typeof entry?.googleEventId === "string"));
+          const providerChange = ["provider_modified_applied_transaction", "provider_removed_applied_transaction"].includes(review.reason);
+          return (
+            <div className="bank-review" key={review.id}>
+              <p><strong>{review.reason.replaceAll("_", " ")}</strong></p>
+              {transaction && <p className="bank-muted">{transaction.posted_date} · ${Number(transaction.amount).toFixed(2)} · {transaction.description}</p>}
+              {applyCandidates.map((candidate, index) => (
+                <button key={index} className="qb-btn qb-btn--secondary" disabled={busyId !== null} onClick={() => void reviewAction(review, "apply", candidate)}>
+                  Apply {candidate.map((entry) => `#${entry.invoiceNumber ?? "?"} $${entry.amount.toFixed(2)}`).join(" + ")}
+                </button>
+              ))}
+              <div className="bank-actions">
+                <button className="qb-btn qb-btn--secondary" disabled={busyId !== null} onClick={() => void reviewAction(review, "retry")}>Re-run matching</button>
+                {providerChange && <button className="qb-btn bank-disconnect" disabled={busyId !== null} onClick={() => void reviewAction(review, "reverse")}>Reverse applied payment</button>}
+                <button className="qb-btn qb-btn--secondary" disabled={busyId !== null} onClick={() => void reviewAction(review, "dismiss")}>Dismiss</button>
+              </div>
+            </div>
+          );
+        })}
+      </section>
 
       <section className="qb-section">
         <h2>CSV fallback</h2>

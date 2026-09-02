@@ -13,6 +13,8 @@ import {
   requirePlaidRuntimeConfig,
   type PlaidRuntimeConfig,
 } from "./plaid-client";
+import { collectPlaidSyncUpdates } from "./plaid-sync-pages";
+import { decideProviderTransactionChange } from "./provider-transaction-change";
 
 export interface BankProviderConnection {
   id: string;
@@ -26,6 +28,8 @@ export interface BankProviderConnection {
   consent_expiration_time: string | null;
   last_successful_sync_at: string | null;
   last_webhook_at: string | null;
+  last_recovery_poll_at: string | null;
+  last_cursor_advanced_at: string | null;
   last_error_code: string | null;
   last_error_message: string | null;
   connected_at: string;
@@ -47,6 +51,7 @@ export interface BankProviderAccount {
 export type PublicBankProviderAccount = Omit<BankProviderAccount, "provider_account_id" | "persistent_account_id">;
 
 export interface PublicBankConnection extends Omit<BankProviderConnection, "provider_item_id" | "access_token_encrypted" | "sync_cursor"> {
+  cursor_initialized: boolean;
   accounts: PublicBankProviderAccount[];
 }
 
@@ -57,7 +62,7 @@ function coerceConnection(row: Record<string, unknown>): BankProviderConnection 
 export async function listPublicBankConnections(): Promise<PublicBankConnection[]> {
   const db = getSupabaseServerClient();
   const { data, error } = await db.from("bank_provider_connections")
-    .select("id, provider, institution_id, institution_name, connection_status, consent_expiration_time, last_successful_sync_at, last_webhook_at, last_error_code, last_error_message, connected_at, disconnected_at, bank_provider_accounts(id, connection_id, account_name, official_name, mask, account_type, account_subtype, enabled)")
+    .select("id, provider, institution_id, institution_name, connection_status, sync_cursor, consent_expiration_time, last_successful_sync_at, last_webhook_at, last_recovery_poll_at, last_cursor_advanced_at, last_error_code, last_error_message, connected_at, disconnected_at, bank_provider_accounts(id, connection_id, account_name, official_name, mask, account_type, account_subtype, enabled)")
     .order("connected_at", { ascending: false });
   if (error) throw new Error(`[bank-provider] list connections failed: ${error.message}`);
   return (data ?? []).map((row) => {
@@ -65,8 +70,8 @@ export async function listPublicBankConnections(): Promise<PublicBankConnection[
     const accounts = Array.isArray(raw.bank_provider_accounts)
       ? raw.bank_provider_accounts as unknown as PublicBankProviderAccount[]
       : [];
-    const { bank_provider_accounts: _accounts, ...connection } = raw;
-    return { ...(connection as unknown as Omit<PublicBankConnection, "accounts">), accounts };
+    const { bank_provider_accounts: _accounts, sync_cursor, ...connection } = raw;
+    return { ...(connection as unknown as Omit<PublicBankConnection, "accounts" | "cursor_initialized">), cursor_initialized: typeof sync_cursor === "string" && sync_cursor.length > 0, accounts };
   });
 }
 
@@ -183,7 +188,7 @@ async function importOrRefreshPostedTransaction(transaction: BankTransactionImpo
     || Number(data.amount) !== transaction.amount
     || String(data.description) !== transaction.description;
   if (!changed) return;
-  if (data.reconciliation_status === "applied") {
+  if (decideProviderTransactionChange(String(data.reconciliation_status), "modified") === "review_applied_change") {
     await queueProviderReview(String(data.id), "provider_modified_applied_transaction", {
       postedDate: transaction.postedDate,
       amount: transaction.amount,
@@ -197,6 +202,7 @@ async function importOrRefreshPostedTransaction(transaction: BankTransactionImpo
     amount: transaction.amount,
     description: transaction.description,
     source_account: transaction.sourceAccount,
+    provider_account_id: transaction.providerAccountId ?? null,
     raw_metadata: transaction.rawMetadata,
     reconciliation_status: "pending",
     reconciliation_details: { reason: "provider_modified_transaction" },
@@ -225,7 +231,7 @@ async function handleRemovedTransactions(transactionIds: string[]): Promise<void
     .eq("source", "plaid").in("external_transaction_id", transactionIds);
   if (error) throw new Error(`[bank-provider] load removed transactions failed: ${error.message}`);
   for (const row of data ?? []) {
-    if (row.reconciliation_status === "applied") {
+    if (decideProviderTransactionChange(String(row.reconciliation_status), "removed") === "review_applied_change") {
       await queueProviderReview(String(row.id), "provider_removed_applied_transaction", {
         externalTransactionId: row.external_transaction_id,
       });
@@ -303,24 +309,28 @@ export async function syncPlaidConnection(
 
 async function fetchPlaidSync(config: PlaidRuntimeConfig, accessToken: string, initialCursor: string | null) {
   const plaid = createPlaidClient(config);
-  let cursor = initialCursor ?? undefined;
-  const added: Transaction[] = [];
-  const modified: Transaction[] = [];
-  const removed: Array<{ transaction_id: string }> = [];
-  do {
+  return collectPlaidSyncUpdates<Transaction, { transaction_id: string }>(async (cursor) => {
     const response = await plaid.transactionsSync({
       access_token: accessToken,
       cursor,
       count: 500,
       options: { include_original_description: true },
     });
-    added.push(...response.data.added);
-    modified.push(...response.data.modified);
-    removed.push(...response.data.removed);
-    cursor = response.data.next_cursor;
-    if (!response.data.has_more) break;
-  } while (true);
-  return { added, modified, removed, nextCursor: cursor ?? initialCursor ?? "" };
+    return {
+      added: response.data.added,
+      modified: response.data.modified,
+      removed: response.data.removed,
+      nextCursor: response.data.next_cursor,
+      hasMore: response.data.has_more,
+    };
+  }, initialCursor);
+}
+
+export async function markBankRecoveryPoll(connectionId: string): Promise<void> {
+  const db = getSupabaseServerClient();
+  const { error } = await db.from("bank_provider_connections")
+    .update({ last_recovery_poll_at: new Date().toISOString() }).eq("id", connectionId);
+  if (error) throw new Error(`[bank-provider] recovery telemetry failed: ${error.message}`);
 }
 
 async function finishSync(

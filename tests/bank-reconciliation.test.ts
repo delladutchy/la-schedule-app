@@ -6,6 +6,7 @@ import {
 } from "@/lib/bank-reconciliation";
 import { parseWellsFargoCsv } from "@/lib/wells-fargo-csv";
 import type { InvoiceForMatching } from "@/lib/payment-matching";
+import { findSheetPaymentUpdateRow } from "@/lib/google-sheets";
 
 function invoice(
   number: string,
@@ -152,5 +153,12 @@ describe("year-specific Sheet routing", () => {
       .toBe("LA PAY (2026)");
     expect(resolveLaPaySheetName(["2027-01-02"], "LA PAY (2026)"))
       .toBe("LA PAY (2027)");
+  });
+
+  it("targets the same existing LA PAY row on every retry and never appends", () => {
+    const rows = [["Invoice", "Date", "LA #"], ["1014", "8/20/2026", "72180"]];
+    expect(findSheetPaymentUpdateRow(rows, "LA 72180", "1014")).toBe(2);
+    expect(findSheetPaymentUpdateRow(rows, "LA 72180", "1014")).toBe(2);
+    expect(findSheetPaymentUpdateRow(rows, "LA 99999", "9999")).toBe(-1);
   });
 });

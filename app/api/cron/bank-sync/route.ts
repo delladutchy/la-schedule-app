@@ -2,7 +2,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { getEnvConfig } from "@/lib/config";
 import { getPlaidConfigurationStatus } from "@/lib/plaid-client";
-import { listSyncableBankConnectionIds, syncPlaidConnection } from "@/lib/plaid-bank-sync";
+import { listSyncableBankConnectionIds, markBankRecoveryPoll, syncPlaidConnection } from "@/lib/plaid-bank-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +21,7 @@ async function run(): Promise<NextResponse> {
   const results = [];
   for (const connectionId of connectionIds) {
     try {
+      await markBankRecoveryPoll(connectionId);
       results.push({ connectionId, ...(await syncPlaidConnection(connectionId)) });
     } catch {
       results.push({ connectionId, error: "sync_failed" });
