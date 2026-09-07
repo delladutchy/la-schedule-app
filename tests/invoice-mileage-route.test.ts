@@ -130,4 +130,84 @@ describe("/api/invoice/mileage", () => {
     const res = await GET(req as never);
     expect(res.status).toBe(401);
   });
+
+  /**
+   * Distance Matrix answers API-level failures with HTTP *200* plus an empty
+   * `rows`, so `!res.ok` never fires and execution used to fall through to the
+   * element check — turning a billing/quota problem into "no_route_found", i.e.
+   * blaming the job's address.
+   *
+   * An HTTP 200 is also cacheable, so Next.js cached that denial per
+   * destination URL. After Maps billing was restored, every venue queried
+   * during the outage kept returning "no route" while venues first queried
+   * afterwards worked — which is why "Rate Field, Chicago, IL" stayed broken
+   * but "Rate Field, Chicago,IL" (different URL, different cache key) did not.
+   */
+  it("reports REQUEST_DENIED as an API failure, not a missing route", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "REQUEST_DENIED",
+        error_message: "You must enable Billing on the Google Cloud Project",
+        origin_addresses: [],
+        destination_addresses: [],
+        rows: [],
+      }),
+    }));
+    const GET = await loadRoute();
+    const res = await GET(makeRequest("Rate Field, Chicago, IL") as never);
+    const json = await res.json() as { error: string; reason: string };
+    expect(res.status).toBe(502);
+    expect(json.error).toBe("distance_api_unavailable");
+    expect(json.reason).toBe("REQUEST_DENIED");
+  });
+
+  it("reports OVER_QUERY_LIMIT as an API failure too", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "OVER_QUERY_LIMIT", rows: [] }),
+    }));
+    const GET = await loadRoute();
+    const res = await GET(makeRequest("Comerica Park, Detroit, MI") as never);
+    expect(res.status).toBe(502);
+    expect((await res.json() as { reason: string }).reason).toBe("OVER_QUERY_LIMIT");
+  });
+
+  it("does not let Next.js cache the upstream Distance Matrix call", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => makeDistanceResponse(metersForMiles(15)),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const GET = await loadRoute();
+    await GET(makeRequest("Dewey Beach, DE") as never);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: "no-store" });
+  });
+
+  it("still succeeds when the top-level status is OK", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "OK", ...makeDistanceResponse(metersForMiles(93)) }),
+    }));
+    const GET = await loadRoute();
+    const json = await (await GET(
+      makeRequest("Chase Center on the Riverfront, Wilmington, DE") as never,
+    )).json() as { oneWayMiles: number; plausible: boolean };
+    expect(json.oneWayMiles).toBe(93);
+    expect(json.plausible).toBe(true);
+  });
+
+  it("still returns 404 for a genuine ZERO_RESULTS route", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "ZERO_RESULTS",
+        rows: [{ elements: [{ status: "ZERO_RESULTS" }] }],
+      }),
+    }));
+    const GET = await loadRoute();
+    const res = await GET(makeRequest("Middle of the Atlantic Ocean") as never);
+    expect(res.status).toBe(404);
+    expect((await res.json() as { error: string }).error).toBe("no_route_found");
+  });
 });

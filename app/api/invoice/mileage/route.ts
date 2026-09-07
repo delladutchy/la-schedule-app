@@ -32,12 +32,35 @@ export async function GET(request: NextRequest) {
     url.searchParams.set("units", "imperial");
     url.searchParams.set("key", apiKey);
 
-    const res = await fetch(url.toString());
+    // `no-store` is essential here, not merely an optimization. Distance
+    // Matrix reports API-level failures (REQUEST_DENIED when billing is off,
+    // quota errors) with HTTP *200* and an empty `rows`, which makes such a
+    // response perfectly cacheable — Next.js would then replay that failure
+    // for this exact destination indefinitely, long after the underlying
+    // problem was fixed. That is what happened while Maps billing was
+    // disabled: every venue queried during the outage kept returning "no
+    // route", while venues first queried afterwards worked fine.
+    const res = await fetch(url.toString(), { cache: "no-store" });
     if (!res.ok) return NextResponse.json({ error: "distance_api_failed" }, { status: 502 });
 
     const data = await res.json() as {
+      status?: string;
+      error_message?: string;
       rows?: Array<{ elements?: Array<{ status: string; distance?: { value: number } }> }>;
     };
+
+    // The top-level status describes the API call, not the journey. Reporting
+    // REQUEST_DENIED or OVER_QUERY_LIMIT as "no_route_found" would blame the
+    // job's address for what is really a configuration or quota problem.
+    if (data.status && data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+      console.error(
+        `[mileage] distance matrix unavailable status=${data.status} message=${data.error_message ?? "(none)"}`,
+      );
+      return NextResponse.json(
+        { error: "distance_api_unavailable", reason: data.status },
+        { status: 502 },
+      );
+    }
 
     const element = data.rows?.[0]?.elements?.[0];
     if (!element || element.status !== "OK" || element.distance == null) {
