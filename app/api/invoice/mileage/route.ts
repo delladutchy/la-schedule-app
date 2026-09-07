@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeEditorRequest } from "@/lib/editor-auth";
 import { isJeffEditorId } from "@/lib/job-time";
-import { lookupPlaceState } from "@/lib/places";
 import {
   DEWEY_ORIGIN,
   PHL_LABEL,
-  PHL_ONE_WAY_MILES,
+  classifyTravelBasis,
   isLightActionGig,
-  resolveMileageBasis,
+  phlMileage,
+  selectMileageForBasis,
 } from "@/lib/mileage-policy";
 
 export const dynamic = "force-dynamic";
@@ -17,8 +17,10 @@ export const dynamic = "force-dynamic";
 // Never use browser GPS or any dynamic location.
 const ORIGIN = DEWEY_ORIGIN;
 const METERS_PER_MILE = 1609.344;
-// Gigs are local to the Delmarva peninsula. Flag anything farther as suspicious
-// so the UI can prompt the user to enter miles manually instead of auto-filling.
+// Non-Light-Action jobs are local to the Delmarva peninsula. Flag anything
+// farther as suspicious so the UI prompts manual entry instead of auto-filling.
+// Light Action jobs use the drive/fly threshold instead — a long distance there
+// is a flight, not a bad geocode.
 const MAX_PLAUSIBLE_ONE_WAY_MILES = 200;
 
 export async function GET(request: NextRequest) {
@@ -34,31 +36,10 @@ export async function GET(request: NextRequest) {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) return NextResponse.json({ error: "not_configured" }, { status: 503 });
 
-  // Out-of-state Light Action gigs are flown, so the reimbursable drive is
-  // Dewey <-> PHL rather than Dewey <-> venue. Decided from the structured
-  // administrative area on the resolved place, never from substring matching,
-  // and never assumed when the state cannot be determined.
   const isLightAction = isLightActionGig(
     { calendarId: params.get("calendarId"), gigSummary: params.get("gigSummary") },
     env,
   );
-
-  if (isLightAction) {
-    const destinationState = await lookupPlaceState(location, apiKey);
-    const basis = resolveMileageBasis({ isLightAction, destinationState });
-
-    if (basis === "phl_flight") {
-      // Fixed route, fixed distance — no Distance Matrix call needed.
-      return NextResponse.json({
-        oneWayMiles: PHL_ONE_WAY_MILES,
-        roundTripMiles: PHL_ONE_WAY_MILES * 2,
-        plausible: true,
-        basis,
-        routeLabel: PHL_LABEL,
-        destinationState,
-      });
-    }
-  }
 
   try {
     const url = new URL("https://maps.googleapis.com/maps/api/distancematrix/json");
@@ -102,13 +83,32 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "no_route_found" }, { status: 404 });
     }
 
-    const oneWayMiles = Math.round(element.distance.value / METERS_PER_MILE);
-    const roundTripMiles = oneWayMiles * 2;
-    // If the result is implausibly far the job location is likely ambiguous
-    // (e.g. "Fenwick Island" resolving to SC instead of DE). Return the raw
-    // numbers but flag it so the UI prompts manual entry instead of auto-fill.
-    const plausible = oneWayMiles <= MAX_PLAUSIBLE_ONE_WAY_MILES;
-    return NextResponse.json({ oneWayMiles, roundTripMiles, plausible, basis: "venue" });
+    const venueOneWayMiles = Math.round(element.distance.value / METERS_PER_MILE);
+    const venue = { oneWayMiles: venueOneWayMiles, roundTripMiles: venueOneWayMiles * 2 };
+
+    // Classify from the venue distance we just fetched — no second API call,
+    // and no state-border heuristic. DC/Baltimore/Philadelphia stay drives.
+    const basis = classifyTravelBasis({ isLightAction, venueOneWayMiles });
+    const active = selectMileageForBasis(basis, venue) ?? venue;
+
+    // For a Light Action gig the drive/fly threshold has already accounted for
+    // distance, so a far venue is a flight rather than a suspect geocode. Other
+    // employers keep the original plausibility guard unchanged.
+    const plausible = isLightAction
+      ? true
+      : venueOneWayMiles <= MAX_PLAUSIBLE_ONE_WAY_MILES;
+
+    // Both legs are returned so the UI's Drive/Fly toggle can switch instantly
+    // without another round trip.
+    return NextResponse.json({
+      oneWayMiles: active.oneWayMiles,
+      roundTripMiles: active.roundTripMiles,
+      plausible,
+      basis,
+      isLightAction,
+      venue,
+      ...(isLightAction ? { phl: phlMileage(), routeLabel: PHL_LABEL } : {}),
+    });
   } catch {
     return NextResponse.json({ error: "calculation_failed" }, { status: 500 });
   }

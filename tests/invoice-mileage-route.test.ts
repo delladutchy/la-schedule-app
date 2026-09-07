@@ -232,154 +232,156 @@ describe("/api/invoice/mileage", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Out-of-state Light Action gigs are flown: the reimbursable drive is
-  // Dewey <-> PHL, not Dewey <-> venue.
+  // Drive/fly is decided by the real Dewey -> venue distance, never by the
+  // state border. DC/Baltimore/Philadelphia are drives; Chicago/Detroit/
+  // Milwaukee/Kansas City are flights.
   // -------------------------------------------------------------------------
 
-  it("Light Action + Delaware venue -> normal Dewey-to-venue mileage", async () => {
-    const fetchMock = vi.fn()
-      // 1st call: Places state lookup -> DE
-      .mockResolvedValueOnce(placesStateResponse("DE"))
-      // 2nd call: Distance Matrix to the actual venue
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ status: "OK", ...makeDistanceResponse(metersForMiles(93)) }),
-      });
-    vi.stubGlobal("fetch", fetchMock);
+  function distanceOnly(miles: number) {
+    return vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "OK", ...makeDistanceResponse(metersForMiles(miles)) }),
+    });
+  }
 
+  const DRIVE_CASES: Array<[string, string, number]> = [
+    ["Washington DC", "Capital One Arena, Washington, DC", 121],
+    ["Baltimore", "Oriole Park at Camden Yards, Baltimore, MD", 118],
+    ["Philadelphia", "Xfinity Mobile Arena, Philadelphia, PA", 119],
+  ];
+
+  it.each(DRIVE_CASES)(
+    "Light Action + %s -> DRIVE / actual venue mileage",
+    async (_name, location, miles) => {
+      const fetchMock = distanceOnly(miles);
+      vi.stubGlobal("fetch", fetchMock);
+      const GET = await loadRoute();
+      const res = await GET(makeJobRequest(location, {
+        calendarId: LA_CALENDAR,
+        gigSummary: "LA#70000 — Drive Job",
+      }) as never);
+      const json = await res.json() as { oneWayMiles: number; basis: string; venue: { oneWayMiles: number } };
+
+      expect(json.basis).toBe("venue");
+      expect(json.oneWayMiles).toBe(miles);
+      expect(json.venue.oneWayMiles).toBe(miles);
+      // One Distance Matrix call, no classification lookup.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain("distancematrix");
+    },
+  );
+
+  const FLY_CASES: Array<[string, string, number]> = [
+    ["Chicago", "Rate Field, Chicago, IL", 810],
+    ["Detroit", "Comerica Park, Detroit, MI", 638],
+    ["Milwaukee", "American Family Field, Milwaukee, WI", 906],
+    ["Kansas City", "Kauffman Stadium, Kansas City, MO", 1166],
+  ];
+
+  it.each(FLY_CASES)(
+    "Light Action + %s -> FLY / PHL 112 & 224",
+    async (_name, location, miles) => {
+      vi.stubGlobal("fetch", distanceOnly(miles));
+      const GET = await loadRoute();
+      const res = await GET(makeJobRequest(location, {
+        calendarId: LA_CALENDAR,
+        gigSummary: "LA#70001 — Fly Job",
+      }) as never);
+      const json = await res.json() as {
+        oneWayMiles: number; roundTripMiles: number; basis: string;
+        venue: { oneWayMiles: number; roundTripMiles: number };
+        phl: { oneWayMiles: number; roundTripMiles: number };
+      };
+
+      expect(json.basis).toBe("phl_flight");
+      expect(json.oneWayMiles).toBe(112);
+      expect(json.roundTripMiles).toBe(224);
+      // The real venue leg is still returned so "Drive to Venue" is instant.
+      expect(json.venue).toEqual({ oneWayMiles: miles, roundTripMiles: miles * 2 });
+      expect(json.phl).toEqual({ oneWayMiles: 112, roundTripMiles: 224 });
+    },
+  );
+
+  it("drives at exactly 200 mi and flies at 201 mi", async () => {
     const GET = await loadRoute();
-    const res = await GET(makeJobRequest("Chase Center on the Riverfront, Wilmington, DE", {
-      calendarId: LA_CALENDAR,
-      gigSummary: "LA#72813 — Chase Center",
-    }) as never);
-    const json = await res.json() as { oneWayMiles: number; basis: string };
 
-    expect(json.basis).toBe("venue");
-    expect(json.oneWayMiles).toBe(93);
-    // Distance Matrix was actually consulted for the venue.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("distancematrix");
+    vi.stubGlobal("fetch", distanceOnly(200));
+    const at = await (await GET(makeJobRequest("Right At Threshold", {
+      calendarId: LA_CALENDAR, gigSummary: "LA#70002 — Edge",
+    }) as never)).json() as { basis: string; oneWayMiles: number };
+    expect(at.basis).toBe("venue");
+    expect(at.oneWayMiles).toBe(200);
+
+    vi.stubGlobal("fetch", distanceOnly(201));
+    const over = await (await GET(makeJobRequest("Just Past Threshold", {
+      calendarId: LA_CALENDAR, gigSummary: "LA#70003 — Edge",
+    }) as never)).json() as { basis: string; oneWayMiles: number };
+    expect(over.basis).toBe("phl_flight");
+    expect(over.oneWayMiles).toBe(112);
   });
 
-  it("Light Action + out-of-state venue -> default Dewey-to-PHL mileage", async () => {
-    // Only the Places state lookup should happen; PHL is a known fixed route.
-    const fetchMock = vi.fn().mockResolvedValueOnce(placesStateResponse("IL"));
-    vi.stubGlobal("fetch", fetchMock);
+  it("non-Light-Action jobs are unchanged regardless of distance", async () => {
+    const GET = await loadRoute();
 
+    // Overture, far away — still the venue distance, and still flagged
+    // implausible exactly as before.
+    vi.stubGlobal("fetch", distanceOnly(638));
+    const far = await (await GET(makeJobRequest("Comerica Park, Detroit, MI", {
+      calendarId: OVERTURE_CALENDAR, gigSummary: "Overture",
+    }) as never)).json() as { basis: string; oneWayMiles: number; plausible: boolean; phl?: unknown };
+    expect(far.basis).toBe("venue");
+    expect(far.oneWayMiles).toBe(638);
+    expect(far.plausible).toBe(false);
+    expect(far.phl).toBeUndefined();
+
+    // Unknown employer, far away — same.
+    vi.stubGlobal("fetch", distanceOnly(322));
+    const unknown = await (await GET(makeRequest("Fenwick Island") as never)).json() as
+      { basis: string; oneWayMiles: number; plausible: boolean };
+    expect(unknown.basis).toBe("venue");
+    expect(unknown.oneWayMiles).toBe(322);
+    expect(unknown.plausible).toBe(false);
+  });
+
+  it("applies the rule via the LA# summary when no calendar id is passed", async () => {
+    vi.stubGlobal("fetch", distanceOnly(1166));
+    const GET = await loadRoute();
+    const json = await (await GET(makeJobRequest("Kauffman Stadium, Kansas City, MO", {
+      gigSummary: "LA#71770 — Toby Mac After Game Concert",
+    }) as never)).json() as { basis: string; oneWayMiles: number };
+
+    expect(json.basis).toBe("phl_flight");
+    expect(json.oneWayMiles).toBe(112);
+  });
+
+  it("does not assume a flight when the venue distance cannot be resolved", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "OK", rows: [{ elements: [{ status: "NOT_FOUND" }] }] }),
+    }));
+    const GET = await loadRoute();
+    const res = await GET(makeJobRequest("Somewhere Unresolvable", {
+      calendarId: LA_CALENDAR, gigSummary: "LA#70004 — Unknown",
+    }) as never);
+
+    // 404 surfaces the uncertainty; the UI prompts manual entry rather than
+    // silently billing a flight leg.
+    expect(res.status).toBe(404);
+    expect((await res.json() as { error: string }).error).toBe("no_route_found");
+  });
+
+  it("does not assume a flight when Distance Matrix is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "REQUEST_DENIED", rows: [] }),
+    }));
     const GET = await loadRoute();
     const res = await GET(makeJobRequest("Rate Field, Chicago, IL", {
-      calendarId: LA_CALENDAR,
-      gigSummary: "LA#71774 — Cole Swindell After Game Concert",
+      calendarId: LA_CALENDAR, gigSummary: "LA#71774 — Cole Swindell",
     }) as never);
-    const json = await res.json() as {
-      oneWayMiles: number; roundTripMiles: number; plausible: boolean;
-      basis: string; routeLabel: string; destinationState: string;
-    };
 
-    expect(json.basis).toBe("phl_flight");
-    expect(json.oneWayMiles).toBe(112);
-    expect(json.roundTripMiles).toBe(224);
-    expect(json.plausible).toBe(true);
-    expect(json.routeLabel).toContain("PHL");
-    expect(json.destinationState).toBe("IL");
-    // No Distance Matrix call at all — the PHL route is predetermined.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("places.googleapis.com");
-  });
-
-  it("non-Light-Action + out-of-state venue -> unchanged venue mileage", async () => {
-    // Overture booking: no Places lookup, straight to Distance Matrix.
-    const fetchMock = vi.fn().mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ status: "OK", ...makeDistanceResponse(metersForMiles(150)) }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const GET = await loadRoute();
-    const res = await GET(makeJobRequest("Somewhere, Philadelphia, PA", {
-      calendarId: OVERTURE_CALENDAR,
-      gigSummary: "Overture",
-    }) as never);
-    const json = await res.json() as { oneWayMiles: number; basis: string };
-
-    expect(json.basis).toBe("venue");
-    expect(json.oneWayMiles).toBe(150);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("distancematrix");
-  });
-
-  it("does not assume PHL when the destination state cannot be determined", async () => {
-    const fetchMock = vi.fn()
-      // Places returns a place with no administrative_area_level_1.
-      .mockResolvedValueOnce(placesStateResponse(null))
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ status: "OK", ...makeDistanceResponse(metersForMiles(322)) }),
-      });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const GET = await loadRoute();
-    const res = await GET(makeJobRequest("Fenwick Island", {
-      calendarId: LA_CALENDAR,
-      gigSummary: "LA#70001 — Ambiguous Venue",
-    }) as never);
-    const json = await res.json() as { oneWayMiles: number; basis: string; plausible: boolean };
-
-    // Falls back to the venue rather than silently billing a flight.
-    expect(json.basis).toBe("venue");
-    expect(json.oneWayMiles).toBe(322);
-    expect(json.plausible).toBe(false);
-  });
-
-  it("does not assume PHL when the Places lookup itself fails", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ status: "OK", ...makeDistanceResponse(metersForMiles(40)) }),
-      });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const GET = await loadRoute();
-    const res = await GET(makeJobRequest("Rehoboth Beach, DE", {
-      calendarId: LA_CALENDAR,
-      gigSummary: "LA#70002 — Local",
-    }) as never);
-    const json = await res.json() as { oneWayMiles: number; basis: string };
-
-    expect(json.basis).toBe("venue");
-    expect(json.oneWayMiles).toBe(40);
-  });
-
-  it("applies the PHL rule via the LA# summary when no calendar id is passed", async () => {
-    // InvoiceWorklist rows carry no calendarId; the LA# convention identifies them.
-    const fetchMock = vi.fn().mockResolvedValueOnce(placesStateResponse("MO"));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const GET = await loadRoute();
-    const res = await GET(makeJobRequest("Kauffman Stadium, Kansas City, MO", {
-      gigSummary: "LA#71770 — Toby Mac After Game Concert",
-    }) as never);
-    const json = await res.json() as { oneWayMiles: number; basis: string };
-
-    expect(json.basis).toBe("phl_flight");
-    expect(json.oneWayMiles).toBe(112);
-  });
-
-  it("leaves a job with no identity on the venue path", async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ status: "OK", ...makeDistanceResponse(metersForMiles(88)) }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const GET = await loadRoute();
-    const res = await GET(makeRequest("Some Venue, Baltimore, MD") as never);
-    const json = await res.json() as { oneWayMiles: number; basis: string };
-
-    expect(json.basis).toBe("venue");
-    expect(json.oneWayMiles).toBe(88);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(502);
+    expect((await res.json() as { error: string }).error).toBe("distance_api_unavailable");
   });
 
   it("still returns 404 for a genuine ZERO_RESULTS route", async () => {

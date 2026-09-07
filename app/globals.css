@@ -5540,6 +5540,51 @@ html.modal-open body {
   margin: 0;
 }
 
+/* Drive / Fly basis picker — Light Action jobs only. The automatic choice
+   comes from the real Dewey -> venue distance; this makes it overridable. */
+.invoice-travel-basis {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+}
+
+.invoice-travel-basis-options {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.invoice-travel-basis-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 10px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.invoice-travel-basis-btn--active {
+  border-color: var(--today-accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--today-accent) 12%, var(--surface));
+}
+
+.invoice-travel-basis-miles {
+  font-size: 0.68rem;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
 /* Legacy mileage migration banner */
 .invoice-legacy-banner {
   display: flex;

@@ -444,9 +444,23 @@ function hasOverrideText(overrides: OverrideFields): boolean {
   return OVERRIDE_FIELD_KEYS.some((field) => overrides[field].trim() !== "");
 }
 
+type TravelBasis = "venue" | "phl_flight";
+
+interface MileageLeg {
+  oneWayMiles: number;
+  roundTripMiles: number;
+}
+
 interface AutoMileage {
   oneWayMiles: number;
   roundTripMiles: number;
+  /** Automatic classification from the real Dewey -> venue distance. */
+  basis: TravelBasis;
+  isLightAction: boolean;
+  /** Real Dewey <-> venue leg, when it resolved. */
+  venue: MileageLeg | null;
+  /** Fixed Dewey <-> PHL leg; present for Light Action jobs. */
+  phl: MileageLeg | null;
 }
 
 type AdjustmentDraftFields = Partial<Record<"qty" | "rate" | "amount", string>>;
@@ -471,7 +485,7 @@ type AutoMileageNote =
   | "no_location"       // jobLocation prop missing
   | "api_error"         // fetch failed
   | "implausible"       // returned miles > MAX_PLAUSIBLE_ONE_WAY_MILES
-  | "phl_flight";       // out-of-state LA gig — default is the Dewey <-> PHL drive
+  | "long_distance_fly"; // LA gig beyond driving range — defaulted to Dewey <-> PHL
 
 // ---------------------------------------------------------------------------
 // Props
@@ -587,9 +601,11 @@ interface WorkdayRowProps {
   autoMileage: AutoMileage | null;
   autoMileageNote: AutoMileageNote | null;
   mileageRate: number;
+  /** Basis currently selected for this job (auto default, or Jeff's override). */
+  travelBasis: TravelBasis;
 }
 
-function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileageNote, mileageRate }: WorkdayRowProps) {
+function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileageNote, mileageRate, travelBasis }: WorkdayRowProps) {
   const calc = workdays[index];
   const totalH = calc ? fmtHours(calc.totalHours) : "—";
   const otH = calc && calc.overtimeHours > 0 ? fmtHours(calc.overtimeHours) : "0";
@@ -616,12 +632,18 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
       return;
     }
     // Auto-fill miles from cached API result based on mode
+    // Follow the Drive/Fly selection, so switching to "Drive to Venue" on a
+    // long-haul job immediately yields the real venue distance.
+    const leg: MileageLeg | null = autoMileage
+      ? (travelBasis === "phl_flight" ? autoMileage.phl : autoMileage.venue)
+        ?? { oneWayMiles: autoMileage.oneWayMiles, roundTripMiles: autoMileage.roundTripMiles }
+      : null;
     let autoMiles: number | null = null;
-    if (autoMileage) {
+    if (leg) {
       if (newMode === "from_dewey" || newMode === "to_dewey") {
-        autoMiles = autoMileage.oneWayMiles;
+        autoMiles = leg.oneWayMiles;
       } else if (newMode === "round_trip_dewey") {
-        autoMiles = autoMileage.roundTripMiles;
+        autoMiles = leg.roundTripMiles;
       }
       // custom: leave blank for manual entry
     }
@@ -738,8 +760,8 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
                 ? "No job location — enter miles manually."
                 : autoMileageNote === "implausible"
                   ? "Location may be ambiguous — enter miles manually."
-                  : autoMileageNote === "phl_flight"
-                    ? "Out-of-state job — defaulting to the Dewey ↔ PHL drive. If you drove, enter miles manually."
+                  : autoMileageNote === "long_distance_fly"
+                    ? "Long-distance Light Action job — defaulting to Dewey ↔ PHL (fly). Change to Drive to Venue if you drove."
                     : "Could not auto-calculate — enter miles manually."}
             </p>
           ) : null}
@@ -1291,6 +1313,10 @@ export function InvoiceSection({
   const [lineItemOverrides, setLineItemOverrides] = useState<InvoiceLineItemOverrides>({});
   const [adjustmentDrafts, setAdjustmentDrafts] = useState<AdjustmentDrafts>({});
   const [autoMileage, setAutoMileage] = useState<AutoMileage | null>(null);
+  const [travelBasisOverride, setTravelBasisOverride] = useState<TravelBasis | null>(null);
+  // Jeff's explicit choice wins; otherwise follow the automatic classification.
+  const effectiveTravelBasis: TravelBasis =
+    travelBasisOverride ?? autoMileage?.basis ?? "venue";
   const [autoMileageNote, setAutoMileageNote] = useState<AutoMileageNote | null>(
     jobLocation ? null : "no_location",
   );
@@ -1442,7 +1468,8 @@ export function InvoiceSection({
       setAutoMileageNote("no_location");
       return;
     }
-    setAutoMileageNote(null); // reset while loading
+    setAutoMileageNote(null);      // reset while loading
+    setTravelBasisOverride(null);  // a new job starts on its automatic default
     const headers: Record<string, string> = {};
     if (editorToken) headers.Authorization = `Bearer ${editorToken}`;
     const mileageQuery = new URLSearchParams({ location: jobLocation });
@@ -1460,7 +1487,10 @@ export function InvoiceSection({
           oneWayMiles?: number;
           roundTripMiles?: number;
           plausible?: boolean;
-          basis?: "venue" | "phl_flight";
+          basis?: TravelBasis;
+          isLightAction?: boolean;
+          venue?: MileageLeg;
+          phl?: MileageLeg;
         };
         if (typeof json.oneWayMiles === "number" && typeof json.roundTripMiles === "number") {
           if (json.plausible === false) {
@@ -1469,10 +1499,18 @@ export function InvoiceSection({
             setAutoMileage(null);
             setAutoMileageNote("implausible");
           } else {
-            setAutoMileage({ oneWayMiles: json.oneWayMiles, roundTripMiles: json.roundTripMiles });
-            // Surface the flight assumption so an actually-driven out-of-state
-            // job is visibly overridable rather than silently wrong.
-            setAutoMileageNote(json.basis === "phl_flight" ? "phl_flight" : null);
+            const basis: TravelBasis = json.basis === "phl_flight" ? "phl_flight" : "venue";
+            setAutoMileage({
+              oneWayMiles: json.oneWayMiles,
+              roundTripMiles: json.roundTripMiles,
+              basis,
+              isLightAction: json.isLightAction === true,
+              venue: json.venue ?? null,
+              phl: json.phl ?? null,
+            });
+            // Surface the flight assumption so an actually-driven long-haul job
+            // is visibly overridable rather than silently wrong.
+            setAutoMileageNote(basis === "phl_flight" ? "long_distance_fly" : null);
           }
         } else {
           setAutoMileageNote("api_error");
@@ -3338,6 +3376,38 @@ export function InvoiceSection({
         </button>
         {workDaysExpanded ? (
           <div className="invoice-collapsible-content">
+            {/* Drive/Fly basis — Light Action only. The automatic choice comes
+                from the real Dewey -> venue distance; this makes it overridable
+                on every job without touching saved mileage values. */}
+            {autoMileage?.isLightAction && autoMileage.venue ? (
+              <div className="invoice-travel-basis" role="group" aria-label="Travel basis">
+                <span className="invoice-label-sm">Travel</span>
+                <div className="invoice-travel-basis-options">
+                  <button
+                    type="button"
+                    className={`invoice-travel-basis-btn${effectiveTravelBasis === "venue" ? " invoice-travel-basis-btn--active" : ""}`}
+                    aria-pressed={effectiveTravelBasis === "venue"}
+                    onClick={() => setTravelBasisOverride("venue")}
+                  >
+                    Drive to Venue
+                    <span className="invoice-travel-basis-miles">
+                      {autoMileage.venue.oneWayMiles} mi each way
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`invoice-travel-basis-btn${effectiveTravelBasis === "phl_flight" ? " invoice-travel-basis-btn--active" : ""}`}
+                    aria-pressed={effectiveTravelBasis === "phl_flight"}
+                    onClick={() => setTravelBasisOverride("phl_flight")}
+                  >
+                    Fly / PHL
+                    <span className="invoice-travel-basis-miles">
+                      {(autoMileage.phl ?? { oneWayMiles: 112 }).oneWayMiles} mi each way
+                    </span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {workdayEntries.map((entry, i) => (
               <WorkdayRow
                 key={entry.date}
@@ -3348,6 +3418,7 @@ export function InvoiceSection({
                 autoMileage={autoMileage}
                 autoMileageNote={autoMileageNote}
                 mileageRate={mileageRate}
+                travelBasis={effectiveTravelBasis}
               />
             ))}
           </div>

@@ -1,22 +1,22 @@
 /**
  * Which journey the default reimbursable mileage should describe.
  *
- * Light Action gigs outside Delaware are flown, so the drive that actually
- * gets reimbursed is Dewey Beach <-> Philadelphia International (PHL), not
- * Dewey Beach <-> the venue. In-state Light Action gigs, and anything that is
- * not a Light Action gig, keep billing the real venue distance.
+ * Light Action gigs within normal driving range bill the real Dewey Beach <->
+ * venue distance. Genuinely long-haul gigs are flown, so what actually gets
+ * reimbursed is the Dewey Beach <-> Philadelphia International (PHL) drive.
  *
- * This module owns that rule so the employer test and the state test are not
- * re-implemented per call site.
+ * The test is DISTANCE, not the state border: Washington DC, Baltimore,
+ * Philadelphia and most of the Mid-Atlantic are drives even though they are
+ * outside Delaware. Chicago, Detroit, Milwaukee and Kansas City are flights.
+ *
+ * This module owns the rule so the employer test and the drive/fly test are
+ * not re-implemented per call site.
  */
 
 import { parseLaJobSummary } from "./gigs";
 
 /** Fixed billing origin. Never GPS, never dynamic. */
 export const DEWEY_ORIGIN = "Dewey Beach, DE 19971";
-
-/** Gigs in this state bill the actual venue distance. */
-export const HOME_STATE = "DE";
 
 /** Human-readable label for the flight-leg drive. */
 export const PHL_LABEL = "Philadelphia International Airport (PHL)";
@@ -31,8 +31,19 @@ export const PHL_LABEL = "Philadelphia International Airport (PHL)";
  */
 export const PHL_ONE_WAY_MILES = 112;
 
-/** What the returned mileage represents. */
-export type MileageBasis = "venue" | "phl_flight";
+/**
+ * One-way driving miles at or below which a Light Action gig is assumed
+ * driven. Anything farther is assumed flown out of PHL.
+ */
+export const DRIVE_THRESHOLD_ONE_WAY_MILES = 200;
+
+/** What a set of mileage numbers represents. */
+export type TravelBasis = "venue" | "phl_flight";
+
+export interface MileageLeg {
+  oneWayMiles: number;
+  roundTripMiles: number;
+}
 
 export interface MileageJobIdentity {
   /** Google Calendar id of the event, when the caller knows it. */
@@ -72,21 +83,48 @@ export function isLightActionGig(
   return parseLaJobSummary(summary).jobNumber != null;
 }
 
+/** The fixed Dewey <-> PHL leg. */
+export function phlMileage(): MileageLeg {
+  return {
+    oneWayMiles: PHL_ONE_WAY_MILES,
+    roundTripMiles: PHL_ONE_WAY_MILES * 2,
+  };
+}
+
 /**
  * Choose the journey the default mileage should describe.
  *
- * An unknown or ambiguous destination state never assumes PHL: without a
- * confident out-of-state answer we bill the venue, because quietly swapping in
- * a flight leg for a job that was actually driven would understate real miles.
+ * Only Light Action gigs are ever reclassified as flights. A venue distance
+ * that could not be resolved never becomes a flight: without a real number we
+ * cannot tell a long haul from a failed lookup, and quietly billing a flight
+ * leg for a job that was driven would understate real miles. Callers surface
+ * that uncertainty instead.
  */
-export function resolveMileageBasis(opts: {
+export function classifyTravelBasis(opts: {
   isLightAction: boolean;
-  destinationState: string | null;
-}): MileageBasis {
+  venueOneWayMiles: number | null;
+}): TravelBasis {
   if (!opts.isLightAction) return "venue";
 
-  const state = opts.destinationState?.trim().toUpperCase();
-  if (!state) return "venue";
+  const miles = opts.venueOneWayMiles;
+  if (miles == null || !Number.isFinite(miles)) return "venue";
 
-  return state === HOME_STATE ? "venue" : "phl_flight";
+  return miles > DRIVE_THRESHOLD_ONE_WAY_MILES ? "phl_flight" : "venue";
+}
+
+/**
+ * Pick the mileage numbers for a basis.
+ *
+ * Used for both the automatic default and an explicit manual override, so
+ * "Drive to Venue" on a long-haul job returns the real venue distance and
+ * "Fly / PHL" on a nearby job returns the fixed 112/224.
+ *
+ * Returns null when the requested basis has no numbers available (venue
+ * distance unresolved), which the caller must treat as "ask the user".
+ */
+export function selectMileageForBasis(
+  basis: TravelBasis,
+  venue: MileageLeg | null,
+): MileageLeg | null {
+  return basis === "phl_flight" ? phlMileage() : venue;
 }
