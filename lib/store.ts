@@ -61,18 +61,29 @@ export async function readCurrentSnapshot(
   options: ReadSnapshotOptions = {},
 ): Promise<Snapshot | null> {
   if (isSupabaseReadsEnabled()) {
-    let supabaseSnapshot: Snapshot | null = null;
-    try {
-      supabaseSnapshot = await readCurrentSnapshotFromSupabase(storeName, options);
-    } catch (err) {
+    // Both stores hold the same snapshot; we read them only to compare
+    // `generatedAtUtc` and keep the newer one. The reads are independent, so
+    // issue them concurrently — the pair then costs max(supabase, blobs)
+    // instead of supabase + blobs. This sits on the critical path of every
+    // /api/board/window request, so the saving is per page load.
+    const [supabaseResult, blobsResult] = await Promise.allSettled([
+      readCurrentSnapshotFromSupabase(storeName, options),
+      readCurrentSnapshotFromBlobs(storeName, options),
+    ]);
+
+    // readCurrentSnapshotFromBlobs handles its own errors and resolves to
+    // null, so a rejection here is unexpected — treat it as "no snapshot".
+    const blobsSnapshot = blobsResult.status === "fulfilled" ? blobsResult.value : null;
+
+    if (supabaseResult.status === "rejected") {
       console.error(
         "[snapshot] Supabase read failed; falling back to Netlify Blobs.",
-        err,
+        supabaseResult.reason,
       );
-      return readCurrentSnapshotFromBlobs(storeName, options);
+      return blobsSnapshot;
     }
 
-    const blobsSnapshot = await readCurrentSnapshotFromBlobs(storeName, options);
+    const supabaseSnapshot = supabaseResult.value;
 
     if (!supabaseSnapshot) {
       return blobsSnapshot;

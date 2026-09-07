@@ -6,22 +6,16 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# Scheduled jobs — run as Next.js API routes (not Lambda), so there is no
-# 4KB AWS Lambda env var limit. The scheduler sends GET with the header
-# x-netlify-event: scheduled; routes check this OR ADMIN_TOKEN bearer auth.
-[[crons]]
-  path     = "/api/cron/sync"
-  schedule = "*/10 * * * *"
-
-[[crons]]
-  path     = "/api/cron/google-watch-renew"
-  schedule = "17 4 * * *"
-
-# Webhooks are the primary trigger; this cursor-based poll is a recovery path
-# for delayed/missed provider events and is safe to run repeatedly.
-[[crons]]
-  path     = "/api/cron/bank-sync"
-  schedule = "7,22,37,52 * * * *"
+# Scheduled jobs live in netlify/functions/scheduled-*.ts and declare their own
+# cron via `export const config = { schedule: ... }`.
+#
+# They must be Netlify Functions: a schedule cannot target an arbitrary HTTP
+# path, so the top-level `[[crons]]` block that used to sit here (pointing at
+# /api/cron/*) was not a recognized netlify.toml key and was silently ignored —
+# no scheduled sync ran, and the snapshot only refreshed when someone saved a
+# gig through the UI. The scheduled functions stay thin and call those same
+# /api/cron/* routes over HTTP with ADMIN_TOKEN, so the 4KB Lambda env limit
+# that motivated the original move is still avoided.
 
 # Security headers on every response.
 [[headers]]

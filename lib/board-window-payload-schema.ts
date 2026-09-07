@@ -16,6 +16,7 @@ const DayEventDetailSchema = z.object({
   endDateInclusive: DateKeySchema.optional(),
   eventId: z.string().min(1).optional(),
   description: z.string().optional(),
+  ownerEditor: z.string().min(1).optional(),
   dateRangeLabel: z.string().min(1),
   timeRangeLabel: z.string().min(1).optional(),
   calendarId: z.string().min(1).optional(),
