@@ -477,8 +477,11 @@ export function MonthBoard({
   const isJeffCreateModeSelectable = isJeffEditor;
   const defaultBookingMode: "la" | "overture" = isMikeEditor ? "overture" : "la";
 
-  const { suggestions: locationSuggestions, isLoading: isLocationLoading } =
-    useLocationAutocomplete(locationQuery);
+  const {
+    suggestions: locationSuggestions,
+    isLoading: isLocationLoading,
+    isUnavailable: isLocationLookupUnavailable,
+  } = useLocationAutocomplete(locationQuery);
 
   useEffect(() => {
     setLocationActiveIndex(-1);
@@ -2348,6 +2351,7 @@ export function MonthBoard({
                   query={locationQuery}
                   suggestions={locationSuggestions}
                   isLoading={isLocationLoading}
+                  isUnavailable={isLocationLookupUnavailable}
                   activeIndex={locationActiveIndex}
                   onSelect={handleSuggestionSelect}
                 />

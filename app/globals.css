@@ -1754,6 +1754,26 @@ html.modal-open body {
   pointer-events: none;
 }
 
+/* With no map pin available we still show the calendar's own location text —
+   it is the source of truth, and a missing pin says nothing about whether the
+   address is valid. */
+.location-map-preview__overlay-location {
+  max-width: 88%;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.location-map-preview__overlay-note {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--text-subtle);
+  opacity: 0.85;
+}
+
 .location-map-preview__overlay--loading::before {
   content: '';
   display: block;

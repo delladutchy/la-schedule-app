@@ -78,7 +78,20 @@ export async function GET(req: NextRequest) {
     });
 
     if (!resp.ok) {
-      return NextResponse.json({ suggestions: [] });
+      // Upstream refused the call (billing disabled, API not enabled, key
+      // restriction, quota). That is NOT the same as "this place does not
+      // exist", and callers must be able to tell the two apart — otherwise a
+      // perfectly valid calendar location gets reported to the user as
+      // missing. Keep the 200 + empty `suggestions` shape so the autocomplete
+      // keeps degrading quietly, but say explicitly that we never looked.
+      console.error(
+        `[locations] upstream search failed status=${resp.status} — reporting unavailable, not empty`,
+      );
+      return NextResponse.json({
+        suggestions: [],
+        status: "unavailable",
+        reason: "upstream_error",
+      });
     }
 
     const data = (await resp.json()) as PlacesResponse;
@@ -113,10 +126,20 @@ export async function GET(req: NextRequest) {
       })
       .filter((s): s is NonNullable<typeof s> => s !== null);
 
-    return NextResponse.json({ suggestions });
-  } catch {
+    // A successful lookup that genuinely matched nothing still reports
+    // status "ok" — only then may a caller say the place could not be found.
+    return NextResponse.json({ suggestions, status: "ok" });
+  } catch (err) {
     // Network or parse error — return empty rather than 500 so the UI degrades
-    // gracefully and the user can still type freely.
-    return NextResponse.json({ suggestions: [] });
+    // gracefully and the user can still type freely, but flag that the lookup
+    // never completed so callers do not misreport this as "no such place".
+    console.error(
+      `[locations] search threw — reporting unavailable, not empty: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return NextResponse.json({
+      suggestions: [],
+      status: "unavailable",
+      reason: "request_failed",
+    });
   }
 }

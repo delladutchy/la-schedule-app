@@ -9,6 +9,10 @@ interface LocationSuggestionsProps {
   query: string;
   suggestions: LocationSuggestion[];
   isLoading: boolean;
+  /** True when the lookup never ran (service down/misconfigured), as opposed
+   *  to running and matching nothing. Avoids telling the user their typed
+   *  address is invalid when we simply could not check. */
+  isUnavailable?: boolean;
   activeIndex: number;
   onSelect: (suggestion: LocationSuggestion) => void;
 }
@@ -18,6 +22,7 @@ export function LocationSuggestions({
   query,
   suggestions,
   isLoading,
+  isUnavailable = false,
   activeIndex,
   onSelect,
 }: LocationSuggestionsProps) {
@@ -36,7 +41,11 @@ export function LocationSuggestions({
   if (suggestions.length === 0) {
     return (
       <div className="location-suggestions" role="status" aria-live="polite">
-        <div className="location-suggestions__status">No locations found</div>
+        <div className="location-suggestions__status">
+          {isUnavailable
+            ? 'Location search unavailable — you can still type an address'
+            : 'No locations found'}
+        </div>
       </div>
     );
   }

@@ -6,7 +6,11 @@ import type { CircleMarker as LeafletCircleMarker, Map as LeafletMap } from 'lea
 import { useEffect, useRef, useState } from 'react';
 
 type GeoCoords = { lat: number; lon: number };
-type GeoStatus = 'loading' | 'ok' | 'not-found' | 'error';
+// 'not-found'   — the geocoder ran and genuinely matched nothing.
+// 'unavailable' — the geocoder never ran (billing off, key denied, network).
+// These must stay distinct: only the first says anything about the place, and
+// neither means the calendar's own location text is wrong or absent.
+type GeoStatus = 'loading' | 'ok' | 'not-found' | 'unavailable';
 type LocationSuggestion = {
   displayName?: string;
   shortName?: string;
@@ -16,25 +20,41 @@ type LocationSuggestion = {
 };
 type LocationSearchResponse = {
   suggestions?: LocationSuggestion[];
+  status?: 'ok' | 'unavailable';
 };
 
+export type GeocodeOutcome =
+  | { status: 'ok'; coords: GeoCoords }
+  | { status: 'not-found' }
+  | { status: 'unavailable' };
+
 // Module-level cache: avoids re-geocoding the same string within a session.
+// Only successful lookups are cached — caching a failure would pin a
+// transient outage (or a billing lapse) onto a valid location for the
+// remainder of the session.
 const geocodeCache = new Map<string, GeoCoords>();
 
-async function geocodeQuery(query: string, signal: AbortSignal): Promise<GeoCoords | null> {
+export async function geocodeQuery(
+  query: string,
+  signal: AbortSignal,
+): Promise<GeocodeOutcome> {
   const cached = geocodeCache.get(query);
-  if (cached) return cached;
+  if (cached) return { status: 'ok', coords: cached };
 
   const params = new URLSearchParams({ q: query });
   const resp = await fetch(`/api/locations/search?${params}`, { signal });
-  if (!resp.ok) return null;
+  // Any non-2xx (503 not configured, 400 query too short, 5xx) means we never
+  // got an answer about this place — not that the place is unknown.
+  if (!resp.ok) return { status: 'unavailable' };
 
   const data = (await resp.json()) as LocationSearchResponse;
+  if (data.status === 'unavailable') return { status: 'unavailable' };
+
   const first = data.suggestions?.[0];
   const lat = first?.lat;
   const lon = first?.lon;
-  if (typeof lat !== 'number' || !Number.isFinite(lat)) return null;
-  if (typeof lon !== 'number' || !Number.isFinite(lon)) return null;
+  if (typeof lat !== 'number' || !Number.isFinite(lat)) return { status: 'not-found' };
+  if (typeof lon !== 'number' || !Number.isFinite(lon)) return { status: 'not-found' };
 
   const result: GeoCoords = { lat, lon };
   geocodeCache.set(query, result);
@@ -42,7 +62,7 @@ async function geocodeQuery(query: string, signal: AbortSignal): Promise<GeoCoor
     const firstKey = geocodeCache.keys().next().value;
     if (firstKey !== undefined) geocodeCache.delete(firstKey);
   }
-  return result;
+  return { status: 'ok', coords: result };
 }
 
 export interface LocationMapPreviewProps {
@@ -98,18 +118,19 @@ function LocationMapPreviewInner({ location, debounceMs = 400, coords: propCoord
     const timer = setTimeout(() => {
       geocodeQuery(trimmed, controller.signal)
         .then((result) => {
-          if (result) {
-            setCoords(result);
+          if (result.status === 'ok') {
+            setCoords(result.coords);
             setStatus('ok');
           } else {
             setCoords(null);
-            setStatus('not-found');
+            setStatus(result.status);
           }
         })
         .catch((err: unknown) => {
           if ((err as { name?: string }).name === 'AbortError') return;
+          // A thrown request tells us nothing about the place itself.
           setCoords(null);
-          setStatus('error');
+          setStatus('unavailable');
         });
     }, debounceMs);
 
@@ -271,7 +292,21 @@ function LocationMapPreviewInner({ location, debounceMs = 400, coords: propCoord
         <div ref={containerRef} className="location-map-preview__map" />
         {status !== 'ok' && (
           <div className={`location-map-preview__overlay${status === 'loading' ? ' location-map-preview__overlay--loading' : ''}`}>
-            {status === 'loading' ? 'Finding location…' : 'Location not found'}
+            {status === 'loading' ? (
+              'Finding location…'
+            ) : (
+              // The calendar's location is the source of truth. Geocoding only
+              // enriches it with a map pin, so when the pin is unavailable we
+              // show the real location text rather than implying it is missing.
+              <>
+                <span className="location-map-preview__overlay-location">{location.trim()}</span>
+                <span className="location-map-preview__overlay-note">
+                  {status === 'unavailable'
+                    ? 'Map preview unavailable'
+                    : 'No map match for this address'}
+                </span>
+              </>
+            )}
           </div>
         )}
       </div>

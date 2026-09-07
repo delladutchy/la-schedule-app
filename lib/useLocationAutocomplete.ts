@@ -28,17 +28,27 @@ function isLocationSuggestion(item: unknown): item is LocationSuggestion {
   );
 }
 
+/**
+ * `unavailable` means the lookup never ran (billing off, key denied, network),
+ * as opposed to running and matching nothing. Only the latter justifies
+ * telling the user no such location exists.
+ */
+export interface SuggestionsResult {
+  results: LocationSuggestion[];
+  unavailable: boolean;
+}
+
 async function fetchSuggestions(
   query: string,
   signal: AbortSignal,
-): Promise<LocationSuggestion[]> {
+): Promise<SuggestionsResult> {
   const cached = suggestionsCache.get(query);
-  if (cached) return cached;
+  if (cached) return { results: cached, unavailable: false };
 
   const params = new URLSearchParams({ q: query });
   const resp = await fetch(`/api/locations/search?${params}`, { signal });
 
-  if (!resp.ok) return [];
+  if (!resp.ok) return { results: [], unavailable: true };
 
   const data: unknown = await resp.json();
   if (
@@ -46,25 +56,32 @@ async function fetchSuggestions(
     data === null ||
     !Array.isArray((data as Record<string, unknown>).suggestions)
   ) {
-    return [];
+    return { results: [], unavailable: true };
+  }
+
+  if ((data as Record<string, unknown>).status === 'unavailable') {
+    return { results: [], unavailable: true };
   }
 
   const results = (
     (data as Record<string, unknown>).suggestions as unknown[]
   ).filter(isLocationSuggestion);
 
+  // Only cache real answers — caching an outage would pin "no results" onto
+  // a valid query for the rest of the session.
   suggestionsCache.set(query, results);
   if (suggestionsCache.size > 50) {
     const firstKey = suggestionsCache.keys().next().value;
     if (firstKey !== undefined) suggestionsCache.delete(firstKey);
   }
 
-  return results;
+  return { results, unavailable: false };
 }
 
 export function useLocationAutocomplete(query: string) {
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isUnavailable, setIsUnavailable] = useState(false);
   // abortRef always holds the controller for the most recent query >= MIN_QUERY_LENGTH.
   const abortRef = useRef<AbortController | null>(null);
 
@@ -75,6 +92,7 @@ export function useLocationAutocomplete(query: string) {
       abortRef.current?.abort();
       abortRef.current = null;
       setSuggestions([]);
+      setIsUnavailable(false);
       setIsLoading(false);
       return;
     }
@@ -87,14 +105,17 @@ export function useLocationAutocomplete(query: string) {
 
     const timer = setTimeout(() => {
       void fetchSuggestions(trimmed, controller.signal)
-        .then((results) => {
+        .then((outcome) => {
           if (controller.signal.aborted) return;
-          setSuggestions(results);
+          setSuggestions(outcome.results);
+          setIsUnavailable(outcome.unavailable);
           setIsLoading(false);
         })
         .catch((err: unknown) => {
           if ((err as { name?: string }).name === 'AbortError') return;
+          // A thrown request tells us nothing about the query itself.
           setSuggestions([]);
+          setIsUnavailable(true);
           setIsLoading(false);
         });
     }, DEBOUNCE_MS);
@@ -115,8 +136,9 @@ export function useLocationAutocomplete(query: string) {
     abortRef.current?.abort();
     abortRef.current = null;
     setSuggestions([]);
+    setIsUnavailable(false);
     setIsLoading(false);
   };
 
-  return { suggestions, isLoading, clear };
+  return { suggestions, isLoading, isUnavailable, clear };
 }
