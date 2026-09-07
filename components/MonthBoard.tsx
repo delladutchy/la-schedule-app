@@ -1625,6 +1625,7 @@ export function MonthBoard({
                     defaultStartTime={activeJobTimeDetail.startUtc ? snapUtcToTimeOption(activeJobTimeDetail.startUtc) : undefined}
                     defaultEndTime={activeJobTimeDetail.endUtc ? snapUtcToTimeOption(activeJobTimeDetail.endUtc) : undefined}
                     jobLocation={activeDetailLocation ?? undefined}
+                    calendarId={activeJobTimeDetail.calendarId}
                     onPendingChange={(hasPending) => { invoicePendingRef.current = hasPending; }}
                   />
                 ) : null}

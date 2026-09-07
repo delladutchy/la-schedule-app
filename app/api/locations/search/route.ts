@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  PLACES_ENDPOINT,
+  extractCityState,
+  type PlacesAddressComponent,
+} from "@/lib/places";
 
 export const dynamic = "force-dynamic";
 
 // Google Places API (New) — Text Search.
 // Single call returns venue name, formatted address, AND coordinates.
 // Field mask is deliberately minimal to reduce billing cost.
-const PLACES_ENDPOINT = "https://places.googleapis.com/v1/places:searchText";
 const FIELD_MASK =
   "places.displayName,places.formattedAddress,places.location,places.addressComponents";
 
@@ -16,33 +20,16 @@ const FIELD_MASK =
 const BIAS_CENTER = { latitude: 38.7, longitude: -75.1 };
 const BIAS_RADIUS_M = 50000;
 
-type AddressComponent = {
-  longText?: string;
-  shortText?: string;
-  types?: string[];
-};
-
 type PlacesItem = {
   displayName?: { text?: string };
   formattedAddress?: string;
   location?: { latitude?: number; longitude?: number };
-  addressComponents?: AddressComponent[];
+  addressComponents?: PlacesAddressComponent[];
 };
 
 type PlacesResponse = {
   places?: PlacesItem[];
 };
-
-function extractCityState(components: AddressComponent[]): { city: string; state: string } {
-  const city =
-    components.find((c) => c.types?.includes("locality"))?.longText ??
-    components.find((c) => c.types?.includes("sublocality"))?.longText ??
-    "";
-  const state =
-    components.find((c) => c.types?.includes("administrative_area_level_1"))
-      ?.shortText ?? "";
-  return { city, state };
-}
 
 export async function GET(req: NextRequest) {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;

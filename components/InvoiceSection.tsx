@@ -470,7 +470,8 @@ interface AdjustmentRow {
 type AutoMileageNote =
   | "no_location"       // jobLocation prop missing
   | "api_error"         // fetch failed
-  | "implausible";      // returned miles > MAX_PLAUSIBLE_ONE_WAY_MILES
+  | "implausible"       // returned miles > MAX_PLAUSIBLE_ONE_WAY_MILES
+  | "phl_flight";       // out-of-state LA gig — default is the Dewey <-> PHL drive
 
 // ---------------------------------------------------------------------------
 // Props
@@ -484,6 +485,9 @@ interface Props {
   defaultStartTime?: string; // snapped 12h time from job startUtc
   defaultEndTime?: string;   // snapped 12h time from job endUtc
   jobLocation?: string;      // Google Calendar location field
+  /** Calendar the event lives on. Lets the server tell a Light Action gig
+   *  from an Overture/other booking without re-deriving it here. */
+  calendarId?: string;
   onPendingChange?: (hasPending: boolean) => void;
   /**
    * Fired whenever the invoice record for this event changes, so a parent list
@@ -734,7 +738,9 @@ function WorkdayRow({ entry, workdays, index, onChange, autoMileage, autoMileage
                 ? "No job location — enter miles manually."
                 : autoMileageNote === "implausible"
                   ? "Location may be ambiguous — enter miles manually."
-                  : "Could not auto-calculate — enter miles manually."}
+                  : autoMileageNote === "phl_flight"
+                    ? "Out-of-state job — defaulting to the Dewey ↔ PHL drive. If you drove, enter miles manually."
+                    : "Could not auto-calculate — enter miles manually."}
             </p>
           ) : null}
 
@@ -1258,6 +1264,7 @@ export function InvoiceSection({
   defaultStartTime,
   defaultEndTime,
   jobLocation,
+  calendarId,
   onPendingChange,
   onInvoiceUpdated,
 }: Props) {
@@ -1438,7 +1445,12 @@ export function InvoiceSection({
     setAutoMileageNote(null); // reset while loading
     const headers: Record<string, string> = {};
     if (editorToken) headers.Authorization = `Bearer ${editorToken}`;
-    fetch(`/api/invoice/mileage?location=${encodeURIComponent(jobLocation)}`, {
+    const mileageQuery = new URLSearchParams({ location: jobLocation });
+    // The server decides Light Action vs not; we only forward what identifies
+    // the job so that rule lives in exactly one place.
+    if (calendarId) mileageQuery.set("calendarId", calendarId);
+    if (gigSummary) mileageQuery.set("gigSummary", gigSummary);
+    fetch(`/api/invoice/mileage?${mileageQuery.toString()}`, {
       headers,
       credentials: "same-origin",
     })
@@ -1448,6 +1460,7 @@ export function InvoiceSection({
           oneWayMiles?: number;
           roundTripMiles?: number;
           plausible?: boolean;
+          basis?: "venue" | "phl_flight";
         };
         if (typeof json.oneWayMiles === "number" && typeof json.roundTripMiles === "number") {
           if (json.plausible === false) {
@@ -1457,14 +1470,16 @@ export function InvoiceSection({
             setAutoMileageNote("implausible");
           } else {
             setAutoMileage({ oneWayMiles: json.oneWayMiles, roundTripMiles: json.roundTripMiles });
-            setAutoMileageNote(null);
+            // Surface the flight assumption so an actually-driven out-of-state
+            // job is visibly overridable rather than silently wrong.
+            setAutoMileageNote(json.basis === "phl_flight" ? "phl_flight" : null);
           }
         } else {
           setAutoMileageNote("api_error");
         }
       })
       .catch(() => { setAutoMileageNote("api_error"); });
-  }, [jobLocation, editorToken]);
+  }, [jobLocation, editorToken, calendarId, gigSummary]);
 
   // ---------------------------------------------------------------------------
   // Save helpers

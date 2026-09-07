@@ -1649,6 +1649,7 @@ export function DayBoard({
                     defaultStartTime={activePrimaryDetail.startUtc ? snapUtcToTimeOption(activePrimaryDetail.startUtc) : undefined}
                     defaultEndTime={activePrimaryDetail.endUtc ? snapUtcToTimeOption(activePrimaryDetail.endUtc) : undefined}
                     jobLocation={activeDetailLocation ?? undefined}
+                    calendarId={activePrimaryDetail.calendarId}
                   />
                 ) : null}
                 {activeDetailPanel.details.length > 1 ? (
