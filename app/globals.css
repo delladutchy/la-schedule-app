@@ -99,7 +99,7 @@ body.hydrated #app-shell {
   /* Opaque, and above the body, so content can never show through or sit on
      top of the buttons as it scrolls underneath. */
   position: relative;
-  z-index: 1;
+  z-index: 2;
   background: color-mix(in srgb, var(--surface) 96%, #000000);
   /* The home indicator / browser UI is cleared once, on the backdrop, whose
      padding already subtracts env(safe-area-inset-*) at every breakpoint. The
@@ -1362,12 +1362,50 @@ html.modal-open body {
   isolation: isolate;
 }
 
+/* Non-scrolling header. Holds the title and the close control as real
+   children, so nothing inside the scroll body can paint over the X or take
+   its hit target — which is exactly what h3.board-day-modal-title and the
+   Leaflet map were doing while the X was absolutely positioned. */
+.board-day-modal-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  /* Above the scrolling body, in the same stacking context. */
+  position: relative;
+  z-index: 2;
+  background: color-mix(in srgb, var(--surface) 96%, #000000);
+}
+
+.board-day-modal-header .board-day-modal-title {
+  order: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+/* In-flow inside the header rather than absolutely positioned over content,
+   with a 44x44 touch target. */
+.board-day-modal-header .board-day-modal-close-icon {
+  order: 2;
+  position: static;
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 44px;
+  height: 44px;
+  font-size: 22px;
+}
+
 /* The one scrollable region in the detail dialog. `min-height: 0` is required
    or the flex item refuses to shrink below its content and pushes the footer
    out of the box. */
 .board-day-modal-body {
   flex: 1 1 auto;
   min-height: 0;
+  /* Explicitly below header and footer so scrolled content can never cover
+     them, whatever z-index a child (Leaflet panes, invoice rows) declares. */
+  position: relative;
+  z-index: 0;
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
@@ -3878,30 +3916,60 @@ html.modal-open body {
 }
 
 @media (max-width: 760px) {
+  /* Phones get a true full-screen view, not a floating card.
+     No external backdrop padding: the dialog fills the viewport exactly, and
+     the safe-area insets are handled INSIDE the header and footer. Padding the
+     backdrop and then sizing the dialog against the viewport is precisely the
+     contradiction that pushed the action row off-screen. */
   .board-day-modal-backdrop {
-    padding-top: max(4px, env(safe-area-inset-top, 0px));
-    padding-right: max(4px, env(safe-area-inset-right, 0px));
-    padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
-    padding-left: max(4px, env(safe-area-inset-left, 0px));
-    align-items: safe center;
-    justify-items: center;
-    overflow-x: hidden;
+    padding: 0;
+    align-items: stretch;
+    justify-items: stretch;
+    overflow: hidden;
     overscroll-behavior: contain;
   }
 
   .board-day-modal {
-    width: min(700px, calc(100vw - 8px));
-    max-width: calc(100vw - 8px);
-    /* Was calc(100dvh - 8px). The backdrop above already removes
-       env(safe-area-inset-top/bottom) — ~93px on an iPhone in standalone PWA
-       mode — so a dialog measured against the full viewport overflowed its
-       container by that much and pushed the footer off-screen, where no
-       amount of scrolling could reach it. */
-    max-height: 100%;
+    width: 100%;
+    max-width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    /* Full-bleed: the card treatment fights the full-screen behaviour. */
+    border: 0;
+    border-radius: 0;
     overflow: hidden;
     overscroll-behavior: contain;
     box-sizing: border-box;
-    padding: 10px 10px 8px;
+    padding: 0;
+  }
+
+  /* Header/body/footer own the horizontal padding and the safe-area insets,
+     so there is exactly one place each inset is applied. */
+  .board-day-modal-header {
+    padding:
+      max(10px, env(safe-area-inset-top, 0px))
+      max(12px, env(safe-area-inset-right, 0px))
+      10px
+      max(12px, env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  }
+
+  .board-day-modal-body {
+    padding:
+      10px
+      max(12px, env(safe-area-inset-right, 0px))
+      10px
+      max(12px, env(safe-area-inset-left, 0px));
+    margin-right: 0;
+  }
+
+  .board-day-modal-actions {
+    margin-top: 0;
+    padding:
+      10px
+      max(12px, env(safe-area-inset-right, 0px))
+      max(10px, env(safe-area-inset-bottom, 0px))
+      max(12px, env(safe-area-inset-left, 0px));
   }
 
   .board-day-modal-backdrop--booking {
@@ -4089,21 +4157,53 @@ html.modal-open body {
     font-size: 14px;
   }
 
+  /* Short landscape phones. This block sits AFTER the <=760px rules, so it has
+     to restate the full-screen architecture or it would silently reintroduce
+     backdrop padding alongside a viewport-sized dialog — the exact
+     contradiction that stranded the footer. */
   .board-day-modal-backdrop {
-    padding-top: max(4px, env(safe-area-inset-top, 0px));
-    padding-right: max(4px, env(safe-area-inset-right, 0px));
-    padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
-    padding-left: max(4px, env(safe-area-inset-left, 0px));
-    align-items: safe center;
+    padding: 0;
+    align-items: stretch;
+    justify-items: stretch;
+    overflow: hidden;
   }
 
   .board-day-modal {
-    width: min(760px, calc(100vw - 8px));
-    max-width: calc(100vw - 8px);
-    max-height: 100%;
+    width: 100%;
+    max-width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
     overflow: hidden;
     box-sizing: border-box;
-    padding: 11px 11px 9px;
+    padding: 0;
+  }
+
+  /* Landscape notches sit left/right, so those insets matter most here. */
+  .board-day-modal-header {
+    padding:
+      max(6px, env(safe-area-inset-top, 0px))
+      max(10px, env(safe-area-inset-right, 0px))
+      6px
+      max(10px, env(safe-area-inset-left, 0px));
+  }
+
+  .board-day-modal-body {
+    padding:
+      6px
+      max(10px, env(safe-area-inset-right, 0px))
+      6px
+      max(10px, env(safe-area-inset-left, 0px));
+  }
+
+  .board-day-modal-actions {
+    margin-top: 0;
+    padding:
+      8px
+      max(10px, env(safe-area-inset-right, 0px))
+      max(8px, env(safe-area-inset-bottom, 0px))
+      max(10px, env(safe-area-inset-left, 0px));
   }
 
   /* Tighten event-detail meta + notes in landscape so multi-line

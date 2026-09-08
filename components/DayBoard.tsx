@@ -1519,20 +1519,22 @@ export function DayBoard({
             onClick={(event) => event.stopPropagation()}
           >
             {detailModalIsLocked ? renderLoadingOverlay("Deleting job…") : null}
-            <button
-              type="button"
-              className="board-day-modal-close-icon"
-              aria-label="Close details"
-              onClick={closeDetailPanel}
-              disabled={detailModalIsLocked}
-            >
-              ×
-            </button>
+            {/* Non-scrolling header. The close control is a real child here
+                rather than absolutely positioned over the scroll body, so no
+                scrolled content (title, map, invoice rows) can paint over it
+                or steal its hit target. */}
+            <div className="board-day-modal-header">
+              <button
+                type="button"
+                className="board-day-modal-close-icon"
+                aria-label="Close details"
+                onClick={closeDetailPanel}
+                disabled={detailModalIsLocked}
+              >
+                ×
+              </button>
 
-            {/* Single scroll region. The modal itself must not scroll, or the
-                pinned footer would scroll away with the content. */}
-            <div className="board-day-modal-body">
-            <h3 id="week-job-detail-title" className="board-day-modal-title">
+              <h3 id="week-job-detail-title" className="board-day-modal-title">
               {activeDetailIsOverture ? (
                 <img
                   src="/brand/overture-logo.png"
@@ -1560,6 +1562,11 @@ export function DayBoard({
                 activeDetailPanel.header
               )}
             </h3>
+            </div>
+
+            {/* The ONLY vertical scroller in the dialog. Header and footer
+                are siblings, never children, so they cannot scroll away. */}
+            <div className="board-day-modal-body">
 
             {activePrimaryDetail ? (
               <div className="board-day-modal-events">

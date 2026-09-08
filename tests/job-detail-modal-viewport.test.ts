@@ -53,13 +53,17 @@ describe("the dialog is bounded by its container, not the viewport", () => {
     expect(baseModal).toMatch(/max-height:\s*100%/);
   });
 
-  it("uses no viewport-unit height cap at ANY breakpoint", () => {
-    // This is the exact defect: a cap measured against the viewport cannot
-    // know about the backdrop padding + safe-area insets beneath it.
+  it("never derives a height from the viewport MINUS an assumed inset", () => {
+    // The defect was arithmetic like `calc(100dvh - 8px)` / `min(88dvh, ...)`:
+    // a cap measured against the viewport cannot know what the backdrop
+    // already subtracted, so the two drift apart and strand the footer.
+    // Only two forms are safe: `100%` (bounded by the container) and a bare
+    // `100dvh` used where the backdrop has NO padding at all.
     for (const block of allModalBlocks()) {
-      const caps = [...block.matchAll(/max-height:\s*([^;]+);/g)].map((m) => m[1]!);
+      const caps = [...block.matchAll(/max-height:\s*([^;]+);/g)].map((m) => m[1]!.trim());
       for (const cap of caps) {
-        expect(cap).not.toMatch(/\d\s*d?vh/);
+        if (!/vh/.test(cap)) continue;
+        expect(cap).toBe("100dvh");
       }
     }
   });
@@ -103,7 +107,7 @@ describe("the footer is pinned, opaque and above the content", () => {
 
   it("is opaque and layered above the scrolling body", () => {
     expect(footer).toMatch(/background:/);
-    expect(footer).toMatch(/z-index:\s*1/);
+    expect(footer).toMatch(/z-index:\s*2/);
     expect(footer).toMatch(/position:\s*relative/);
   });
 
@@ -148,4 +152,112 @@ describe("both boards use the header/body/footer structure", () => {
       expect(src).toContain("canManageActiveDetail ? (");
     });
   }
+});
+
+/**
+ * The X stopped responding after scrolling because it was absolutely
+ * positioned with z-index:auto while later-in-DOM content inside the scroll
+ * body painted over it. elementFromPoint at the X's centre returned
+ * `h3.board-day-modal-title` on every phone, and
+ * `div.location-map-preview__map.leaflet-container` once scrolled to the
+ * bottom on iPad landscape and desktop — .location-map-preview declares
+ * `position: relative; z-index: 0`.
+ *
+ * Fix: the close control is a real child of a non-scrolling header that is
+ * layered above the body, not an absolutely positioned overlay.
+ */
+describe("the close control cannot be covered by scrolled content", () => {
+  const header = ruleBody(".board-day-modal-header");
+  const headerClose = ruleBody(".board-day-modal-header .board-day-modal-close-icon");
+
+  it("puts the header above the body in the same stacking context", () => {
+    expect(header).toMatch(/z-index:\s*2/);
+    expect(header).toMatch(/position:\s*relative/);
+    expect(header).toMatch(/flex:\s*0 0 auto/);
+    expect(header).toMatch(/background:/);
+  });
+
+  it("keeps the body explicitly below header and footer", () => {
+    expect(baseBody).toMatch(/z-index:\s*0/);
+    expect(baseBody).toMatch(/position:\s*relative/);
+  });
+
+  it("takes the close control out of absolute positioning", () => {
+    expect(headerClose).toMatch(/position:\s*static/);
+  });
+
+  it("gives the close control a 44x44 touch target", () => {
+    expect(headerClose).toMatch(/width:\s*44px/);
+    expect(headerClose).toMatch(/height:\s*44px/);
+  });
+
+  it("renders the close control inside the header in both boards", () => {
+    for (const src of [dayBoard, monthBoard]) {
+      const header = src.indexOf('<div className="board-day-modal-header">');
+      const close = src.indexOf('className="board-day-modal-close-icon"');
+      const body = src.indexOf('<div className="board-day-modal-body">');
+      expect(header).toBeGreaterThan(-1);
+      expect(close).toBeGreaterThan(header);
+      expect(close).toBeLessThan(body);
+    }
+  });
+
+  it("keeps the title in the header, not in the scroll body", () => {
+    for (const src of [dayBoard, monthBoard]) {
+      const title = src.indexOf('className="board-day-modal-title"');
+      const body = src.indexOf('<div className="board-day-modal-body">');
+      expect(title).toBeLessThan(body);
+    }
+  });
+});
+
+describe("phones get a true full-screen view", () => {
+  /**
+   * The full-screen phone rules. Anchored on the marker comment rather than a
+   * media-query index, because several `@media (max-width: ...)` blocks also
+   * contain `.board-day-modal-backdrop` rules and an index-based slice picks
+   * up the wrong one.
+   */
+  function phoneBlock(): string {
+    const at = css.indexOf("Phones get a true full-screen view");
+    expect(at).toBeGreaterThan(-1);
+    return css.slice(at, at + 2600);
+  }
+  const phone = phoneBlock();
+
+  it("removes external backdrop padding rather than fighting it", () => {
+    // Padding the backdrop AND sizing the dialog against the viewport is the
+    // contradiction that stranded the footer.
+    expect(phone).toMatch(/\.board-day-modal-backdrop\s*\{[^}]*padding:\s*0/);
+  });
+
+  it("fills the viewport edge to edge", () => {
+    expect(phone).toMatch(/width:\s*100%/);
+    expect(phone).toMatch(/height:\s*100dvh/);
+    expect(phone).toMatch(/max-height:\s*100dvh/);
+    expect(phone).toMatch(/border-radius:\s*0/);
+  });
+
+  it("applies the safe-area insets inside the header and footer", () => {
+    expect(phone).toMatch(/\.board-day-modal-header\s*\{[^}]*env\(safe-area-inset-top/);
+    expect(phone).toMatch(/\.board-day-modal-actions\s*\{[^}]*env\(safe-area-inset-bottom/);
+  });
+});
+
+describe("no later media query silently overrides the architecture", () => {
+  it("every .board-day-modal block keeps the box from scrolling", () => {
+    for (const block of allModalBlocks()) {
+      if (/overflow/.test(block)) {
+        expect(block).not.toMatch(/overflow(-y)?:\s*(auto|scroll)/);
+      }
+    }
+  });
+
+  it("the short-landscape block restates the full-screen rules", () => {
+    const at = css.indexOf("@media (max-height: 520px) and (orientation: landscape)");
+    expect(at).toBeGreaterThan(-1);
+    const block = css.slice(at, at + 3000);
+    expect(block).toMatch(/\.board-day-modal-backdrop\s*\{[^}]*padding:\s*0/);
+    expect(block).toMatch(/height:\s*100dvh/);
+  });
 });
