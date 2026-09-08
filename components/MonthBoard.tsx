@@ -1516,6 +1516,9 @@ export function MonthBoard({
               ×
             </button>
 
+            {/* Single scroll region. The modal itself must not scroll, or the
+                pinned footer would scroll away with the content. */}
+            <div className="board-day-modal-body">
             <h3 id="month-job-detail-title" className="board-day-modal-title">
               {activeDetailIsOverture ? (
                 <img
@@ -1633,6 +1636,7 @@ export function MonthBoard({
             ) : (
               <p className="board-day-modal-empty">No event details available.</p>
             )}
+            </div>
 
             {canManageActiveDetail ? (
               <div className="board-day-modal-actions">

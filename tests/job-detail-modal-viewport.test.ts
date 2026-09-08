@@ -1,110 +1,151 @@
 /**
- * Job-detail modal must stay scrollable to its end on every viewport, because
- * the Edit/Delete row is the last thing in it.
+ * The job-detail dialog must keep its Edit/Delete footer reachable on a real
+ * phone, including safe-area insets.
  *
- * Regression: the base .board-day-modal rule sized itself with `88vh`. On
- * iOS/iPadOS Safari `vh` resolves against the LARGE viewport (chrome
- * retracted), so while the browser chrome is showing the dialog was taller
- * than the visible area and its bottom sat below the fold — unreachable,
- * because the dialog's own overflow scrolls its CONTENT, not the off-screen
- * part of the box itself.
+ * Regression (superseding the incomplete fix in 9c147b0): the dialog capped
+ * its height against the VIEWPORT (`calc(100dvh - 8px)` on the <=760px rule
+ * phones actually get) while its backdrop had already subtracted its own
+ * padding plus env(safe-area-inset-top/bottom) — about 93px on an iPhone in
+ * standalone PWA mode. The dialog was therefore allowed to be ~85px taller
+ * than the box holding it. The overflow spilled off the bottom of the screen,
+ * and because the dialog's own overflow scrolls its CONTENT rather than the
+ * off-screen part of the box, no amount of scrolling could reach the footer —
+ * only the tops of the buttons showed.
  *
- * The <=560px and <=760px rules already used dvh. Tablets (iPad portrait
- * 768px, landscape 1024px) fell through to the base rule and were the only
- * sizes still affected.
+ * The structural fix, which this test pins:
+ *   - the dialog is bounded by its CONTAINER (`max-height: 100%`), never by a
+ *     viewport unit, so it self-corrects for any inset on any device;
+ *   - the dialog is a flex column that does NOT scroll;
+ *   - `.board-day-modal-body` is the single scroll region;
+ *   - `.board-day-modal-actions` is a non-scrolling, opaque, pinned footer.
  */
 
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-const css = fs.readFileSync(path.join(process.cwd(), "app/globals.css"), "utf8");
+const read = (p: string) => fs.readFileSync(path.join(process.cwd(), p), "utf8");
+const css = read("app/globals.css");
+const dayBoard = read("components/DayBoard.tsx");
+const monthBoard = read("components/MonthBoard.tsx");
 
-/** Body of the first `selector { ... }` block at the given nesting depth. */
-function ruleBody(source: string, selector: string): string {
-  const at = source.indexOf(`\n${selector} {`);
+/** Body of the first top-level `selector { ... }` block. */
+function ruleBody(selector: string): string {
+  const at = css.indexOf(`\n${selector} {`);
   if (at === -1) throw new Error(`rule not found: ${selector}`);
-  const open = source.indexOf("{", at);
-  const close = source.indexOf("}", open);
-  return source.slice(open + 1, close);
+  const open = css.indexOf("{", at);
+  const close = css.indexOf("}", open);
+  return css.slice(open + 1, close);
 }
 
-const baseModal = ruleBody(css, ".board-day-modal");
-const baseBackdrop = ruleBody(css, ".board-day-modal-backdrop");
+/** Every `.board-day-modal { ... }` block, base and inside media queries. */
+function allModalBlocks(): string[] {
+  return [...css.matchAll(/\.board-day-modal\s*\{([^}]*)\}/g)].map((m) => m[1]!);
+}
 
-describe("job-detail modal sizing (tablet regression)", () => {
-  it("sizes the base rule with dvh, not vh", () => {
-    expect(baseModal).toMatch(/max-height:\s*min\(88dvh,\s*780px\)/);
-    // The exact failure mode: a vh-based cap on the rule tablets land on.
-    expect(baseModal).not.toMatch(/max-height:[^;]*\bvh\b/);
+const baseModal = ruleBody(".board-day-modal");
+const baseBody = ruleBody(".board-day-modal-body");
+const footer = ruleBody(".board-day-modal-actions");
+const backdrop = ruleBody(".board-day-modal-backdrop");
+
+describe("the dialog is bounded by its container, not the viewport", () => {
+  it("caps the base rule with max-height: 100%", () => {
+    expect(baseModal).toMatch(/max-height:\s*100%/);
   });
 
-  it("keeps the dialog scrollable", () => {
-    expect(baseModal).toMatch(/overflow:\s*auto/);
+  it("uses no viewport-unit height cap at ANY breakpoint", () => {
+    // This is the exact defect: a cap measured against the viewport cannot
+    // know about the backdrop padding + safe-area insets beneath it.
+    for (const block of allModalBlocks()) {
+      const caps = [...block.matchAll(/max-height:\s*([^;]+);/g)].map((m) => m[1]!);
+      for (const cap of caps) {
+        expect(cap).not.toMatch(/\d\s*d?vh/);
+      }
+    }
   });
 
-  it("does not let scrolling chain to the page behind it", () => {
-    expect(baseModal).toMatch(/overscroll-behavior:\s*contain/);
-    expect(baseBackdrop).toMatch(/overscroll-behavior:\s*contain/);
+  it("also bounds the booking dialog by its container", () => {
+    const booking = ruleBody(".board-day-modal--booking");
+    expect(booking).toMatch(/max-height:\s*100%/);
+    expect(booking).not.toMatch(/max-height:[^;]*vh/);
+  });
+});
+
+describe("exactly one scroll container", () => {
+  it("makes the dialog a non-scrolling flex column", () => {
+    expect(baseModal).toMatch(/display:\s*flex/);
+    expect(baseModal).toMatch(/flex-direction:\s*column/);
+    expect(baseModal).toMatch(/overflow:\s*hidden/);
+    expect(baseModal).toMatch(/min-height:\s*0/);
   });
 
-  it("keeps an over-tall dialog anchored so its end stays reachable", () => {
-    // Plain `center` overflows in both directions and strands the edges.
-    expect(baseBackdrop).toMatch(/align-items:\s*safe center/);
+  it("never re-enables scrolling on the dialog box at a smaller breakpoint", () => {
+    // A responsive rule turning the box back into a scroller would let the
+    // footer scroll away again.
+    for (const block of allModalBlocks()) {
+      expect(block).not.toMatch(/overflow(-y)?:\s*auto/);
+    }
   });
 
-  it("respects safe-area insets so the action row clears the home indicator", () => {
+  it("puts the scrolling on the body, which can shrink", () => {
+    expect(baseBody).toMatch(/overflow-y:\s*auto/);
+    // Without min-height:0 a flex item refuses to shrink below its content and
+    // pushes the footer out of the box.
+    expect(baseBody).toMatch(/min-height:\s*0/);
+    expect(baseBody).toMatch(/flex:\s*1 1 auto/);
+  });
+});
+
+describe("the footer is pinned, opaque and above the content", () => {
+  it("does not shrink or scroll with the content", () => {
+    expect(footer).toMatch(/flex:\s*0 0 auto/);
+  });
+
+  it("is opaque and layered above the scrolling body", () => {
+    expect(footer).toMatch(/background:/);
+    expect(footer).toMatch(/z-index:\s*1/);
+    expect(footer).toMatch(/position:\s*relative/);
+  });
+
+  it("keeps a divider so content reads as passing underneath", () => {
+    expect(footer).toMatch(/border-top:/);
+  });
+});
+
+describe("safe areas are accounted for exactly once", () => {
+  it("subtracts the insets on the backdrop", () => {
     for (const side of ["top", "right", "bottom", "left"]) {
-      expect(baseBackdrop).toMatch(
-        new RegExp(`padding-${side}:\\s*max\\(16px,\\s*env\\(safe-area-inset-${side}`),
+      expect(backdrop).toMatch(
+        new RegExp(`padding-${side}:\\s*max\\([^)]*env\\(safe-area-inset-${side}`),
       );
     }
   });
-});
 
-describe("every breakpoint the job-detail modal can land on uses dvh", () => {
-  // Each viewport the fix has to hold for, and the rule it resolves to.
-  const modalMaxHeights = [
-    ...css.matchAll(/\.board-day-modal\s*\{[^}]*?max-height:\s*([^;]+);/g),
-  ].map((m) => m[1]!.trim());
-
-  it("finds every .board-day-modal max-height declaration", () => {
-    expect(modalMaxHeights.length).toBeGreaterThanOrEqual(4);
-  });
-
-  it("uses no viewport-relative cap that ignores dynamic browser chrome", () => {
-    // `min(82vh, 560px)` inside the earlier max-width:560px block is dead —
-    // the later block with the same condition wins — but any LIVE vh cap on
-    // this element is the bug this test exists to catch.
-    const live = modalMaxHeights.filter((v) => !v.includes("82vh"));
-    for (const value of live) {
-      expect(value).not.toMatch(/\bvh\b/);
-    }
+  it("does not double-count the bottom inset on the footer", () => {
+    // The dialog is sized by the padded backdrop box, so re-adding the inset
+    // here would leave a dead band under the buttons.
+    expect(footer).not.toMatch(/padding-bottom:[^;]*safe-area-inset/);
   });
 });
 
-describe("desktop appearance is preserved", () => {
-  it("keeps the original width and 780px height cap", () => {
-    expect(baseModal).toMatch(/width:\s*min\(620px,\s*calc\(100vw - 24px\)\)/);
-    expect(baseModal).toContain("780px");
-  });
+describe("both boards use the header/body/footer structure", () => {
+  for (const [name, src] of [["DayBoard", dayBoard], ["MonthBoard", monthBoard]] as const) {
+    it(`${name} wraps detail content in the scroll body`, () => {
+      expect(src).toContain('<div className="board-day-modal-body">');
+    });
 
-  it("keeps 16px backdrop padding when there are no insets to honour", () => {
-    // env() falls back to 0px, so max(16px, 0px) === the original 16px.
-    expect(baseBackdrop).toMatch(/env\(safe-area-inset-top,\s*0px\)/);
-  });
-});
+    it(`${name} keeps the action row OUTSIDE the scroll body`, () => {
+      const bodyOpen = src.indexOf('<div className="board-day-modal-body">');
+      const bodyClose = src.indexOf("</div>\n\n            {canManageActiveDetail ? (");
+      const actions = src.indexOf('<div className="board-day-modal-actions">');
+      expect(bodyOpen).toBeGreaterThan(-1);
+      expect(bodyClose).toBeGreaterThan(bodyOpen);
+      expect(actions).toBeGreaterThan(bodyClose);
+    });
 
-describe("Edit/Delete remain present and unconditional on permission", () => {
-  const dayBoard = fs.readFileSync(
-    path.join(process.cwd(), "components/DayBoard.tsx"),
-    "utf8",
-  );
-
-  it("still renders the action row only for a manageable detail", () => {
-    // Guarding on canManageActiveDetail is the permission rule; this fix must
-    // not have altered it.
-    expect(dayBoard).toContain("canManageActiveDetail ? (");
-    expect(dayBoard).toContain('className="board-day-modal-actions"');
-  });
+    it(`${name} still gates the actions on permission`, () => {
+      // Presentation change only — the permission rule is untouched.
+      expect(src).toContain("canManageActiveDetail ? (");
+    });
+  }
 });

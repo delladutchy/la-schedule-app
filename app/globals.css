@@ -89,10 +89,23 @@ body.hydrated #app-shell {
   color-scheme: dark;
 }
 
+/* Pinned footer. Sits outside .board-day-modal-body so it never scrolls with
+   the content — Edit/Delete stay reachable no matter how long the job is. */
 .board-day-modal-actions {
-  margin-top: 14px;
+  flex: 0 0 auto;
+  margin-top: 0;
   padding-top: 10px;
   border-top: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  /* Opaque, and above the body, so content can never show through or sit on
+     top of the buttons as it scrolls underneath. */
+  position: relative;
+  z-index: 1;
+  background: color-mix(in srgb, var(--surface) 96%, #000000);
+  /* The home indicator / browser UI is cleared once, on the backdrop, whose
+     padding already subtracts env(safe-area-inset-*) at every breakpoint. The
+     dialog is sized by that padded box (max-height: 100%), so the footer is
+     inside the safe area by construction — re-adding the inset here would
+     double-count it and leave a dead ~34px band under the buttons. */
 }
 
 .board-day-modal-action-buttons {
@@ -1321,18 +1334,24 @@ html.modal-open body {
 
 .board-day-modal {
   width: min(620px, calc(100vw - 24px));
-  /* dvh, not vh. On iOS/iPadOS Safari `vh` resolves against the LARGE viewport
-     (browser chrome retracted), so while the chrome is showing an 88vh dialog
-     is taller than the visible area and its bottom — the Edit/Delete row —
-     sits below the fold with no way to scroll to it. `dvh` tracks the actual
-     visible viewport. Desktop has no dynamic chrome, so dvh === vh there and
-     the appearance is unchanged.
-     The <=560px and <=760px rules already do this; tablets at 768/1024 fell
-     through to this base rule and were the only sizes still broken. */
-  max-height: min(88dvh, 780px);
-  overflow: auto;
+  /* Bound the dialog by its CONTAINER, not by the viewport.
+     Sizing against 100dvh is what broke this: the backdrop already subtracts
+     its own padding and the safe-area insets, so a dialog measured against the
+     full viewport can be taller than the box it sits in — on an iPhone in
+     standalone PWA mode that is ~93px of inset, and the overflow (the footer)
+     lands off-screen where nothing can scroll to it.
+     `max-height: 100%` resolves against the backdrop's padded content box, so
+     it self-corrects for any inset/padding on any device and cannot drift out
+     of sync with the arithmetic again. */
+  max-height: 100%;
+  min-height: 0;
+  /* Header + scrolling body + pinned footer. The box itself never scrolls —
+     .board-day-modal-body is the single scroll container, so the footer can't
+     scroll out of view and there are no nested competing scrollers. */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
   background: color-mix(in srgb, var(--surface) 96%, #000000);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
@@ -1341,6 +1360,21 @@ html.modal-open body {
   box-sizing: border-box;
   position: relative;
   isolation: isolate;
+}
+
+/* The one scrollable region in the detail dialog. `min-height: 0` is required
+   or the flex item refuses to shrink below its content and pushes the footer
+   out of the box. */
+.board-day-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  /* Cancel the scrollbar gutter against the dialog's own padding. */
+  margin-right: -2px;
+  padding-right: 2px;
 }
 
 /* Booking/edit modal layout: header + scrollable form + action row */
@@ -1363,7 +1397,11 @@ html.modal-open body {
   --booking-presets-toggle-text: var(--text-muted);
   background: var(--bg);
   width: min(720px, calc(100vw - 48px));
-  max-height: calc(100dvh - 48px);
+  /* Same container-relative bound as the detail dialog: the booking backdrop
+     already subtracts its padding and the safe-area insets, so measuring
+     against 100dvh let this overflow by the inset amount and clipped the
+     Save/Cancel footer on iPhone. */
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -2603,7 +2641,7 @@ html.modal-open body {
   .board-day-modal-backdrop { padding: 12px; }
   .board-day-modal {
     width: min(440px, calc(100vw - 16px));
-    max-height: min(82vh, 560px);
+    max-height: 100%;
     padding: 12px 12px 10px;
   }
   .board-day-modal-title { font-size: 14px; }
@@ -3761,9 +3799,11 @@ html.modal-open body {
   .board-day-modal {
     width: min(560px, calc(100vw - 10px));
     max-width: calc(100vw - 10px);
-    max-height: min(90dvh, 740px);
+    /* Container-relative: the backdrop has already subtracted its padding and
+       the safe-area insets. Scrolling belongs to .board-day-modal-body. */
+    max-height: 100%;
     padding: 14px 12px 12px;
-    overflow: auto;
+    overflow: hidden;
     box-sizing: border-box;
   }
 
@@ -3852,10 +3892,13 @@ html.modal-open body {
   .board-day-modal {
     width: min(700px, calc(100vw - 8px));
     max-width: calc(100vw - 8px);
-    max-height: calc(100dvh - 8px);
-    overflow-x: hidden;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+    /* Was calc(100dvh - 8px). The backdrop above already removes
+       env(safe-area-inset-top/bottom) — ~93px on an iPhone in standalone PWA
+       mode — so a dialog measured against the full viewport overflowed its
+       container by that much and pushed the footer off-screen, where no
+       amount of scrolling could reach it. */
+    max-height: 100%;
+    overflow: hidden;
     overscroll-behavior: contain;
     box-sizing: border-box;
     padding: 10px 10px 8px;
@@ -4057,9 +4100,8 @@ html.modal-open body {
   .board-day-modal {
     width: min(760px, calc(100vw - 8px));
     max-width: calc(100vw - 8px);
-    max-height: calc(100dvh - 8px);
-    overflow: auto;
-    overflow-x: hidden;
+    max-height: 100%;
+    overflow: hidden;
     box-sizing: border-box;
     padding: 11px 11px 9px;
   }
