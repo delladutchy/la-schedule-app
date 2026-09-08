@@ -2092,6 +2092,23 @@ html.modal-open body {
   right: 10px;
 }
 
+/* Booking/edit dialog only: bring the close control up to the 44x44 minimum
+   touch target used by the job-detail header, without altering the icon's
+   size, border or position. The dialog draws its X at 28px (desktop), 36px
+   (<=560px) or 26px (mobile sheet); a centred pseudo-element extends the
+   tappable area to 44x44 in every one of those cases. Pointer events on a
+   pseudo-element dispatch to its originating button, so this widens the hit
+   target without adding an element or changing layout. */
+.board-day-modal--booking .board-day-modal-close-icon::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
 .board-day-modal-close-icon:hover {
   color: var(--text);
   border-color: var(--border-strong);
@@ -4970,6 +4987,17 @@ html.modal-open body {
     width: 26px;
     height: 26px;
     font-size: 16px;
+  }
+
+  /* Here the icon sits only 4px from the dialog edge, so a centred 44x44 box
+     would be clipped by the dialog's overflow:hidden and shrink to 39x39.
+     Anchor it to the button's top-right corner instead: it then extends down
+     and to the left, staying wholly inside while still covering the icon. */
+  .board-day-modal--booking-mobile-sheet .board-day-modal-close-icon::after {
+    top: 0;
+    left: auto;
+    right: 0;
+    transform: none;
   }
 
   .board-day-modal--booking-mobile-sheet .month-booking-form {

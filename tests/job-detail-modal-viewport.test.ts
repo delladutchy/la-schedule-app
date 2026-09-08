@@ -261,3 +261,53 @@ describe("no later media query silently overrides the architecture", () => {
     expect(block).toMatch(/height:\s*100dvh/);
   });
 });
+
+/**
+ * The booking/edit dialog draws its close icon at 28px (desktop), 36px
+ * (<=560px) or 26px (short-landscape mobile sheet). A centred pseudo-element
+ * lifts the tappable area to the same 44x44 minimum the job-detail header
+ * uses, without touching the icon's size, border or position.
+ */
+describe("booking dialog close control meets the 44x44 touch target", () => {
+  const hitArea = ruleBody(".board-day-modal--booking .board-day-modal-close-icon::after");
+
+  it("expands the hit area to 44x44 via a pseudo-element", () => {
+    expect(hitArea).toMatch(/content:\s*""/);
+    expect(hitArea).toMatch(/width:\s*44px/);
+    expect(hitArea).toMatch(/height:\s*44px/);
+    expect(hitArea).toMatch(/position:\s*absolute/);
+  });
+
+  it("centres it on the icon so placement is unchanged", () => {
+    expect(hitArea).toMatch(/top:\s*50%/);
+    expect(hitArea).toMatch(/left:\s*50%/);
+    expect(hitArea).toMatch(/transform:\s*translate\(-50%,\s*-50%\)/);
+  });
+
+  it("does not alter the icon's own size or position", () => {
+    // The visual button keeps the base 28px box; only the pseudo-element grows.
+    const icon = ruleBody(".board-day-modal-close-icon");
+    expect(icon).toMatch(/width:\s*28px/);
+    expect(icon).toMatch(/height:\s*28px/);
+    expect(icon).toMatch(/top:\s*10px/);
+    expect(icon).toMatch(/right:\s*10px/);
+  });
+
+  it("corner-anchors it on the mobile sheet, where centring would be clipped", () => {
+    // There the icon sits 4px from the edge, so a centred 44x44 box is cut to
+    // 39x39 by the dialog's overflow:hidden.
+    const at = css.indexOf(".board-day-modal--booking-mobile-sheet .board-day-modal-close-icon::after");
+    expect(at).toBeGreaterThan(-1);
+    const block = css.slice(at, css.indexOf("}", at));
+    expect(block).toMatch(/top:\s*0/);
+    expect(block).toMatch(/right:\s*0/);
+    expect(block).toMatch(/left:\s*auto/);
+    expect(block).toMatch(/transform:\s*none/);
+  });
+
+  it("leaves the job-detail close control on its own header rule", () => {
+    const headerClose = ruleBody(".board-day-modal-header .board-day-modal-close-icon");
+    expect(headerClose).toMatch(/width:\s*44px/);
+    expect(headerClose).toMatch(/height:\s*44px/);
+  });
+});
