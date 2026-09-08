@@ -20,6 +20,7 @@ const REAL_ONE_WAY_MILES = {
   washingtonDC: 121,
   baltimore: 118,
   philadelphia: 119,
+  newark: 201,
   chicago: 810,
   detroit: 638,
   milwaukee: 906,
@@ -60,6 +61,7 @@ describe("drive/fly classification is distance-based, not state-based", () => {
     ["Washington DC", REAL_ONE_WAY_MILES.washingtonDC],
     ["Baltimore", REAL_ONE_WAY_MILES.baltimore],
     ["Philadelphia", REAL_ONE_WAY_MILES.philadelphia],
+    ["Newark NJ", REAL_ONE_WAY_MILES.newark],
   ];
 
   it.each(driveCases)(
@@ -81,14 +83,19 @@ describe("drive/fly classification is distance-based, not state-based", () => {
   });
 
   it("drives at exactly the threshold and flies just past it", () => {
-    expect(DRIVE_THRESHOLD_ONE_WAY_MILES).toBe(200);
-    expect(classifyTravelBasis({ isLightAction: true, venueOneWayMiles: 199 })).toBe("venue");
-    expect(classifyTravelBasis({ isLightAction: true, venueOneWayMiles: 200 })).toBe("venue");
-    expect(classifyTravelBasis({ isLightAction: true, venueOneWayMiles: 201 })).toBe("phl_flight");
+    expect(DRIVE_THRESHOLD_ONE_WAY_MILES).toBe(250);
+    expect(classifyTravelBasis({ isLightAction: true, venueOneWayMiles: 249 })).toBe("venue");
+    expect(classifyTravelBasis({ isLightAction: true, venueOneWayMiles: 250 })).toBe("venue");
+    expect(classifyTravelBasis({ isLightAction: true, venueOneWayMiles: 251 })).toBe("phl_flight");
+  });
+
+  it("keeps the routinely-driven Mid-Atlantic run a drive", () => {
+    // 201 mi would have been a flight under the old 200-mile cut-off.
+    expect(classifyTravelBasis({ isLightAction: true, venueOneWayMiles: 201 })).toBe("venue");
   });
 
   it("never reclassifies a non-Light-Action job, however far", () => {
-    for (const miles of [50, 201, REAL_ONE_WAY_MILES.chicago]) {
+    for (const miles of [50, 251, REAL_ONE_WAY_MILES.chicago]) {
       expect(classifyTravelBasis({ isLightAction: false, venueOneWayMiles: miles })).toBe("venue");
     }
   });

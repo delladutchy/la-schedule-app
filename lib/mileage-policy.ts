@@ -34,8 +34,15 @@ export const PHL_ONE_WAY_MILES = 112;
 /**
  * One-way driving miles at or below which a Light Action gig is assumed
  * driven. Anything farther is assumed flown out of PHL.
+ *
+ * Set to 250 rather than 200 so the routinely-driven Mid-Atlantic run stays a
+ * drive: Newark NJ measures 201 mi, which a 200-mile cut-off would have
+ * classified as a flight over a single mile — well inside the variation
+ * between routes. The genuine fly jobs sit far above this (Detroit 638,
+ * Chicago 810, Milwaukee 906, Kansas City 1166), so the wider band does not
+ * blur the distinction.
  */
-export const DRIVE_THRESHOLD_ONE_WAY_MILES = 200;
+export const DRIVE_THRESHOLD_ONE_WAY_MILES = 250;
 
 /** What a set of mileage numbers represents. */
 export type TravelBasis = "venue" | "phl_flight";

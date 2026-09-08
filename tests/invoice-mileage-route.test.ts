@@ -248,6 +248,7 @@ describe("/api/invoice/mileage", () => {
     ["Washington DC", "Capital One Arena, Washington, DC", 121],
     ["Baltimore", "Oriole Park at Camden Yards, Baltimore, MD", 118],
     ["Philadelphia", "Xfinity Mobile Arena, Philadelphia, PA", 119],
+    ["Newark NJ", "Prudential Center, Newark, NJ", 201],
   ];
 
   it.each(DRIVE_CASES)(
@@ -302,17 +303,17 @@ describe("/api/invoice/mileage", () => {
     },
   );
 
-  it("drives at exactly 200 mi and flies at 201 mi", async () => {
+  it("drives at exactly 250 mi and flies at 251 mi", async () => {
     const GET = await loadRoute();
 
-    vi.stubGlobal("fetch", distanceOnly(200));
+    vi.stubGlobal("fetch", distanceOnly(250));
     const at = await (await GET(makeJobRequest("Right At Threshold", {
       calendarId: LA_CALENDAR, gigSummary: "LA#70002 — Edge",
     }) as never)).json() as { basis: string; oneWayMiles: number };
     expect(at.basis).toBe("venue");
-    expect(at.oneWayMiles).toBe(200);
+    expect(at.oneWayMiles).toBe(250);
 
-    vi.stubGlobal("fetch", distanceOnly(201));
+    vi.stubGlobal("fetch", distanceOnly(251));
     const over = await (await GET(makeJobRequest("Just Past Threshold", {
       calendarId: LA_CALENDAR, gigSummary: "LA#70003 — Edge",
     }) as never)).json() as { basis: string; oneWayMiles: number };
